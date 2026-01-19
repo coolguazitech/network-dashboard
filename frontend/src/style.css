@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 自定義樣式 */
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* 卡片樣式 */
+.card {
+  @apply bg-white rounded-lg shadow p-6;
+}
+
+.card-title {
+  @apply text-lg font-semibold text-gray-900 mb-4;
+}
+
+/* 狀態標籤 */
+.badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+
+.badge-success {
+  @apply bg-green-100 text-green-800;
+}
+
+.badge-warning {
+  @apply bg-yellow-100 text-yellow-800;
+}
+
+.badge-danger {
+  @apply bg-red-100 text-red-800;
+}
+
+/* 表格樣式 */
+.data-table {
+  @apply min-w-full divide-y divide-gray-200;
+}
+
+.data-table th {
+  @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50;
+}
+
+.data-table td {
+  @apply px-6 py-4 whitespace-nowrap text-sm text-gray-900;
+}
+
+.data-table tbody tr:hover {
+  @apply bg-gray-50;
+}
+
+/* 按鈕樣式 */
+.btn {
+  @apply inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2;
+}
+
+.btn-primary {
+  @apply text-white bg-blue-600 hover:bg-blue-700 focus:ring-blue-500;
+}
+
+.btn-secondary {
+  @apply text-gray-700 bg-white border-gray-300 hover:bg-gray-50 focus:ring-blue-500;
+}
+
+/* 統計卡片 */
+.stat-card {
+  @apply bg-white overflow-hidden shadow rounded-lg;
+}
+
+.stat-card-body {
+  @apply px-4 py-5 sm:p-6;
+}
+
+.stat-value {
+  @apply mt-1 text-3xl font-semibold text-gray-900;
+}
+
+.stat-label {
+  @apply text-sm font-medium text-gray-500 truncate;
+}
+
+/* 圖表容器 */
+.chart-container {
+  @apply w-full h-80;
+}

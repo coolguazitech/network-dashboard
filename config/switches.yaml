@@ -1,0 +1,147 @@
+# =============================================================================
+# 網路設備設定檔
+# =============================================================================
+# 此檔案定義要監控的所有網路設備及其歲修相關設定
+#
+# 支援的 vendor: cisco, hpe, aruba
+# 支援的 platform:
+#   - Cisco: ios, nxos
+#   - HPE: procurve, comware
+#   - Aruba: aruba_os, aruba_cx
+# =============================================================================
+
+# 維護作業資訊
+maintenance:
+  id: "2026Q1-ANNUAL"
+  name: "2026年Q1歲修作業"
+  start_date: "2026-01-15"
+  end_date: "2026-01-31"
+
+# Switch 設備定義
+switches:
+  # ===== 新設備 (歲修後) =====
+  - hostname: switch-new-01
+    ip_address: 10.0.1.1
+    vendor: cisco
+    platform: nxos
+    site: t_site
+    model: N9K-C9336C-FX2
+    location: 機房A-Rack01
+    description: "歲修後新設備"
+    is_active: true
+    extra_config:
+      management_vlan: 100
+      snmp_community: public
+
+  - hostname: switch-new-02
+    ip_address: 10.0.1.2
+    vendor: cisco
+    platform: nxos
+    site: t_site
+    model: N9K-C9336C-FX2
+    location: 機房A-Rack02
+    description: "歲修後新設備"
+    is_active: true
+
+  - hostname: switch-new-03
+    ip_address: 10.0.2.1
+    vendor: hpe
+    platform: comware
+    site: m_site
+    model: HPE 5950
+    location: 機房B-Rack01
+    description: "歲修後新設備 (HPE)"
+    is_active: true
+
+  # ===== 舊設備 (歲修前) =====
+  - hostname: switch-old-01
+    ip_address: 192.168.1.1
+    vendor: cisco
+    platform: nxos
+    site: t_site
+    model: N9K-C9332PQ
+    location: 機房A-Rack01
+    description: "歲修前舊設備"
+    is_active: false  # 歲修後停用
+
+  - hostname: switch-old-02
+    ip_address: 192.168.1.2
+    vendor: cisco
+    platform: nxos
+    site: t_site
+    model: N9K-C9332PQ
+    location: 機房A-Rack02
+    description: "歲修前舊設備"
+    is_active: false
+
+# 設備 Mapping (歲修前後對應關係)
+device_mappings:
+  - old_hostname: switch-old-01
+    new_hostname: switch-new-01
+    mapping_config:
+      # Interface 對應 (舊 -> 新)
+      interface_mapping:
+        Ethernet1/1: Ethernet1/1
+        Ethernet1/2: Ethernet1/2
+      # 需要驗證的項目
+      verify_items:
+        - version
+        - transceiver
+        - uplink
+
+  - old_hostname: switch-old-02
+    new_hostname: switch-new-02
+    mapping_config:
+      interface_mapping:
+        Ethernet1/1: Ethernet1/1
+
+# Uplink 期望設定 (用於驗證拓撲)
+# ============================================================================
+# 重要：指定 POST phase 應該看到的鄰居
+# 
+# 驗證邏輯說明：
+# 1. 系統會查詢 switch-new-01 的 POST phase 實際鄰居
+# 2. 對比 uplink_expectations 中的期望鄰居
+# 3. 如果不匹配，檢查是否在 device_mappings 中有對應關係
+#
+# 例子：
+#   期望: spine-01
+#   
+#   情況A (Spine 沒換，還是舊的)
+#     實際鄰居: spine-01 ✅ 匹配
+#   
+#   情況B (Spine 也換成新的，device_mappings 中有 spine-01->spine-new-01)
+#     實際鄰居: spine-new-01 ✅ 透過 mapping 判斷為等價
+#   
+#   情況C (完全不同的鄰居)
+#     實際鄰居: spine-02 ❌ 拓樸異常
+# ============================================================================
+uplink_expectations:
+  - switch_hostname: switch-new-01
+    maintenance_id: "2026Q1-ANNUAL"
+    expected_neighbors:
+      - local_interface: Ethernet1/49
+        remote_hostname: spine-01
+        
+      - local_interface: Ethernet1/50
+        remote_hostname: spine-02
+
+  - switch_hostname: switch-new-02
+    maintenance_id: "2026Q1-ANNUAL"
+    expected_neighbors:
+      - local_interface: Ethernet1/49
+        remote_hostname: spine-01
+      - local_interface: Ethernet1/50
+        remote_hostname: spine-02
+
+  - switch_hostname: switch-new-03
+    maintenance_id: "2026Q1-ANNUAL"
+    expected_neighbors:
+      - local_interface: Ethernet1/49
+        remote_hostname: spine-01
+
+# 版本期望 (用於驗證升版)
+version_expectations:
+  switch-new-01: "9.3(10)"
+  switch-new-02: "9.3(10)"
+  switch-new-03: "7.1.070"
