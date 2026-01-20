@@ -1,0 +1,82 @@
+/* 緊湊版樣式覆蓋 - 減少空白 */
+
+/* 容器 */
+.container {
+  @apply px-3 py-3 !important;
+}
+
+/* 標題區 */
+.comparison-header {
+  @apply mb-3 !important;
+}
+
+.comparison-header h1 {
+  @apply text-2xl mb-1 !important;
+}
+
+.comparison-header p {
+  @apply text-sm !important;
+}
+
+/* 統計卡片 */
+.stats-grid {
+  @apply gap-2 mb-3 !important;
+}
+
+.stat-card {
+  @apply p-3 rounded !important;
+}
+
+.stat-card p:first-child {
+  @apply text-xs !important;
+}
+
+.stat-card p:last-child {
+  @apply text-2xl !important;
+}
+
+/* 控制面板 */
+.control-panel {
+  @apply p-3 mb-3 rounded !important;
+}
+
+.control-panel .grid {
+  @apply gap-2 !important;
+}
+
+.control-panel label {
+  @apply text-xs mb-1 !important;
+}
+
+.control-panel input,
+.control-panel select,
+.control-panel button {
+  @apply px-2 py-1 text-sm !important;
+}
+
+/* 客戶端卡片 */
+.comparison-cards {
+  @apply space-y-2 !important;
+}
+
+.comparison-card {
+  @apply p-3 rounded !important;
+}
+
+.comparison-card h3 {
+  @apply text-base !important;
+}
+
+.comparison-card .change-item {
+  @apply p-2 rounded text-sm !important;
+}
+
+/* 分頁 */
+.pagination {
+  @apply mt-3 space-x-1 !important;
+}
+
+.pagination button,
+.pagination span {
+  @apply px-2 py-1 text-xs !important;
+}

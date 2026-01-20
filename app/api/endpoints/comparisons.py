@@ -96,7 +96,8 @@ async def get_comparison_summary(
 @router.get("/list/{maintenance_id}")
 async def list_comparisons(
     maintenance_id: str,
-    mac_address: str | None = Query(None, description="按 MAC 地址篩選"),
+    mac_address: str | None = Query(None, description="按 MAC 地址篩選（已廢棄，請使用 search_text）"),
+    search_text: str | None = Query(None, description="搜尋 MAC 地址或 IP 地址"),
     severity: str | None = Query(None, description="按嚴重程度篩選 (critical/warning/info)"),
     changed_only: bool = Query(False, description="只返回有變化的結果"),
     session: AsyncSession = Depends(get_async_session),
@@ -104,13 +105,16 @@ async def list_comparisons(
     """
     列出客戶端比較結果。
     
-    支持按 MAC 地址、嚴重程度和是否變化進行篩選。
+    支持按 MAC 地址、IP 地址、嚴重程度和是否變化進行篩選。
     """
     try:
+        # 向後兼容：如果提供 mac_address 但沒有 search_text，使用 mac_address
+        search = search_text or mac_address
+        
         comparisons = await comparison_service.get_comparisons(
             maintenance_id=maintenance_id,
             session=session,
-            mac_address=mac_address,
+            search_text=search,
             severity=severity,
             changed_only=changed_only,
         )

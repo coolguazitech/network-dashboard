@@ -1,30 +1,30 @@
 <template>
-  <div class="space-y-6">
+  <div class="space-y-4">
     <!-- 上方：維護作業摘要 -->
-    <div class="bg-white rounded-lg shadow p-6">
+    <div class="bg-white rounded shadow p-4">
       <div class="flex justify-between items-start">
         <div>
-          <h2 class="text-2xl font-bold text-gray-800 mb-2">
+          <h2 class="text-xl font-bold text-gray-800 mb-1">
             2026年Q1歲修作業
           </h2>
-          <p class="text-gray-600">
+          <p class="text-sm text-gray-600">
             維護作業 ID: <span class="font-mono">2026Q1-ANNUAL</span>
           </p>
-          <p class="text-gray-600">
+          <p class="text-sm text-gray-600">
             期間: 2026-01-15 ~ 2026-01-31
           </p>
         </div>
         <div class="text-right">
-          <div class="text-4xl font-bold mb-2" :class="overallStatusColor">
+          <div class="text-3xl font-bold mb-1" :class="overallStatusColor">
             {{ overallPassRate }}%
           </div>
-          <p class="text-gray-600">整體通過率</p>
+          <p class="text-sm text-gray-600">整體通過率</p>
         </div>
       </div>
 
       <!-- 進度條 -->
-      <div class="mt-6">
-        <div class="flex justify-between text-sm mb-2">
+      <div class="mt-4">
+        <div class="flex justify-between text-xs mb-2">
           <span class="text-gray-700">驗收進度</span>
           <span class="text-gray-600">
             {{ summary.overall.pass_count }} / {{ summary.overall.total_count }}
@@ -39,8 +39,8 @@
       </div>
     </div>
 
-    <!-- 中間：三個指標卡片（按失敗數量排序） -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <!-- 中間：指標卡片（按失敗數量排序） -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
       <IndicatorPie
         v-for="[type, indicator] in sortedIndicators"
         :key="type"

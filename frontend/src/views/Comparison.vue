@@ -1,46 +1,46 @@
 <template>
-  <div class="container mx-auto px-4 py-8">
+  <div class="container mx-auto px-4 py-4">
     <!-- 頁面標題 -->
-    <div class="mb-8">
-      <h1 class="text-4xl font-bold text-gray-900 mb-2">客戶端歲修前後比較</h1>
-      <p class="text-gray-600">
+    <div class="mb-4">
+      <h1 class="text-2xl font-bold text-gray-900 mb-1">客戶端歲修前後比較</h1>
+      <p class="text-sm text-gray-600">
         快速查看哪些客戶端在歲修前後有變化，包括連接埠口、速率、連線狀態等關鍵項目
       </p>
     </div>
 
     <!-- 快速統計 -->
-    <div v-if="summary" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-      <div class="bg-white rounded-lg shadow p-4 border-l-4 border-blue-500">
-        <p class="text-gray-600 text-sm font-medium">追蹤總數</p>
-        <p class="text-3xl font-bold text-gray-900">{{ summary.total }}</p>
+    <div v-if="summary" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      <div class="bg-white rounded shadow p-3 border-l-4 border-blue-500">
+        <p class="text-gray-600 text-xs font-medium">追蹤總數</p>
+        <p class="text-2xl font-bold text-gray-900">{{ summary.total }}</p>
       </div>
 
-      <div class="bg-white rounded-lg shadow p-4 border-l-4 border-green-500">
-        <p class="text-gray-600 text-sm font-medium">正常 ✓</p>
-        <p class="text-3xl font-bold text-green-600">{{ summary.unchanged }}</p>
+      <div class="bg-white rounded shadow p-3 border-l-4 border-green-500">
+        <p class="text-gray-600 text-xs font-medium">正常 ✓</p>
+        <p class="text-2xl font-bold text-green-600">{{ summary.unchanged }}</p>
       </div>
 
-      <div class="bg-white rounded-lg shadow p-4 border-l-4 border-red-500">
-        <p class="text-gray-600 text-sm font-medium">重大問題</p>
-        <p class="text-3xl font-bold text-red-600">{{ summary.critical }}</p>
+      <div class="bg-white rounded shadow p-3 border-l-4 border-red-500">
+        <p class="text-gray-600 text-xs font-medium">重大問題</p>
+        <p class="text-2xl font-bold text-red-600">{{ summary.critical }}</p>
       </div>
 
-      <div class="bg-white rounded-lg shadow p-4 border-l-4 border-yellow-500">
-        <p class="text-gray-600 text-sm font-medium">警告</p>
-        <p class="text-3xl font-bold text-yellow-600">{{ summary.warning }}</p>
+      <div class="bg-white rounded shadow p-3 border-l-4 border-yellow-500">
+        <p class="text-gray-600 text-xs font-medium">警告</p>
+        <p class="text-2xl font-bold text-yellow-600">{{ summary.warning }}</p>
       </div>
     </div>
 
     <!-- 控制面板 -->
-    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
-      <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+    <div class="bg-white rounded shadow-md p-4 mb-4">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
         <!-- 維護 ID 選擇 -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">維護 ID</label>
+          <label class="block text-xs font-medium text-gray-700 mb-1">維護 ID</label>
           <select
             v-model="selectedMaintenanceId"
             @change="onMaintenanceIdChange"
-            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="w-full px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">-- 請選擇 --</option>
             <option value="TEST-100">TEST-100 (100筆測試資料)</option>
@@ -51,12 +51,12 @@
 
         <!-- 快速篩選按鈕 -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">問題篩選</label>
-          <div class="flex gap-2">
+          <label class="block text-xs font-medium text-gray-700 mb-1">問題篩選</label>
+          <div class="flex gap-1">
             <button
               @click="quickFilter('all')"
               :class="[
-                'px-3 py-2 rounded text-sm font-medium transition',
+                'px-2 py-1.5 rounded text-xs font-medium transition',
                 filterMode === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               ]"
             >
@@ -65,32 +65,34 @@
             <button
               @click="quickFilter('critical')"
               :class="[
-                'px-3 py-2 rounded text-sm font-medium transition',
+                'px-2 py-1.5 rounded text-xs font-medium transition',
                 filterMode === 'critical' ? 'bg-red-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               ]"
             >
-              🔴 重大
+              🔴
             </button>
             <button
               @click="quickFilter('warning')"
               :class="[
-                'px-3 py-2 rounded text-sm font-medium transition',
+                'px-2 py-1.5 rounded text-xs font-medium transition',
                 filterMode === 'warning' ? 'bg-yellow-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               ]"
             >
-              🟡 警告
+              🟡
             </button>
           </div>
         </div>
 
-        <!-- MAC 地址搜尋 -->
+        <!-- 搜尋 -->
         <div class="md:col-span-2">
-          <label class="block text-sm font-medium text-gray-700 mb-2">搜尋 MAC 地址</label>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            搜尋 MAC 或 IP <span class="text-xs text-gray-500">（支援部分匹配）</span>
+          </label>
           <input
-            v-model="macSearch"
+            v-model="searchText"
             @input="loadComparisons"
             type="text"
-            placeholder="輸入 MAC 地址篩選 (e.g., AA:BB:CC)"
+            placeholder="例如: 192.168.0.1 或 00:11:22"
             class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -110,17 +112,17 @@
 
     <!-- 比較結果 - 卡片式展示 -->
     <div v-if="!loading && allComparisons.length > 0">
-      <div class="mb-4 flex justify-between items-center">
-        <h2 class="text-2xl font-bold text-gray-900">
-          比較結果 <span class="text-gray-500 text-lg">(共 {{ allComparisons.length }} 筆，顯示 {{ paginatedComparisons.length }} 筆)</span>
+      <div class="mb-3 flex justify-between items-center">
+        <h2 class="text-xl font-bold text-gray-900">
+          比較結果 <span class="text-gray-500 text-base">(共 {{ allComparisons.length }} 筆，顯示 {{ paginatedComparisons.length }} 筆)</span>
         </h2>
-        <div class="flex items-center gap-4">
-          <label class="text-sm text-gray-700">
+        <div class="flex items-center gap-3">
+          <label class="text-xs text-gray-700">
             每頁顯示:
             <select
               v-model.number="pageSize"
               @change="currentPage = 1"
-              class="ml-2 px-3 py-1 border border-gray-300 rounded"
+              class="ml-2 px-2 py-1 text-sm border border-gray-300 rounded"
             >
               <option :value="10">10</option>
               <option :value="25">25</option>
@@ -132,11 +134,11 @@
       </div>
 
       <!-- 客戶端卡片 -->
-      <div class="space-y-4">
+      <div class="space-y-2">
         <div
           v-for="comparison in paginatedComparisons"
           :key="comparison.mac_address"
-          class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition"
+          class="bg-white rounded shadow hover:shadow-lg transition"
           :class="{
             'border-l-4 border-red-500': comparison.severity === 'critical',
             'border-l-4 border-yellow-500': comparison.severity === 'warning',
@@ -144,7 +146,7 @@
             'border-l-4 border-blue-500': comparison.is_changed && comparison.severity === 'info'
           }"
         >
-          <div class="p-6">
+          <div class="p-4">
             <div class="flex justify-between items-start mb-4">
               <div>
                 <h3 class="text-lg font-bold text-gray-900 font-mono">{{ comparison.mac_address }}</h3>
@@ -472,7 +474,7 @@ export default {
       selectedMaintenanceId: "",
       severityFilter: "",
       changedOnly: false,  // 顯示全部資料
-      macSearch: "",
+      searchText: "",
       filterMode: "all",
       allComparisons: [],  // 所有比較結果
       summary: null,
@@ -619,8 +621,8 @@ export default {
           params.append("severity", this.severityFilter);
         }
 
-        if (this.macSearch) {
-          params.append("mac_address", this.macSearch);
+        if (this.searchText) {
+          params.append("search_text", this.searchText);
         }
 
         const response = await fetch(

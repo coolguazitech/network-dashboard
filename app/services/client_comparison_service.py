@@ -308,21 +308,31 @@ class ClientComparisonService:
         self,
         maintenance_id: str,
         session: AsyncSession,
-        mac_address: str | None = None,
+        search_text: str | None = None,
         severity: str | None = None,
         changed_only: bool = False,
     ) -> list[ClientComparison]:
         """
         查詢比較結果。
         
-        支持按 MAC 地址、嚴重程度和是否變化進行篩選。
+        支持按 MAC 地址、IP 地址、嚴重程度和是否變化進行篩選。
         """
+        from sqlalchemy import or_
+        
         stmt = select(ClientComparison).where(
             ClientComparison.maintenance_id == maintenance_id
         )
         
-        if mac_address:
-            stmt = stmt.where(ClientComparison.mac_address == mac_address)
+        if search_text:
+            # 搜尋 MAC 地址或 IP 地址（PRE 或 POST 階段）
+            search_pattern = f"%{search_text}%"
+            stmt = stmt.where(
+                or_(
+                    ClientComparison.mac_address.ilike(search_pattern),
+                    ClientComparison.pre_ip_address.ilike(search_pattern),
+                    ClientComparison.post_ip_address.ilike(search_pattern),
+                )
+            )
         
         if severity:
             stmt = stmt.where(ClientComparison.severity == severity)
