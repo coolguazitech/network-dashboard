@@ -1,0 +1,281 @@
+# Baseline Scenario - All devices healthy
+#
+# This scenario represents the normal operational state where:
+# - All devices are powered on and reachable
+# - All transceivers have normal power levels
+# - All uplinks are connected
+# - All port-channels are up with all members active
+# - All fans and power supplies are operational
+# - No interface errors
+# - Correct firmware versions
+
+switch-new-01:
+  ip_address: "10.0.1.1"
+  vendor: "Cisco"
+  platform: "NXOS"
+  site: "t_site"
+  power: "on"
+  ping_reachable: true
+
+  transceiver_output: |
+    Ethernet1/1
+        transceiver is present
+        type is QSFP-40G-SR4
+        name is CISCO-FINISAR
+        part number is FTLX8571D3BCL-C2
+        serial number is FNS12345001
+        Temperature            32.5 C
+        Voltage                3.29 V
+        Current                6.20 mA
+        Tx Power               -2.1 dBm
+        Rx Power               -3.2 dBm
+
+    Ethernet1/2
+        transceiver is present
+        type is QSFP-40G-SR4
+        Temperature            35.2 C
+        Voltage                3.31 V
+        Tx Power               -1.8 dBm
+        Rx Power               -2.9 dBm
+
+    Ethernet1/49
+        transceiver is present
+        type is QSFP-100G-SR4
+        Temperature            38.5 C
+        Voltage                3.30 V
+        Tx Power               -2.5 dBm
+        Rx Power               -3.5 dBm
+
+    Ethernet1/50
+        transceiver is present
+        type is QSFP-100G-SR4
+        Temperature            37.8 C
+        Voltage                3.28 V
+        Tx Power               -2.3 dBm
+        Rx Power               -3.3 dBm
+
+  neighbor_output: |
+    Chassis id: 0012.3456.789a
+    Port id: Ethernet1/1
+    Local Port id: Eth1/49
+    Port Description: Uplink to Spine
+    System Name: spine-01.example.com
+    System Description: Cisco Nexus Operating System (NX-OS) Software, Version 9.3(10)
+    Time remaining: 112 seconds
+    System Capabilities: B, R
+    Enabled Capabilities: B, R
+    Management Address: 10.0.0.1
+
+    Chassis id: 0012.3456.789b
+    Port id: Ethernet1/2
+    Local Port id: Eth1/50
+    Port Description: Uplink to Spine
+    System Name: spine-02.example.com
+    System Description: Cisco Nexus Operating System (NX-OS) Software, Version 9.3(10)
+    Time remaining: 115 seconds
+    System Capabilities: B, R
+    Enabled Capabilities: B, R
+
+  version_output: |
+    Cisco Nexus Operating System (NX-OS) Software
+    TAC support: http://www.cisco.com/tac
+    Copyright (C) 2002-2023, Cisco and/or its affiliates.
+    All rights reserved.
+    The copyrights to certain works contained in this software are
+    owned by other third parties and used and distributed under their own
+    licenses, such as open source.  This software is provided "as is," and unless
+    otherwise stated, there is no warranty, express or implied, including but not
+    limited to warranties of merchantability and fitness for a particular purpose.
+    Certain components of this software are licensed under
+    the GNU General Public License (GPL) version 2.0 or
+    GNU General Public License (GPL) version 3.0  or the GNU
+    Lesser General Public License (LGPL) Version 2.1 or
+    Lesser General Public License (LGPL) Version 2.0.
+    A copy of each such license is available at
+    http://www.opensource.org/licenses/gpl-2.0.php and
+    http://opensource.org/licenses/gpl-3.0.html and
+    http://www.opensource.org/licenses/lgpl-2.1.php and
+    http://www.gnu.org/licenses/old-licenses/library.txt.
+
+    Software
+      BIOS: version 08.38
+      NXOS: version 9.3(10)
+      BIOS compile time:  06/07/2022
+      NXOS image file is: bootflash:///nxos.9.3.10.bin
+      NXOS compile time:  11/22/2022 12:00:00 [11/22/2022 14:00:37]
+
+    Hardware
+      cisco Nexus9000 C9336C-FX2 Chassis
+      Intel(R) Xeon(R) CPU D-1528 @ 1.90GHz with 16388352 kB of memory.
+      Processor Board ID SAL1234A5BC
+
+      Device name: switch-new-01
+      bootflash:   53298520 kB
+    Kernel uptime is 45 day(s), 12 hour(s), 32 minute(s), 15 second(s)
+
+  port_channel_output: |
+    Flags:  D - Down        P - Up in port-channel (members)
+            I - Individual  H - Hot-standby (LACP only)
+            s - Suspended   r - Module-removed
+            b - BFD Session Wait
+            S - Switched    R - Routed
+            U - Up (port-channel)
+            p - Up in delay-lacp mode (member)
+            M - Not in use. Min-links not met
+    --------------------------------------------------------------------------------
+    Group Port-       Type     Protocol  Member Ports
+          Channel
+    --------------------------------------------------------------------------------
+    1     Po1(SU)     Eth      LACP      Eth1/1(P)    Eth1/2(P)
+
+  fan_output: |
+    Fan             Model                Hw         Status
+    -----------------------------------------------------------
+    Fan1(sys_fan1)  N9K-C9336C-FX2-FAN   --         Ok
+    Fan2(sys_fan2)  N9K-C9336C-FX2-FAN   --         Ok
+    Fan3(sys_fan3)  N9K-C9336C-FX2-FAN   --         Ok
+    Fan_in_PS1      --                   --         Ok
+    Fan_in_PS2      --                   --         Ok
+
+  power_output: |
+    Power Supply:
+    Voltage: 12 Volts
+    -------------------  --------  ----------------  ----------  -------  -------
+    Power Supply         Model     Input (W)         Actual      Status
+                                                     Output (W)
+    -------------------  --------  ----------------  ----------  -------  -------
+    PS1                  N9K-PAC-650W-B              650         ok
+    PS2                  N9K-PAC-650W-B              650         ok
+
+  error_output: |
+    Ethernet1/1
+        0 input errors, 0 CRC, 0 frame, 0 overrun, 0 ignored
+        0 output errors, 0 collisions
+
+    Ethernet1/2
+        0 input errors, 0 CRC, 0 frame, 0 overrun, 0 ignored
+        0 output errors, 0 collisions
+
+    Ethernet1/49
+        0 input errors, 0 CRC, 0 frame, 0 overrun, 0 ignored
+        0 output errors, 0 collisions
+
+    Ethernet1/50
+        0 input errors, 0 CRC, 0 frame, 0 overrun, 0 ignored
+        0 output errors, 0 collisions
+
+switch-new-02:
+  ip_address: "10.0.1.2"
+  vendor: "HPE"
+  platform: "Comware"
+  site: "t_site"
+  power: "on"
+  ping_reachable: true
+
+  transceiver_output: |
+    GigabitEthernet1/0/1 transceiver information:
+      Transceiver Type              : 1000BASE-SX SFP
+      Connector Type                : LC
+      Wavelength(nm)                : 850
+      Transfer Distance(m)          : 550(62.5um/125um 200MHz)
+      Digital Diagnostic Monitoring : YES
+      Vendor Name                   : HP
+      Vendor Part Number            : J4858C
+      Vendor Serial Number          : ABC12340001
+
+      Temperature(C)                : 34.5
+      Voltage(V)                    : 3.25
+      Bias Current(mA)              : 5.2
+      TX Power(dBm)                 : -3.1
+      RX Power(dBm)                 : -4.2
+
+    GigabitEthernet1/0/2 transceiver information:
+      Transceiver Type              : 1000BASE-SX SFP
+      Temperature(C)                : 36.2
+      Voltage(V)                    : 3.27
+      TX Power(dBm)                 : -2.9
+      RX Power(dBm)                 : -3.8
+
+  neighbor_output: |
+    LLDP neighbor-information of port 1 [GigabitEthernet1/0/25]:
+    LLDP neighbor index       : 1
+    Chassis type              : MAC address
+    Chassis ID                : 0012-3456-789a
+    Port ID type              : Interface name
+    Port ID                   : GigabitEthernet1/0/1
+    Port description          : Uplink Port
+    System name               : core-switch-01
+    System description        : HPE Comware Platform Software, Version 7.1.070
+    System capabilities supported : Bridge, Router
+    System capabilities enabled   : Bridge, Router
+    Management address type       : IPv4
+    Management address            : 10.0.0.1
+    Expired time                  : 112s
+
+    LLDP neighbor-information of port 2 [GigabitEthernet1/0/26]:
+    LLDP neighbor index       : 1
+    Chassis type              : MAC address
+    Chassis ID                : 0012-3456-789b
+    Port ID type              : Interface name
+    Port ID                   : GigabitEthernet1/0/2
+    System name               : core-switch-02
+    System description        : HPE Comware Platform Software, Version 7.1.070
+    Expired time                  : 115s
+
+  version_output: |
+    HPE Comware Platform Software
+    Comware Software, Version 7.1.070, Release 3208P06
+    Copyright (c) 2010-2020 Hewlett Packard Enterprise Development LP
+    HPE 5130-48G-4SFP+ EI Switch uptime is 45 days, 12 hours, 30 minutes
+    Last reboot reason : User reboot
+
+    Boot image: flash:/s5130ei-cmw710-boot-r3208p06.bin
+    Boot image version: 7.1.070, Release 3208P06
+    Compiled Nov 15 2020 09:00:00
+
+    System image: flash:/s5130ei-cmw710-system-r3208p06.bin
+    System image version: 7.1.070, Release 3208P06
+
+    Slot 1:
+    HPE 5130-48G-4SFP+ EI Switch
+    128M bytes DRAM, 128M bytes Flash
+
+  port_channel_output: |
+    Aggregate Interface: Bridge-Aggregation1
+    Aggregation Mode: Dynamic
+    Loadsharing Type: Shar
+    Management VLANs: None
+      Port             Status  Weight
+    --------------------------------------------------------------------------------
+      GE1/0/1          UP      1
+      GE1/0/2          UP      1
+
+  fan_output: |
+    Fan 1: Normal
+    Fan 2: Normal
+    Fan 3: Normal
+
+  power_output: |
+    Power Supply 1: Normal
+    Power Supply 2: Normal
+
+  error_output: |
+    GigabitEthernet1/0/1
+      Input:  0 errors
+      Output: 0 errors
+      CRC:    0
+
+    GigabitEthernet1/0/2
+      Input:  0 errors
+      Output: 0 errors
+      CRC:    0
+
+    GigabitEthernet1/0/25
+      Input:  0 errors
+      Output: 0 errors
+      CRC:    0
+
+    GigabitEthernet1/0/26
+      Input:  0 errors
+      Output: 0 errors
+      CRC:    0

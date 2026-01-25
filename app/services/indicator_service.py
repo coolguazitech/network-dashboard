@@ -12,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.indicators.transceiver import TransceiverIndicator
 from app.indicators.version import VersionIndicator
 from app.indicators.uplink import UplinkIndicator
-from app.indicators.client import ClientIndicator
+from app.indicators.port_channel import PortChannelIndicator
+from app.indicators.power import PowerIndicator
+from app.indicators.fan import FanIndicator
+from app.indicators.error_count import ErrorCountIndicator
+from app.indicators.ping import PingIndicator
 from app.indicators.base import IndicatorEvaluationResult
 
 
@@ -24,21 +28,25 @@ class IndicatorService:
         self.transceiver_indicator = TransceiverIndicator()
         self.version_indicator = VersionIndicator()
         self.uplink_indicator = UplinkIndicator()
-        self.client_indicator = ClientIndicator()
+        self.port_channel_indicator = PortChannelIndicator()
+        self.power_indicator = PowerIndicator()
+        self.fan_indicator = FanIndicator()
+        self.error_count_indicator = ErrorCountIndicator()
+        self.ping_indicator = PingIndicator()
     
     async def evaluate_all(
         self,
         maintenance_id: str,
         session: AsyncSession,
-        phase: str = "POST",
+        phase: str = "NEW",
     ) -> dict[str, IndicatorEvaluationResult]:
         """
         評估所有指標。
         """
         from app.core.enums import MaintenancePhase
         maintenance_phase = (
-            MaintenancePhase.PRE if phase.upper() == "PRE" 
-            else MaintenancePhase.POST
+            MaintenancePhase.OLD if phase.upper() == "OLD" 
+            else MaintenancePhase.NEW
         )
         
         results = {}
@@ -72,16 +80,56 @@ class IndicatorService:
             )
         except Exception as e:
             print(f"Error evaluating uplink: {e}")
-        
-        # 評估客戶端健康
+            
+        # 評估 Port-Channel
         try:
-            results["client"] = await self.client_indicator.evaluate(
+            results["port_channel"] = await self.port_channel_indicator.evaluate(
                 maintenance_id=maintenance_id,
                 session=session,
                 phase=maintenance_phase,
             )
         except Exception as e:
-            print(f"Error evaluating client: {e}")
+            print(f"Error evaluating port_channel: {e}")
+            
+        # 評估 Power
+        try:
+            results["power"] = await self.power_indicator.evaluate(
+                maintenance_id=maintenance_id,
+                session=session,
+                phase=maintenance_phase,
+            )
+        except Exception as e:
+            print(f"Error evaluating power: {e}")
+            
+        # 評估 Fan
+        try:
+            results["fan"] = await self.fan_indicator.evaluate(
+                maintenance_id=maintenance_id,
+                session=session,
+                phase=maintenance_phase,
+            )
+        except Exception as e:
+            print(f"Error evaluating fan: {e}")
+            
+        # 評估 Error Count
+        try:
+            results["error_count"] = await self.error_count_indicator.evaluate(
+                maintenance_id=maintenance_id,
+                session=session,
+                phase=maintenance_phase,
+            )
+        except Exception as e:
+            print(f"Error evaluating error_count: {e}")
+            
+        # 評估 Ping
+        try:
+            results["ping"] = await self.ping_indicator.evaluate(
+                maintenance_id=maintenance_id,
+                session=session,
+                phase=maintenance_phase,
+            )
+        except Exception as e:
+            print(f"Error evaluating ping: {e}")
         
         return results
     
@@ -130,3 +178,30 @@ class IndicatorService:
             )
         
         return summary
+
+    def get_all_indicators(self) -> list:
+        """返回所有指标实例。"""
+        return [
+            self.transceiver_indicator,
+            self.version_indicator,
+            self.uplink_indicator,
+            self.port_channel_indicator,
+            self.power_indicator,
+            self.fan_indicator,
+            self.error_count_indicator,
+            self.ping_indicator,
+        ]
+
+    def get_indicator(self, name: str):
+        """根据名称获取指标实例。"""
+        mapping = {
+            "transceiver": self.transceiver_indicator,
+            "version": self.version_indicator,
+            "uplink": self.uplink_indicator,
+            "port_channel": self.port_channel_indicator,
+            "power": self.power_indicator,
+            "fan": self.fan_indicator,
+            "error_count": self.error_count_indicator,
+            "ping": self.ping_indicator,
+        }
+        return mapping.get(name)

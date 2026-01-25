@@ -32,7 +32,7 @@ async def create_test_data(session: AsyncSession) -> str:
         # 客戶端 1: 保持不變
         ClientRecord(
             maintenance_id=maintenance_id,
-            phase=MaintenancePhase.PRE,
+            phase=MaintenancePhase.OLD,
             mac_address="00:11:22:33:44:11",
             ip_address="10.0.1.11",
             hostname="client-1.example.com",
@@ -49,7 +49,7 @@ async def create_test_data(session: AsyncSession) -> str:
         ),
         ClientRecord(
             maintenance_id=maintenance_id,
-            phase=MaintenancePhase.POST,
+            phase=MaintenancePhase.NEW,
             mac_address="00:11:22:33:44:11",
             ip_address="10.0.1.11",
             hostname="client-1.example.com",
@@ -68,7 +68,7 @@ async def create_test_data(session: AsyncSession) -> str:
         # 客戶端 2: 埠口變化（critical）
         ClientRecord(
             maintenance_id=maintenance_id,
-            phase=MaintenancePhase.PRE,
+            phase=MaintenancePhase.OLD,
             mac_address="00:11:22:33:44:22",
             ip_address="10.0.1.22",
             hostname="client-2.example.com",
@@ -85,7 +85,7 @@ async def create_test_data(session: AsyncSession) -> str:
         ),
         ClientRecord(
             maintenance_id=maintenance_id,
-            phase=MaintenancePhase.POST,
+            phase=MaintenancePhase.NEW,
             mac_address="00:11:22:33:44:22",
             ip_address="10.0.1.22",
             hostname="client-2.example.com",
@@ -104,7 +104,7 @@ async def create_test_data(session: AsyncSession) -> str:
         # 客戶端 3: 速率變化（warning）
         ClientRecord(
             maintenance_id=maintenance_id,
-            phase=MaintenancePhase.PRE,
+            phase=MaintenancePhase.OLD,
             mac_address="00:11:22:33:44:33",
             ip_address="10.0.1.33",
             hostname="client-3.example.com",
@@ -121,7 +121,7 @@ async def create_test_data(session: AsyncSession) -> str:
         ),
         ClientRecord(
             maintenance_id=maintenance_id,
-            phase=MaintenancePhase.POST,
+            phase=MaintenancePhase.NEW,
             mac_address="00:11:22:33:44:33",
             ip_address="10.0.1.33",
             hostname="client-3.example.com",
@@ -140,7 +140,7 @@ async def create_test_data(session: AsyncSession) -> str:
         # 客戶端 4: 連接中斷（critical）
         ClientRecord(
             maintenance_id=maintenance_id,
-            phase=MaintenancePhase.PRE,
+            phase=MaintenancePhase.OLD,
             mac_address="00:11:22:33:44:44",
             ip_address="10.0.1.44",
             hostname="client-4.example.com",
@@ -157,7 +157,7 @@ async def create_test_data(session: AsyncSession) -> str:
         ),
         ClientRecord(
             maintenance_id=maintenance_id,
-            phase=MaintenancePhase.POST,
+            phase=MaintenancePhase.NEW,
             mac_address="00:11:22:33:44:44",
             ip_address="10.0.1.44",
             hostname="client-4.example.com",
@@ -176,7 +176,7 @@ async def create_test_data(session: AsyncSession) -> str:
         # 客戶端 5: 只有歲修前記錄
         ClientRecord(
             maintenance_id=maintenance_id,
-            phase=MaintenancePhase.PRE,
+            phase=MaintenancePhase.OLD,
             mac_address="00:11:22:33:44:55",
             ip_address="10.0.1.55",
             hostname="client-5.example.com",
@@ -266,12 +266,12 @@ async def test_comparison():
             print(f"\n   客戶端 {idx}: {comp.mac_address}")
             print(f"   ├─ 嚴重程度: {comp.severity}")
             print(f"   ├─ 是否變化: {'是' if comp.is_changed else '否'}")
-            print(f"   ├─ 歲修前: {comp.pre_switch_hostname}:{comp.pre_interface_name}")
-            print(f"   ├─ 歲修後: {comp.post_switch_hostname}:{comp.post_interface_name}")
+            print(f"   ├─ OLD: {comp.old_switch_hostname}:{comp.old_interface_name}")
+            print(f"   ├─ NEW: {comp.new_switch_hostname}:{comp.new_interface_name}")
             if comp.differences:
                 print(f"   └─ 變化項目: {len(comp.differences)} 項")
                 for field, change in comp.differences.items():
-                    print(f"      └─ {field}: {change.get('pre')} → {change.get('post')}")
+                    print(f"      └─ {field}: {change.get('old')} → {change.get('new')}")
         
         # 按嚴重程度篩選
         print("\n6️⃣ 取得重大問題客戶端...")
@@ -286,7 +286,7 @@ async def test_comparison():
             print(f"   ├─ {comp.mac_address}")
             if comp.differences:
                 for field, change in comp.differences.items():
-                    print(f"      └─ {field}: {change.get('pre')} → {change.get('post')}")
+                    print(f"      └─ {field}: {change.get('old')} → {change.get('new')}")
     
     print("\n" + "=" * 60)
     print("✅ 所有測試完成！")

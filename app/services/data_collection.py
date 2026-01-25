@@ -47,7 +47,7 @@ class DataCollectionService:
     async def collect_indicator_data(
         self,
         indicator_type: str,
-        phase: MaintenancePhase = MaintenancePhase.POST,
+        phase: MaintenancePhase = MaintenancePhase.NEW,
         maintenance_id: str | None = None,
     ) -> dict[str, Any]:
         """
@@ -55,7 +55,7 @@ class DataCollectionService:
 
         Args:
             indicator_type: Type of indicator (e.g., "transceiver")
-            phase: Maintenance phase (PRE/POST)
+            phase: Maintenance phase (OLD/NEW)
             maintenance_id: Maintenance job ID (optional)
 
         Returns:
@@ -171,7 +171,7 @@ class DataCollectionService:
         self,
         switch_hostnames: list[str],
         indicator_type: str,
-        phase: MaintenancePhase = MaintenancePhase.POST,
+        phase: MaintenancePhase = MaintenancePhase.NEW,
         maintenance_id: str | None = None,
     ) -> dict[str, Any]:
         """

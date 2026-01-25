@@ -27,7 +27,7 @@ class IndicatorResultRepository(BaseRepository[IndicatorResult]):
         total_count: int,
         pass_count: int,
         fail_count: int,
-        phase: MaintenancePhase = MaintenancePhase.POST,
+        phase: MaintenancePhase = MaintenancePhase.NEW,
         maintenance_id: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> IndicatorResult:
@@ -177,27 +177,27 @@ class IndicatorResultRepository(BaseRepository[IndicatorResult]):
         maintenance_id: str,
     ) -> dict[str, IndicatorResult | None]:
         """
-        Get results for both PRE and POST phases.
+        Get results for both OLD and NEW phases.
 
         Args:
             indicator_type: Type of indicator
             maintenance_id: Maintenance job ID
 
         Returns:
-            Dict with 'pre' and 'post' keys
+            Dict with 'old' and 'new' keys
         """
         pre_result = await self.get_latest_result(
             indicator_type=indicator_type,
-            phase=MaintenancePhase.PRE,
+            phase=MaintenancePhase.OLD,
             maintenance_id=maintenance_id,
         )
         post_result = await self.get_latest_result(
             indicator_type=indicator_type,
-            phase=MaintenancePhase.POST,
+            phase=MaintenancePhase.NEW,
             maintenance_id=maintenance_id,
         )
 
         return {
-            "pre": pre_result,
-            "post": post_result,
+            "old": pre_result,
+            "new": post_result,
         }

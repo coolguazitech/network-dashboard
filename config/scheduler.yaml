@@ -41,12 +41,12 @@ jobs:
     enabled: true
     description: "設備風扇狀態收集"
 
-  # CRC 錯誤計數收集
-  crc_error:
-    indicator: crc_error
+  # 錯誤計數收集
+  error_count:
+    indicator: error_count
     interval: 300  # 每 5 分鐘收集一次
     enabled: true
-    description: "Interface CRC 錯誤計數收集"
+    description: "Interface 錯誤計數收集"
 
   # ACL 設定收集 (預設停用)
   acl:

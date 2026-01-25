@@ -26,7 +26,7 @@ class CollectionRecordRepository(BaseRepository[CollectionRecord]):
         switch_hostname: str,
         raw_data: str,
         parsed_data: dict[str, Any],
-        phase: MaintenancePhase = MaintenancePhase.POST,
+        phase: MaintenancePhase = MaintenancePhase.NEW,
         maintenance_id: str | None = None,
     ) -> CollectionRecord:
         """
@@ -37,7 +37,7 @@ class CollectionRecordRepository(BaseRepository[CollectionRecord]):
             switch_hostname: Switch hostname
             raw_data: Raw CLI output
             parsed_data: Parsed data as dict
-            phase: Maintenance phase (PRE/POST)
+            phase: Maintenance phase (OLD/NEW)
             maintenance_id: Maintenance job ID (optional)
 
         Returns:

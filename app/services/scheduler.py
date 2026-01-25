@@ -35,7 +35,7 @@ class SchedulerService:
         self,
         indicator_type: str,
         interval_seconds: int,
-        phase: MaintenancePhase = MaintenancePhase.POST,
+        phase: MaintenancePhase = MaintenancePhase.NEW,
         maintenance_id: str | None = None,
     ) -> str:
         """
@@ -184,7 +184,7 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
             - indicator: str (indicator type)
             - interval: int (seconds)
             - enabled: bool (optional)
-            - phase: str (optional, "pre" or "post")
+            - phase: str (optional, "old" or "new")
             - maintenance_id: str (optional)
 
     Example:
@@ -201,11 +201,11 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
 
         indicator = config["indicator"]
         interval = config["interval"]
-        phase_str = config.get("phase", "post")
+        phase_str = config.get("phase", "new")
         phase = (
-            MaintenancePhase.PRE
-            if phase_str == "pre"
-            else MaintenancePhase.POST
+            MaintenancePhase.OLD
+            if phase_str == "old"
+            else MaintenancePhase.NEW
         )
         maintenance_id = config.get("maintenance_id")
 

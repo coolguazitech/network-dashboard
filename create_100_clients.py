@@ -21,7 +21,8 @@ async def create_100_clients():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
-    async with AsyncSession(engine) as session:
+    # Keep attributes available after commit to avoid lazy-load round trips during stats
+    async with AsyncSession(engine, expire_on_commit=False) as session:
         maintenance_id = "TEST-100"
         
         print(f"生成100筆客戶端資料用於維護ID: {maintenance_id}")
@@ -37,7 +38,6 @@ async def create_100_clients():
         for i in range(1, 101):
             mac = f"AA:BB:CC:DD:EE:{i:02X}"
             ip = f"192.168.{i // 256}.{i % 256}"
-            hostname = f"client-{i:03d}.example.com"
             
             # 決定這個客戶端的狀態
             # 20% 重大問題
@@ -45,17 +45,16 @@ async def create_100_clients():
             # 50% 正常
             problem_type = i % 10
             
-            # PRE 資料（歲修前）
+            # OLD 資料（歲修前）
             pre_switch = f"switch-{(i % 10) + 1}"
             pre_port = f"Gi0/{(i % 24) + 1}"
             pre_vlan = 100 + (i % 5) * 100
             
             pre_record = ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.PRE,
+                phase=MaintenancePhase.OLD,
                 mac_address=mac,
                 ip_address=ip,
-                hostname=hostname,
                 switch_hostname=pre_switch,
                 interface_name=pre_port,
                 vlan_id=pre_vlan,
@@ -63,13 +62,12 @@ async def create_100_clients():
                 duplex="full",
                 link_status="connected",
                 ping_reachable=True,
-                ping_latency_ms=float((i % 20) + 1),
                 acl_passes=True,
-                collected_at=datetime(2026, 1, 15, 10, 0, 0)
+                collected_at=datetime(2026, 1, 15, 10, 0, 0),
             )
             clients.append(pre_record)
             
-            # POST 資料（歲修後）- 根據問題類型決定變化
+            # NEW 資料（歲修後）- 根據問題類型決定變化
             if problem_type in [0, 1]:  # 20% 重大問題
                 # 連接埠變化
                 post_port = f"Gi0/{(i % 24) + 2}"
@@ -97,10 +95,9 @@ async def create_100_clients():
             
             post_record = ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.POST,
+                phase=MaintenancePhase.NEW,
                 mac_address=mac,
                 ip_address=ip,
-                hostname=hostname,
                 switch_hostname=pre_switch,
                 interface_name=post_port,
                 vlan_id=pre_vlan,
@@ -108,9 +105,8 @@ async def create_100_clients():
                 duplex="full",
                 link_status=post_link,
                 ping_reachable=post_ping,
-                ping_latency_ms=float((i % 20) + 1) if post_ping else None,
                 acl_passes=True,
-                collected_at=datetime(2026, 1, 18, 10, 0, 0)
+                collected_at=datetime(2026, 1, 18, 10, 0, 0),
             )
             clients.append(post_record)
         
@@ -118,19 +114,18 @@ async def create_100_clients():
         session.add_all(clients)
         await session.commit()
         
-        print(f"✅ 成功插入 {len(clients)} 筆 ClientRecord (100個客戶端的PRE和POST)")
+        print(f"✅ 成功插入 {len(clients)} 筆 ClientRecord (100個客戶端的OLD和NEW)")
         
         # 生成比較結果
         print("\n開始生成比較結果...")
         service = ClientComparisonService()
         comparisons = await service.generate_comparisons(maintenance_id, session)
-        await service.save_comparisons(comparisons, session)
-        
-        # 統計（在保存前計算，避免 lazy loading 問題）
+
+        # 先計算統計，再寫回資料庫，避免 commit 造成物件過期後觸發異步查詢
         critical_count = 0
         warning_count = 0
         normal_count = 0
-        
+
         for c in comparisons:
             if c.severity == "critical":
                 critical_count += 1
@@ -138,6 +133,8 @@ async def create_100_clients():
                 warning_count += 1
             elif not c.is_changed:
                 normal_count += 1
+
+        await service.save_comparisons(comparisons, session)
         
         print(f"\n📊 比較結果統計:")
         print(f"   總計: {len(comparisons)} 筆")

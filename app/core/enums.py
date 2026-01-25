@@ -98,9 +98,9 @@ class MaintenancePhase(str, Enum):
     """
     Maintenance phases for comparison.
 
-    - PRE: before maintenance
-    - POST: after maintenance
+    - OLD: existing/old equipment
+    - NEW: replaced/new equipment
     """
 
-    PRE = "pre"
-    POST = "post"
+    OLD = "old"
+    NEW = "new"

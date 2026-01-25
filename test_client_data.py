@@ -101,7 +101,7 @@ async def create_client_test_data():
         for client_data in clients:
             record = ClientRecord(
                 maintenance_id="2026Q1-ANNUAL",
-                phase=MaintenancePhase.POST,
+                phase=MaintenancePhase.NEW,
                 collected_at=datetime.now(),
                 mac_address=client_data["mac_address"],
                 ip_address=client_data["ip_address"],

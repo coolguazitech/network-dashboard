@@ -74,6 +74,36 @@ class NeighborData(ParsedData):
     remote_platform: str | None = None
 
 
+class PortChannelData(ParsedData):
+    """Parsed Port-Channel data."""
+
+    interface_name: str  # e.g., Po1
+    status: str  # e.g., UP, DOWN
+    protocol: str | None = None  # e.g., LACP, NONE
+    members: list[str]  # e.g., ["Gi1/0/1", "Gi1/0/2"]
+    member_status: dict[str, str] | None = None  # e.g., {"Gi1/0/1": "P", "Gi1/0/2": "P"}
+
+
+class PowerData(ParsedData):
+    """Parsed Power Supply data."""
+
+    ps_id: str  # e.g., 1, 2, A, B
+    status: str  # e.g., OK, GOOD, FAIL
+    input_status: str | None = None
+    output_status: str | None = None
+    capacity_watts: float | None = None
+    actual_output_watts: float | None = None
+
+
+class PingData(ParsedData):
+    """Parsed Ping (Reachability) data."""
+
+    target: str  # The device being pinged (usually itself from controller perspective)
+    is_reachable: bool
+    success_rate: float  # 0-100
+    avg_rtt_ms: float | None = None
+
+
 class BaseParser(ABC, Generic[TResult]):
     """
     Abstract base class for all parsers.

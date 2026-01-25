@@ -39,7 +39,7 @@ async def create_uplink_failure_data():
         record = CollectionRecord(
             indicator_type="uplink",
             switch_hostname="switch-new-02",
-            phase=MaintenancePhase.POST,
+            phase=MaintenancePhase.NEW,
             maintenance_id="2026Q1-ANNUAL",
             raw_data="[mock uplink data]",
             parsed_data=uplink_data,
@@ -59,7 +59,7 @@ async def create_uplink_failure_data():
         record2 = CollectionRecord(
             indicator_type="uplink",
             switch_hostname="switch-new-03",
-            phase=MaintenancePhase.POST,
+            phase=MaintenancePhase.NEW,
             maintenance_id="2026Q1-ANNUAL",
             raw_data="[mock uplink data]",
             parsed_data=uplink_data2,

@@ -8,11 +8,22 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
 from app.db.base import get_async_session
+from app.db.models import SeverityOverride
 from app.services.client_comparison_service import ClientComparisonService
 from app.core.enums import MaintenancePhase
+
+
+class SeverityOverrideCreate(BaseModel):
+    """創建嚴重程度覆蓋的請求模型。"""
+    mac_address: str
+    override_severity: str  # 'critical', 'warning', 'info'
+    original_severity: str | None = None
+    note: str | None = None
 
 
 router = APIRouter(
@@ -23,6 +34,51 @@ router = APIRouter(
 comparison_service = ClientComparisonService()
 
 
+@router.get("/timepoints/{maintenance_id}")
+async def get_timepoints(
+    maintenance_id: str,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """
+    获取指定维护 ID 的所有历史时间点。
+    
+    返回所有采集数据的时间点列表，用于时间选择器和图表。
+    """
+    timepoints = await comparison_service.get_timepoints(
+        maintenance_id=maintenance_id,
+        session=session,
+    )
+    return {
+        "maintenance_id": maintenance_id,
+        "timepoints": timepoints,
+    }
+
+
+@router.get("/statistics/{maintenance_id}")
+async def get_statistics(
+    maintenance_id: str,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """
+    获取每个时间点的统计数据，用于趋势图表。
+    
+    返回每个时间点的客户端数量统计，包括：
+    - 全部客户端数量
+    - 有异常的客户端数量
+    - 严重问题数量
+    - 警告数量
+    - 不断电机台数量
+    """
+    statistics = await comparison_service.get_statistics(
+        maintenance_id=maintenance_id,
+        session=session,
+    )
+    return {
+        "maintenance_id": maintenance_id,
+        "statistics": statistics,
+    }
+
+
 @router.post("/generate/{maintenance_id}")
 async def generate_comparisons(
     maintenance_id: str,
@@ -31,7 +87,7 @@ async def generate_comparisons(
     """
     生成客戶端比較結果。
     
-    比較指定維護 ID 下，所有客戶端在 PRE 和 POST 階段的變化。
+    比較指定維護 ID 下，所有客戶端在 OLD 和 NEW 階段的變化。
     """
     try:
         # 生成比較結果
@@ -96,17 +152,23 @@ async def get_comparison_summary(
 @router.get("/list/{maintenance_id}")
 async def list_comparisons(
     maintenance_id: str,
+    before_time: str | None = Query(None, description="BEFORE 时间点（ISO格式）"),
     mac_address: str | None = Query(None, description="按 MAC 地址篩選（已廢棄，請使用 search_text）"),
     search_text: str | None = Query(None, description="搜尋 MAC 地址或 IP 地址"),
-    severity: str | None = Query(None, description="按嚴重程度篩選 (critical/warning/info)"),
+    severity: str | None = Query(None, description="按嚴重程度篩選 (critical/warning/info/undetected)"),
     changed_only: bool = Query(False, description="只返回有變化的結果"),
+    include_undetected: bool = Query(True, description="是否包含分類成員中未偵測的 MAC"),
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
     列出客戶端比較結果。
     
     支持按 MAC 地址、IP 地址、嚴重程度和是否變化進行篩選。
+    包含分類成員中未偵測到的 MAC（severity='undetected'）。
     """
+    from sqlalchemy import select
+    from app.db.models import ClientCategoryMember
+    
     try:
         # 向後兼容：如果提供 mac_address 但沒有 search_text，使用 mac_address
         search = search_text or mac_address
@@ -115,50 +177,210 @@ async def list_comparisons(
             maintenance_id=maintenance_id,
             session=session,
             search_text=search,
-            severity=severity,
+            severity=severity if severity != 'undetected' else None,
             changed_only=changed_only,
+            before_time=before_time,
         )
+        
+        # 建立已偵測到的 MAC 集合
+        detected_macs = {
+            comp.mac_address.upper() for comp in comparisons 
+            if comp.mac_address
+        }
+        
+        # 獲取所有覆蓋記錄
+        override_stmt = select(SeverityOverride).where(
+            SeverityOverride.maintenance_id == maintenance_id
+        )
+        override_result = await session.execute(override_stmt)
+        overrides = override_result.scalars().all()
+        
+        # 建立 MAC -> 覆蓋記錄 對照
+        override_map = {
+            o.mac_address.upper(): o for o in overrides
+        }
         
         # 轉換為字典格式
         results = []
+        
+        def has_any_data(comp, prefix: str) -> bool:
+            """檢查指定前綴（old/new）是否有任何有效數據。"""
+            fields = [
+                f"{prefix}_switch_hostname",
+                f"{prefix}_interface_name",
+                f"{prefix}_ip_address",
+                f"{prefix}_vlan_id",
+                f"{prefix}_speed",
+                f"{prefix}_duplex",
+                f"{prefix}_link_status",
+            ]
+            for field in fields:
+                value = getattr(comp, field, None)
+                if value is not None and value != "":
+                    return True
+            return False
+        
         for comp in comparisons:
+            # 判斷偵測狀態（使用更全面的檢查）
+            old_detected = has_any_data(comp, 'old')
+            new_detected = has_any_data(comp, 'new')
+            
+            # 檢查是否有手動覆蓋
+            normalized_mac = comp.mac_address.upper() if comp.mac_address else ""
+            override = override_map.get(normalized_mac)
+            
+            # 決定最終顯示的 severity
+            display_severity = comp.severity
+            is_overridden = False
+            original_severity = None
+            override_note = None
+            
+            if override:
+                is_overridden = True
+                original_severity = override.original_severity or comp.severity
+                display_severity = override.override_severity
+                override_note = override.note
+            
             results.append({
                 "id": comp.id,
                 "mac_address": comp.mac_address,
                 "is_changed": comp.is_changed,
-                "severity": comp.severity,
+                "severity": display_severity,
+                "auto_severity": comp.severity,  # 保留原始自動判斷值
+                "is_overridden": is_overridden,
+                "original_severity": original_severity,
+                "override_note": override_note,
                 "differences": comp.differences,
                 "notes": comp.notes,
-                "pre": {
-                    "ip_address": comp.pre_ip_address,
-                    "hostname": comp.pre_hostname,
-                    "switch_hostname": comp.pre_switch_hostname,
-                    "interface_name": comp.pre_interface_name,
-                    "vlan_id": comp.pre_vlan_id,
-                    "topology_role": comp.pre_topology_role,
-                    "speed": comp.pre_speed,
-                    "duplex": comp.pre_duplex,
-                    "link_status": comp.pre_link_status,
-                    "ping_reachable": comp.pre_ping_reachable,
-                    "ping_latency_ms": comp.pre_ping_latency_ms,
-                    "acl_passes": comp.pre_acl_passes,
+                "old_detected": old_detected,
+                "new_detected": new_detected,
+                "old": {
+                    "ip_address": comp.old_ip_address,
+                    "switch_hostname": comp.old_switch_hostname,
+                    "interface_name": comp.old_interface_name,
+                    "vlan_id": comp.old_vlan_id,
+                    "speed": comp.old_speed,
+                    "duplex": comp.old_duplex,
+                    "link_status": comp.old_link_status,
+                    "ping_reachable": comp.old_ping_reachable,
+                    "acl_passes": comp.old_acl_passes,
                 },
-                "post": {
-                    "ip_address": comp.post_ip_address,
-                    "hostname": comp.post_hostname,
-                    "switch_hostname": comp.post_switch_hostname,
-                    "interface_name": comp.post_interface_name,
-                    "vlan_id": comp.post_vlan_id,
-                    "topology_role": comp.post_topology_role,
-                    "speed": comp.post_speed,
-                    "duplex": comp.post_duplex,
-                    "link_status": comp.post_link_status,
-                    "ping_reachable": comp.post_ping_reachable,
-                    "ping_latency_ms": comp.post_ping_latency_ms,
-                    "acl_passes": comp.post_acl_passes,
+                "new": {
+                    "ip_address": comp.new_ip_address,
+                    "switch_hostname": comp.new_switch_hostname,
+                    "interface_name": comp.new_interface_name,
+                    "vlan_id": comp.new_vlan_id,
+                    "speed": comp.new_speed,
+                    "duplex": comp.new_duplex,
+                    "link_status": comp.new_link_status,
+                    "ping_reachable": comp.new_ping_reachable,
+                    "acl_passes": comp.new_acl_passes,
                 },
                 "collected_at": comp.collected_at.isoformat() if comp.collected_at else None,
             })
+        
+        # 如果需要包含未偵測的 MAC
+        if include_undetected:
+            from app.db.models import ClientCategory
+            
+            # 只獲取該歲修下活躍分類的成員（必須過濾 maintenance_id）
+            active_cat_stmt = select(ClientCategory.id).where(
+                ClientCategory.is_active == True,
+                ClientCategory.maintenance_id == maintenance_id,
+            )
+            active_cat_result = await session.execute(active_cat_stmt)
+            active_cat_ids = [row[0] for row in active_cat_result.fetchall()]
+            
+            member_stmt = (
+                select(ClientCategoryMember)
+                .where(ClientCategoryMember.category_id.in_(active_cat_ids))
+            )
+            member_result = await session.execute(member_stmt)
+            members = member_result.scalars().all()
+            
+            # 使用 set 避免重複添加（一個 MAC 可能在多個分類中）
+            added_undetected_macs = set()
+            
+            # 添加未偵測的 MAC
+            for member in members:
+                normalized_mac = member.mac_address.upper() if member.mac_address else ""
+                # 跳過已偵測或已添加的 MAC
+                if not normalized_mac:
+                    continue
+                if normalized_mac in detected_macs:
+                    continue
+                if normalized_mac in added_undetected_macs:
+                    continue
+                added_undetected_macs.add(normalized_mac)
+                
+                # 檢查搜尋條件
+                if search:
+                    search_lower = search.lower()
+                    if search_lower not in normalized_mac.lower():
+                        continue
+                
+                # 檢查是否有覆蓋
+                override = override_map.get(normalized_mac)
+                display_severity = "undetected"
+                is_overridden = False
+                original_severity = None
+                override_note = None
+                
+                if override:
+                    is_overridden = True
+                    original_severity = "undetected"  # 原始一定是 undetected
+                    display_severity = override.override_severity
+                    override_note = override.note
+                
+                # 如果篩選 severity，需要匹配覆蓋後的 severity
+                if severity:
+                    if severity == 'undetected':
+                        # 只顯示沒有覆蓋或覆蓋值仍為 undetected 的
+                        if is_overridden and display_severity != 'undetected':
+                            continue
+                    else:
+                        # 篩選其他 severity
+                        if display_severity != severity:
+                            continue
+                
+                results.append({
+                        "id": None,
+                        "mac_address": normalized_mac,
+                        "is_changed": False,
+                        "severity": display_severity,
+                        "auto_severity": "undetected",
+                        "is_overridden": is_overridden,
+                        "original_severity": original_severity,
+                        "override_note": override_note,
+                        "differences": {},
+                        "notes": "此 MAC 在 OLD 和 NEW 階段均未偵測到",
+                        "old_detected": False,
+                        "new_detected": False,
+                        "old": {
+                            "ip_address": None,
+                            "switch_hostname": None,
+                            "interface_name": None,
+                            "vlan_id": None,
+                            "speed": None,
+                            "duplex": None,
+                            "link_status": None,
+                            "ping_reachable": None,
+                            "acl_passes": None,
+                        },
+                        "new": {
+                            "ip_address": None,
+                            "switch_hostname": None,
+                            "interface_name": None,
+                            "vlan_id": None,
+                            "speed": None,
+                            "duplex": None,
+                            "link_status": None,
+                            "ping_reachable": None,
+                            "acl_passes": None,
+                        },
+                        "collected_at": None,
+                        "description": member.description,
+                    })
         
         return {
             "success": True,
@@ -186,7 +408,7 @@ async def get_comparison_detail(
         comparisons = await comparison_service.get_comparisons(
             maintenance_id=maintenance_id,
             session=session,
-            mac_address=mac_address,
+            search_text=mac_address,
         )
         
         if not comparisons:
@@ -205,33 +427,27 @@ async def get_comparison_detail(
             "severity": comp.severity,
             "differences": comp.differences,
             "notes": comp.notes,
-            "pre": {
-                "ip_address": comp.pre_ip_address,
-                "hostname": comp.pre_hostname,
-                "switch_hostname": comp.pre_switch_hostname,
-                "interface_name": comp.pre_interface_name,
-                "vlan_id": comp.pre_vlan_id,
-                "topology_role": comp.pre_topology_role,
-                "speed": comp.pre_speed,
-                "duplex": comp.pre_duplex,
-                "link_status": comp.pre_link_status,
-                "ping_reachable": comp.pre_ping_reachable,
-                "ping_latency_ms": comp.pre_ping_latency_ms,
-                "acl_passes": comp.pre_acl_passes,
+            "old": {
+                "ip_address": comp.old_ip_address,
+                "switch_hostname": comp.old_switch_hostname,
+                "interface_name": comp.old_interface_name,
+                "vlan_id": comp.old_vlan_id,
+                "speed": comp.old_speed,
+                "duplex": comp.old_duplex,
+                "link_status": comp.old_link_status,
+                "ping_reachable": comp.old_ping_reachable,
+                "acl_passes": comp.old_acl_passes,
             },
-            "post": {
-                "ip_address": comp.post_ip_address,
-                "hostname": comp.post_hostname,
-                "switch_hostname": comp.post_switch_hostname,
-                "interface_name": comp.post_interface_name,
-                "vlan_id": comp.post_vlan_id,
-                "topology_role": comp.post_topology_role,
-                "speed": comp.post_speed,
-                "duplex": comp.post_duplex,
-                "link_status": comp.post_link_status,
-                "ping_reachable": comp.post_ping_reachable,
-                "ping_latency_ms": comp.post_ping_latency_ms,
-                "acl_passes": comp.post_acl_passes,
+            "new": {
+                "ip_address": comp.new_ip_address,
+                "switch_hostname": comp.new_switch_hostname,
+                "interface_name": comp.new_interface_name,
+                "vlan_id": comp.new_vlan_id,
+                "speed": comp.new_speed,
+                "duplex": comp.new_duplex,
+                "link_status": comp.new_link_status,
+                "ping_reachable": comp.new_ping_reachable,
+                "acl_passes": comp.new_acl_passes,
             },
             "collected_at": comp.collected_at.isoformat() if comp.collected_at else None,
         }
@@ -242,3 +458,158 @@ async def get_comparison_detail(
             status_code=500,
             detail=f"獲取詳細比較結果失敗: {str(e)}",
         )
+
+
+# ========== 嚴重程度覆蓋 API ==========
+
+@router.get("/overrides/{maintenance_id}")
+async def list_severity_overrides(
+    maintenance_id: str,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """列出所有嚴重程度覆蓋記錄。"""
+    stmt = (
+        select(SeverityOverride)
+        .where(SeverityOverride.maintenance_id == maintenance_id)
+        .order_by(SeverityOverride.updated_at.desc())
+    )
+    result = await session.execute(stmt)
+    overrides = result.scalars().all()
+    
+    return {
+        "success": True,
+        "maintenance_id": maintenance_id,
+        "count": len(overrides),
+        "overrides": [
+            {
+                "id": o.id,
+                "mac_address": o.mac_address,
+                "override_severity": o.override_severity,
+                "original_severity": o.original_severity,
+                "note": o.note,
+                "created_at": o.created_at.isoformat() if o.created_at else None,
+                "updated_at": o.updated_at.isoformat() if o.updated_at else None,
+            }
+            for o in overrides
+        ],
+    }
+
+
+@router.post("/overrides/{maintenance_id}")
+async def create_or_update_severity_override(
+    maintenance_id: str,
+    data: SeverityOverrideCreate,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """
+    創建或更新嚴重程度覆蓋。
+    
+    如果該 MAC 已有覆蓋記錄則更新，否則創建新記錄。
+    """
+    # 標準化 MAC 地址
+    normalized_mac = data.mac_address.upper()
+    
+    # 驗證 severity 值
+    valid_severities = ['critical', 'warning', 'info']
+    if data.override_severity not in valid_severities:
+        raise HTTPException(
+            status_code=400,
+            detail=f"無效的嚴重程度，必須是: {', '.join(valid_severities)}",
+        )
+    
+    # 查詢是否已存在
+    stmt = select(SeverityOverride).where(
+        SeverityOverride.maintenance_id == maintenance_id,
+        SeverityOverride.mac_address == normalized_mac,
+    )
+    result = await session.execute(stmt)
+    existing = result.scalar_one_or_none()
+    
+    if existing:
+        # 更新現有記錄
+        existing.override_severity = data.override_severity
+        if data.note is not None:
+            existing.note = data.note
+        # 保留 original_severity 不變
+        await session.commit()
+        await session.refresh(existing)
+        override = existing
+        message = "覆蓋記錄已更新"
+    else:
+        # 創建新記錄
+        override = SeverityOverride(
+            maintenance_id=maintenance_id,
+            mac_address=normalized_mac,
+            override_severity=data.override_severity,
+            original_severity=data.original_severity,
+            note=data.note,
+        )
+        session.add(override)
+        await session.commit()
+        await session.refresh(override)
+        message = "覆蓋記錄已創建"
+    
+    return {
+        "success": True,
+        "message": message,
+        "override": {
+            "id": override.id,
+            "mac_address": override.mac_address,
+            "override_severity": override.override_severity,
+            "original_severity": override.original_severity,
+            "note": override.note,
+        },
+    }
+
+
+@router.delete("/overrides/{maintenance_id}/{mac_address}")
+async def delete_severity_override(
+    maintenance_id: str,
+    mac_address: str,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """刪除嚴重程度覆蓋（恢復自動判斷）。"""
+    normalized_mac = mac_address.upper()
+    
+    stmt = select(SeverityOverride).where(
+        SeverityOverride.maintenance_id == maintenance_id,
+        SeverityOverride.mac_address == normalized_mac,
+    )
+    result = await session.execute(stmt)
+    override = result.scalar_one_or_none()
+    
+    if not override:
+        raise HTTPException(
+            status_code=404,
+            detail=f"找不到 MAC {mac_address} 的覆蓋記錄",
+        )
+    
+    original = override.original_severity
+    await session.delete(override)
+    await session.commit()
+    
+    return {
+        "success": True,
+        "message": "已恢復自動判斷",
+        "mac_address": normalized_mac,
+        "original_severity": original,
+    }
+
+
+@router.delete("/overrides/{maintenance_id}")
+async def clear_all_severity_overrides(
+    maintenance_id: str,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """清除所有嚴重程度覆蓋（恢復全部自動判斷）。"""
+    stmt = delete(SeverityOverride).where(
+        SeverityOverride.maintenance_id == maintenance_id
+    )
+    result = await session.execute(stmt)
+    await session.commit()
+    
+    return {
+        "success": True,
+        "message": f"已清除 {result.rowcount} 筆覆蓋記錄",
+        "deleted_count": result.rowcount,
+    }

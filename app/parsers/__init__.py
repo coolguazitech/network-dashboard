@@ -19,6 +19,9 @@ from app.parsers.registry import (
     register_parser,
 )
 
+# Import plugins to trigger parser registration
+from app.parsers import plugins  # noqa: F401
+
 __all__ = [
     "BaseParser",
     "ParsedData",

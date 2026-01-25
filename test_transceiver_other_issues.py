@@ -83,7 +83,7 @@ async def create_transceiver_issues():
         record = CollectionRecord(
             indicator_type="transceiver",
             switch_hostname="switch-new-01",
-            phase=MaintenancePhase.POST,
+            phase=MaintenancePhase.NEW,
             maintenance_id="2026Q1-ANNUAL",
             raw_data="[mock transceiver data with various issues]",
             parsed_data=transceiver_data,

@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text, func
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text, func, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import (
     Column,
@@ -91,6 +91,39 @@ class Interface(Base):
         return f"<Interface {self.name}>"
 
 
+class InterfaceMapping(Base):
+    """
+    連接埠對應關係表。
+    
+    儲存 OLD/NEW 交換機之間的連接埠對應關係。
+    每個設備對應可以有多組埠口對應。
+    """
+    __tablename__ = "interface_mappings"
+    
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    
+    # 舊設備資訊
+    old_hostname: Mapped[str] = mapped_column(String(255))
+    old_interface: Mapped[str] = mapped_column(String(100))
+    
+    # 新設備資訊
+    new_hostname: Mapped[str] = mapped_column(String(255))
+    new_interface: Mapped[str] = mapped_column(String(100))
+    
+    # 備註
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    
+    # 時間戳
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+    )
+    
+    def __repr__(self) -> str:
+        return f"<InterfaceMapping {self.old_hostname}:{self.old_interface} -> {self.new_hostname}:{self.new_interface}>"
+
+
 class DeviceMapping(Base):
     """
     Device mapping for maintenance operations.
@@ -116,6 +149,16 @@ class DeviceMapping(Base):
         index=True,
         comment="New device hostname",
     )
+    vendor: Mapped[str] = mapped_column(
+        String(50),
+        default="HPE",
+        comment="設備廠商（HPE, Cisco-IOS, Cisco-NXOS）",
+    )
+    use_same_port: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        comment="是否啟用同名port對應（預設True）",
+    )
     mapping_config: Mapped[dict[str, Any] | None] = mapped_column(
         JSON,
         nullable=True,
@@ -140,11 +183,16 @@ class UplinkExpectation(Base):
     __tablename__ = "uplink_expectations"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    local_interface: Mapped[str | None] = mapped_column(
+    maintenance_id: Mapped[str] = mapped_column(
         String(100),
-        nullable=True,
-        comment="Local interface (optional)",
+        index=True,
+        nullable=False,
+    )
+    hostname: Mapped[str] = mapped_column(String(255), index=True)
+    local_interface: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment="Local interface",
     )
     expected_neighbor: Mapped[str] = mapped_column(
         String(255),
@@ -155,18 +203,151 @@ class UplinkExpectation(Base):
         nullable=True,
         comment="Expected neighbor interface (optional)",
     )
-    maintenance_id: Mapped[str | None] = mapped_column(
-        String(100),
+    description: Mapped[str | None] = mapped_column(
+        Text,
         nullable=True,
-        index=True,
+        comment="備註",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     def __repr__(self) -> str:
-        return f"<UplinkExpectation {self.switch_hostname}>"
+        return f"<UplinkExpectation {self.hostname}:{self.local_interface}>"
+
+
+class VersionExpectation(Base):
+    """
+    Expected software versions for verification.
+
+    Stores user-defined expected firmware/software versions.
+    Multiple versions can be specified using semicolon separator.
+    """
+
+    __tablename__ = "version_expectations"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(
+        String(100),
+        index=True,
+        nullable=False,
+    )
+    hostname: Mapped[str] = mapped_column(String(255), index=True)
+    expected_versions: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="Expected versions, semicolon-separated (e.g. 16.10.1;16.10.2)",
+    )
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="備註",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<VersionExpectation {self.hostname}>"
+
+
+class ArpSource(Base):
+    """
+    ARP 來源設備。
+
+    指定從哪些 Router/Gateway 獲取 ARP Table，用於對應 MAC → IP。
+    """
+
+    __tablename__ = "arp_sources"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(
+        String(100),
+        index=True,
+        nullable=False,
+    )
+    hostname: Mapped[str] = mapped_column(String(255), index=True)
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    priority: Mapped[int] = mapped_column(
+        Integer,
+        default=100,
+        comment="Priority order (lower = higher priority)",
+    )
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="備註",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ArpSource {self.hostname}>"
+
+
+class PortChannelExpectation(Base):
+    """
+    Port-Channel 期望設定。
+
+    設定指定設備的 Port-Channel 應包含哪些成員介面。
+    檢查邏輯：驗證 Port-Channel 是否包含所有指定的實體介面。
+    """
+
+    __tablename__ = "port_channel_expectations"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(
+        String(100),
+        index=True,
+        nullable=False,
+    )
+    hostname: Mapped[str] = mapped_column(String(255), index=True)
+    port_channel: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment="Port-Channel name (e.g. Po1, Port-channel1)",
+    )
+    member_interfaces: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="Expected member interfaces, semicolon-separated (e.g. Gi1/0/1;Gi1/0/2)",
+    )
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="備註",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PortChannelExpectation {self.hostname}:{self.port_channel}>"
 
 
 class CollectionRecord(Base):
@@ -183,7 +364,7 @@ class CollectionRecord(Base):
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
     phase: Mapped[MaintenancePhase] = mapped_column(
         Enum(MaintenancePhase),
-        default=MaintenancePhase.POST,
+        default=MaintenancePhase.NEW,
     )
     maintenance_id: Mapped[str | None] = mapped_column(
         String(100),
@@ -218,7 +399,7 @@ class IndicatorResult(Base):
     indicator_type: Mapped[str] = mapped_column(String(100), index=True)
     phase: Mapped[MaintenancePhase] = mapped_column(
         Enum(MaintenancePhase),
-        default=MaintenancePhase.POST,
+        default=MaintenancePhase.NEW,
     )
     maintenance_id: Mapped[str | None] = mapped_column(
         String(100),
@@ -259,7 +440,6 @@ class ClientRecord(Base):
     # 客戶端信息
     mac_address = Column(String(17), index=True)  # AA:BB:CC:DD:EE:FF
     ip_address = Column(String(15), index=True, nullable=True)   # IPv4
-    hostname = Column(String(100), nullable=True)
     
     # 網絡連接信息
     switch_hostname = Column(String(100), index=True)
@@ -273,7 +453,6 @@ class ClientRecord(Base):
     
     # 健康檢查
     ping_reachable = Column(Boolean, nullable=True)
-    ping_latency_ms = Column(Float, nullable=True)
     
     # ACL 檢查
     acl_rules_applied = Column(JSON, nullable=True)
@@ -290,7 +469,7 @@ class ClientComparison(Base):
     """
     客戶端歲修前後的比較結果。
     
-    記錄同一個 MAC 地址在歲修前後的變化情況。
+    記錄同一個 MAC 地址在歲修前（old）與歲修後（new）設備的變化情況。
     """
     __tablename__ = "client_comparisons"
 
@@ -303,33 +482,27 @@ class ClientComparison(Base):
     # 客戶端識別
     mac_address = Column(String(17), index=True)  # AA:BB:CC:DD:EE:FF
     
-    # PRE 階段數據快照
-    pre_ip_address = Column(String(15), nullable=True)
-    pre_hostname = Column(String(100), nullable=True)
-    pre_switch_hostname = Column(String(100), nullable=True)
-    pre_interface_name = Column(String(50), nullable=True)
-    pre_vlan_id = Column(Integer, nullable=True)
-    pre_topology_role = Column(String(50), nullable=True)  # access, trunk, uplink, etc.
-    pre_speed = Column(String(20), nullable=True)
-    pre_duplex = Column(String(20), nullable=True)
-    pre_link_status = Column(String(20), nullable=True)
-    pre_ping_reachable = Column(Boolean, nullable=True)
-    pre_ping_latency_ms = Column(Float, nullable=True)
-    pre_acl_passes = Column(Boolean, nullable=True)
+    # OLD 階段數據快照（歲修前/舊設備）
+    old_ip_address = Column(String(15), nullable=True)
+    old_switch_hostname = Column(String(100), nullable=True)
+    old_interface_name = Column(String(50), nullable=True)
+    old_vlan_id = Column(Integer, nullable=True)
+    old_speed = Column(String(20), nullable=True)
+    old_duplex = Column(String(20), nullable=True)
+    old_link_status = Column(String(20), nullable=True)
+    old_ping_reachable = Column(Boolean, nullable=True)
+    old_acl_passes = Column(Boolean, nullable=True)
     
-    # POST 階段數據快照
-    post_ip_address = Column(String(15), nullable=True)
-    post_hostname = Column(String(100), nullable=True)
-    post_switch_hostname = Column(String(100), nullable=True)
-    post_interface_name = Column(String(50), nullable=True)
-    post_vlan_id = Column(Integer, nullable=True)
-    post_topology_role = Column(String(50), nullable=True)
-    post_speed = Column(String(20), nullable=True)
-    post_duplex = Column(String(20), nullable=True)
-    post_link_status = Column(String(20), nullable=True)
-    post_ping_reachable = Column(Boolean, nullable=True)
-    post_ping_latency_ms = Column(Float, nullable=True)
-    post_acl_passes = Column(Boolean, nullable=True)
+    # NEW 階段數據快照（歲修後/新設備）
+    new_ip_address = Column(String(15), nullable=True)
+    new_switch_hostname = Column(String(100), nullable=True)
+    new_interface_name = Column(String(50), nullable=True)
+    new_vlan_id = Column(Integer, nullable=True)
+    new_speed = Column(String(20), nullable=True)
+    new_duplex = Column(String(20), nullable=True)
+    new_link_status = Column(String(20), nullable=True)
+    new_ping_reachable = Column(Boolean, nullable=True)
+    new_acl_passes = Column(Boolean, nullable=True)
     
     # 比較結果
     differences = Column(JSON, nullable=True)  # 記錄哪些欄位有變化
@@ -342,3 +515,231 @@ class ClientComparison(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+
+class Checkpoint(Base):
+    """
+    Checkpoint model for marking important time points during maintenance.
+    
+    允許用戶標記歲修過程中的重要時間點並生成快照摘要。
+    """
+    
+    __tablename__ = "checkpoints"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    maintenance_id = Column(String(100), index=True, nullable=False)
+    name = Column(String(200), nullable=False)
+    checkpoint_time = Column(DateTime, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    summary_data = Column(JSON, nullable=True)  # 存儲該時間點的統計摘要
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ReferenceClient(Base):
+    """
+    Reference Client model for always-on test machines.
+    
+    不斷電機台：歲修期間不會關機的測試設備，
+    用於驗證網路連通性，理論上歲修前後應該保持一致。
+    """
+    
+    __tablename__ = "reference_clients"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    mac_address = Column(String(17), unique=True, index=True, nullable=False)
+    description = Column(String(200), nullable=True)
+    location = Column(String(200), nullable=True)
+    reason = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MaintenanceConfig(Base):
+    """
+    Maintenance configuration model.
+    
+    存儲歲修配置，包括 anchor_time（錨點時間）等重要設定。
+    """
+    
+    __tablename__ = "maintenance_configs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    maintenance_id = Column(String(100), unique=True, index=True, nullable=False)
+    name = Column(String(200), nullable=True)
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    anchor_time = Column(DateTime, nullable=True, index=True)  # 歲修開始錨點時間
+    config_data = Column(JSON, nullable=True)  # 其他配置數據
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ClientCategory(Base):
+    """
+    客戶端機台種類定義。
+    
+    用戶自定義的機台分類，最多支援 5 個種類。
+    每個歲修都有自己獨立的分類體系。
+    """
+    
+    __tablename__ = "client_categories"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    maintenance_id = Column(String(100), index=True, nullable=True)  # 歲修專屬
+    name = Column(String(100), nullable=False)
+    description = Column(String(500), nullable=True)
+    color = Column(String(20), nullable=True)  # 用於前端顯示的顏色代碼
+    sort_order = Column(Integer, default=0)  # 排序順序
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    members: Mapped[list["ClientCategoryMember"]] = relationship(
+        "ClientCategoryMember",
+        back_populates="category",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<ClientCategory {self.name} ({self.maintenance_id})>"
+
+
+class ClientCategoryMember(Base):
+    """
+    機台種類成員關聯。
+    
+    記錄哪些 MAC 地址屬於哪個種類。
+    一個 MAC 可以屬於多個種類（多對多關係）。
+    """
+    
+    __tablename__ = "client_category_members"
+    __table_args__ = (
+        # 組合唯一約束：同一分類中不能重複添加同一 MAC
+        {'mysql_charset': 'utf8mb4'},
+    )
+    
+    id = Column(Integer, primary_key=True, index=True)
+    category_id = Column(
+        Integer,
+        ForeignKey("client_categories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    # 移除 unique=True，允許同一 MAC 出現在多個分類
+    mac_address = Column(String(17), index=True, nullable=False)
+    description = Column(String(200), nullable=True)  # 機台備註
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    category: Mapped["ClientCategory"] = relationship(
+        "ClientCategory",
+        back_populates="members",
+    )
+
+    def __repr__(self) -> str:
+        return f"<ClientCategoryMember {self.mac_address}>"
+
+
+class MaintenanceMacList(Base):
+    """
+    歲修 MAC 清單。
+    
+    存放該歲修涉及的全部設備 MAC 地址。
+    負責人先匯入全部 MAC，之後可選擇性地分到特定分類關注。
+    「未分類」= 在此清單但不屬於任何 ClientCategoryMember 的 MAC。
+    """
+
+    __tablename__ = "maintenance_mac_list"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    maintenance_id: Mapped[str] = mapped_column(String(50), index=True)
+    mac_address: Mapped[str] = mapped_column(String(17))
+    description: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "maintenance_id", "mac_address", name="uk_maintenance_mac"
+        ),
+    )
+
+
+# 設備廠商選項
+DEVICE_VENDOR_OPTIONS = ["HPE", "Cisco-IOS", "Cisco-NXOS"]
+
+
+class MaintenanceDeviceList(Base):
+    """
+    歲修設備對應清單。
+    
+    每筆資料包含一組新舊設備的對應關係。
+    若設備不更換，則新舊設備填同一台。
+    """
+    
+    __tablename__ = "maintenance_device_list"
+    __table_args__ = (
+        UniqueConstraint(
+            'maintenance_id', 'old_hostname', name='uk_maintenance_old_hostname'
+        ),
+    )
+    
+    id = Column(Integer, primary_key=True, index=True)
+    maintenance_id = Column(String(100), index=True, nullable=False)
+    
+    # 舊設備資訊（必填）
+    old_hostname = Column(String(255), index=True, nullable=False)
+    old_ip_address = Column(String(45), nullable=False)
+    old_vendor = Column(String(50), nullable=False)  # HPE, Cisco-IOS, Cisco-NXOS
+    
+    # 新設備資訊（必填）
+    new_hostname = Column(String(255), index=True, nullable=False)
+    new_ip_address = Column(String(45), nullable=False)
+    new_vendor = Column(String(50), nullable=False)  # HPE, Cisco-IOS, Cisco-NXOS
+    
+    # 對應設定
+    use_same_port = Column(Boolean, default=True)  # 是否同埠對應
+    
+    # 可達性狀態（檢查新設備）
+    is_reachable = Column(Boolean, nullable=True)  # NULL=未檢查
+    last_check_at = Column(DateTime, nullable=True)
+    
+    # 備註（選填）
+    description = Column(String(500), nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    def __repr__(self) -> str:
+        return f"<MaintenanceDeviceList {self.old_hostname} -> {self.new_hostname}>"
+
+
+class SeverityOverride(Base):
+    """
+    手動覆蓋嚴重程度記錄。
+    
+    允許用戶手動覆蓋某個 MAC 的嚴重程度判定，
+    以便在自動判斷不準確時進行人工調整。
+    """
+    
+    __tablename__ = "client_severity_overrides"
+    __table_args__ = (
+        UniqueConstraint('maintenance_id', 'mac_address', name='uq_override_maintenance_mac'),
+    )
+    
+    id = Column(Integer, primary_key=True, index=True)
+    maintenance_id = Column(String(50), index=True, nullable=False)
+    mac_address = Column(String(20), index=True, nullable=False)
+    override_severity = Column(String(20), nullable=False)  # 'critical', 'warning', 'info'
+    original_severity = Column(String(20), nullable=True)   # 保存原本的自動判斷值
+    note = Column(Text, nullable=True)  # 用戶備註
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<SeverityOverride {self.mac_address}: {self.override_severity}>"

@@ -21,7 +21,7 @@ async def create_demo_data():
         records = [
             ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.PRE,
+                phase=MaintenancePhase.OLD,
                 mac_address="00:11:22:33:44:11",
                 ip_address="10.0.1.11",
                 hostname="client-1.example.com",
@@ -38,7 +38,7 @@ async def create_demo_data():
             ),
             ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.POST,
+                phase=MaintenancePhase.NEW,
                 mac_address="00:11:22:33:44:11",
                 ip_address="10.0.1.11",
                 hostname="client-1.example.com",
@@ -57,7 +57,7 @@ async def create_demo_data():
             # 客戶端 2: 埠口變化（critical）
             ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.PRE,
+                phase=MaintenancePhase.OLD,
                 mac_address="00:11:22:33:44:22",
                 ip_address="10.0.1.22",
                 hostname="client-2.example.com",
@@ -74,7 +74,7 @@ async def create_demo_data():
             ),
             ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.POST,
+                phase=MaintenancePhase.NEW,
                 mac_address="00:11:22:33:44:22",
                 ip_address="10.0.1.22",
                 hostname="client-2.example.com",
@@ -93,7 +93,7 @@ async def create_demo_data():
             # 客戶端 3: 速率變化（warning）
             ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.PRE,
+                phase=MaintenancePhase.OLD,
                 mac_address="00:11:22:33:44:33",
                 ip_address="10.0.1.33",
                 hostname="client-3.example.com",
@@ -110,7 +110,7 @@ async def create_demo_data():
             ),
             ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.POST,
+                phase=MaintenancePhase.NEW,
                 mac_address="00:11:22:33:44:33",
                 ip_address="10.0.1.33",
                 hostname="client-3.example.com",
@@ -129,7 +129,7 @@ async def create_demo_data():
             # 客戶端 4: 連接中斷（critical）
             ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.PRE,
+                phase=MaintenancePhase.OLD,
                 mac_address="00:11:22:33:44:44",
                 ip_address="10.0.1.44",
                 hostname="client-4.example.com",
@@ -146,7 +146,7 @@ async def create_demo_data():
             ),
             ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.POST,
+                phase=MaintenancePhase.NEW,
                 mac_address="00:11:22:33:44:44",
                 ip_address="10.0.1.44",
                 hostname="client-4.example.com",
@@ -165,7 +165,7 @@ async def create_demo_data():
             # 客戶端 5: 只有歲修前記錄
             ClientRecord(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.PRE,
+                phase=MaintenancePhase.OLD,
                 mac_address="00:11:22:33:44:55",
                 ip_address="10.0.1.55",
                 hostname="client-5.example.com",

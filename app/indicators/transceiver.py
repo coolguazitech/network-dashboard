@@ -1,7 +1,7 @@
 """
 Transceiver (光模塊) indicator evaluator.
 
-Evaluates if POST phase transceiver data meets expectations.
+Evaluates if NEW phase transceiver data meets expectations.
 """
 from __future__ import annotations
 
@@ -11,7 +11,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import CollectionRecord
-from app.indicators.base import BaseIndicator, IndicatorEvaluationResult
+from app.indicators.base import (
+    BaseIndicator,
+    IndicatorEvaluationResult,
+    IndicatorMetadata,
+    ObservedField,
+    DisplayConfig,
+    TimeSeriesPoint,
+    RawDataRow,
+)
 from app.core.enums import MaintenancePhase
 
 
@@ -19,7 +27,7 @@ class TransceiverIndicator(BaseIndicator):
     """
     Transceiver 光模塊指標評估器。
     
-    檢查 POST phase 中每個光模塊的 Tx/Rx 功率是否在正常範圍內。
+    檢查 NEW phase 中每個光模塊的 Tx/Rx 功率是否在正常範圍內。
     """
     
     indicator_type = "transceiver"
@@ -42,10 +50,10 @@ class TransceiverIndicator(BaseIndicator):
         Args:
             maintenance_id: 維護作業 ID
             session: 資料庫 session
-            phase: 階段 (PRE 或 POST)，如果為 None 則默認 POST
+            phase: 階段 (OLD 或 NEW)，如果為 None 則默認 NEW
         """
         if phase is None:
-            phase = MaintenancePhase.POST
+            phase = MaintenancePhase.NEW
         
         # 查詢所有指定階段的光模塊數據，按設備分組，取最新的
         stmt = (
@@ -153,7 +161,7 @@ class TransceiverIndicator(BaseIndicator):
         
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
-            phase=MaintenancePhase.POST,
+            phase=phase,
             maintenance_id=maintenance_id,
             total_count=total_count,
             pass_count=pass_count,
@@ -209,3 +217,166 @@ class TransceiverIndicator(BaseIndicator):
     def _calc_percent(passed: int, total: int) -> float:
         """計算百分比。"""
         return (passed / total * 100) if total > 0 else 0.0
+
+    def get_metadata(self) -> IndicatorMetadata:
+        """獲取指標元數據（從 indicators.yaml 配置）。"""
+        return IndicatorMetadata(
+            name="transceiver",
+            title="光模組 Tx/Rx 功率監控",
+            description="監控光模組的發射/接收功率是否在正常範圍",
+            object_type="interface",
+            data_type="float",
+            observed_fields=[
+                ObservedField(
+                    name="tx_power",
+                    display_name="Tx Power",
+                    metric_name="tx_power",
+                    unit="dBm",
+                ),
+                ObservedField(
+                    name="rx_power",
+                    display_name="Rx Power",
+                    metric_name="rx_power",
+                    unit="dBm",
+                ),
+                ObservedField(
+                    name="temperature",
+                    display_name="Temperature",
+                    metric_name="temperature",
+                    unit="°C",
+                ),
+                ObservedField(
+                    name="voltage",
+                    display_name="Voltage",
+                    metric_name="voltage",
+                    unit="V",
+                ),
+            ],
+            display_config=DisplayConfig(
+                chart_type="line",
+                x_axis_label="Time",
+                y_axis_label="Power (dBm)",
+                y_axis_min=-20.0,
+                y_axis_max=5.0,
+                line_colors=["#4CAF50", "#2196F3", "#FF9800", "#F44336"],
+                show_raw_data_table=True,
+                refresh_interval_seconds=300,
+            ),
+        )
+
+    async def get_time_series(
+        self,
+        limit: int,
+        session: AsyncSession,
+        maintenance_id: str,
+        phase: MaintenancePhase = MaintenancePhase.NEW,
+    ) -> list[TimeSeriesPoint]:
+        """獲取時間序列數據。"""
+        stmt = (
+            select(CollectionRecord)
+            .where(
+                CollectionRecord.indicator_type == "transceiver",
+                CollectionRecord.phase == phase,
+                CollectionRecord.maintenance_id == maintenance_id,
+            )
+            .order_by(CollectionRecord.collected_at.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        records = result.scalars().all()
+
+        time_series = []
+        for record in reversed(records):  # 時間正序
+            if not record.parsed_data:
+                continue
+
+            # 聚合所有光模組的平均值
+            tx_powers = []
+            rx_powers = []
+            temperatures = []
+            voltages = []
+
+            for item in record.parsed_data:
+                if item.get("tx_power") is not None:
+                    tx_powers.append(item["tx_power"])
+                if item.get("rx_power") is not None:
+                    rx_powers.append(item["rx_power"])
+                if item.get("temperature") is not None:
+                    temperatures.append(item["temperature"])
+                if item.get("voltage") is not None:
+                    voltages.append(item["voltage"])
+
+            values = {}
+            if tx_powers:
+                values["tx_power"] = sum(tx_powers) / len(tx_powers)
+            if rx_powers:
+                values["rx_power"] = sum(rx_powers) / len(rx_powers)
+            if temperatures:
+                values["temperature"] = sum(temperatures) / len(temperatures)
+            if voltages:
+                values["voltage"] = sum(voltages) / len(voltages)
+
+            if values:
+                time_series.append(
+                    TimeSeriesPoint(
+                        timestamp=record.collected_at,
+                        values=values,
+                    )
+                )
+
+        return time_series
+
+    async def get_latest_raw_data(
+        self,
+        limit: int,
+        session: AsyncSession,
+        maintenance_id: str,
+        phase: MaintenancePhase = MaintenancePhase.NEW,
+    ) -> list[RawDataRow]:
+        """獲取最新原始數據。"""
+        stmt = (
+            select(CollectionRecord)
+            .where(
+                CollectionRecord.indicator_type == "transceiver",
+                CollectionRecord.phase == phase,
+                CollectionRecord.maintenance_id == maintenance_id,
+            )
+            .order_by(CollectionRecord.collected_at.desc())
+            .limit(10)  # 最多取最近10次採集
+        )
+        result = await session.execute(stmt)
+        records = result.scalars().all()
+
+        raw_data = []
+        count = 0
+        for record in records:
+            if not record.parsed_data:
+                continue
+
+            for item in record.parsed_data:
+                if count >= limit:
+                    break
+
+                raw_data.append(
+                    RawDataRow(
+                        switch_hostname=record.switch_hostname,
+                        interface_name=item.get("interface_name"),
+                        tx_power=item.get("tx_power"),
+                        rx_power=item.get("rx_power"),
+                        temperature=item.get("temperature"),
+                        voltage=item.get("voltage"),
+                        tx_pass=item.get("tx_power", 0) >= self.TX_POWER_MIN
+                        if item.get("tx_power") is not None
+                        else None,
+                        rx_pass=item.get("rx_power", 0) >= self.RX_POWER_MIN
+                        if item.get("rx_power") is not None
+                        else None,
+                        collected_at=record.collected_at,
+                    )
+                )
+                count += 1
+
+            if count >= limit:
+                break
+
+        return raw_data

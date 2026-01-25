@@ -1,0 +1,47 @@
+# Transceiver Failure Scenario
+#
+# Optical modules have degraded power levels (below thresholds)
+# - Tx Power below -10 dBm (threshold)
+# - Rx Power below -15 dBm (threshold)
+
+switch-new-01:
+  ip_address: "10.0.1.1"
+  vendor: "Cisco"
+  platform: "NXOS"
+  site: "t_site"
+  power: "on"
+  ping_reachable: true
+
+  transceiver_output: |
+    Ethernet1/1
+        transceiver is present
+        type is QSFP-40G-SR4
+        Temperature            32.5 C
+        Voltage                3.29 V
+        Tx Power               -12.5 dBm
+        Rx Power               -18.8 dBm
+
+    Ethernet1/2
+        transceiver is present
+        type is QSFP-40G-SR4
+        Temperature            45.2 C
+        Voltage                3.10 V
+        Tx Power               -11.2 dBm
+        Rx Power               -16.5 dBm
+
+  neighbor_output: |
+    Chassis id: 0012.3456.789a
+    Port id: Ethernet1/1
+    Local Port id: Eth1/49
+    System Name: spine-01.example.com
+
+  version_output: "NXOS: version 9.3(10)"
+
+  port_channel_output: |
+    Group Port-       Type     Protocol  Member Ports
+          Channel
+    1     Po1(SU)     Eth      LACP      Eth1/1(P)    Eth1/2(P)
+
+  fan_output: "Fan1: Ok, Fan2: Ok"
+  power_output: "PS1: ok, PS2: ok"
+  error_output: ""

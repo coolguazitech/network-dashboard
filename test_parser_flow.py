@@ -133,7 +133,7 @@ async def test_parser_flow() -> None:
             record = CollectionRecord(
                 indicator_type="transceiver",
                 switch_hostname="switch-01",
-                phase=MaintenancePhase.POST,
+                phase=MaintenancePhase.NEW,
                 maintenance_id="maint-20240118-001",
                 raw_data=MOCK_API_OUTPUT,
                 parsed_data=parsed_data_dicts,

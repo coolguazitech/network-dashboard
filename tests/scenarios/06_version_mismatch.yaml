@@ -1,0 +1,68 @@
+# Version Mismatch Scenario
+#
+# Devices have incorrect firmware versions (not matching expected)
+
+switch-new-01:
+  ip_address: "10.0.1.1"
+  vendor: "Cisco"
+  platform: "NXOS"
+  site: "t_site"
+  power: "on"
+  ping_reachable: true
+
+  transceiver_output: |
+    Ethernet1/49
+        transceiver is present
+        Temperature            38.5 C
+        Voltage                3.30 V
+        Tx Power               -2.5 dBm
+        Rx Power               -3.5 dBm
+
+  neighbor_output: |
+    Chassis id: 0012.3456.789a
+    Port id: Ethernet1/1
+    Local Port id: Eth1/49
+    System Name: spine-01.example.com
+
+  version_output: |
+    Cisco Nexus Operating System (NX-OS) Software
+    Software
+      BIOS: version 08.38
+      NXOS: version 9.2(1)
+    Hardware
+      cisco Nexus9000 C9336C-FX2 Chassis
+
+  port_channel_output: |
+    1     Po1(SU)     Eth      LACP      Eth1/1(P)    Eth1/2(P)
+
+  fan_output: "Fan1: Ok, Fan2: Ok"
+  power_output: "PS1: ok, PS2: ok"
+  error_output: ""
+
+switch-new-02:
+  ip_address: "10.0.1.2"
+  vendor: "HPE"
+  platform: "Comware"
+  site: "t_site"
+  power: "on"
+  ping_reachable: true
+
+  transceiver_output: |
+    GigabitEthernet1/0/1 transceiver information:
+      Temperature(C)                : 34.5
+      TX Power(dBm)                 : -3.1
+      RX Power(dBm)                 : -4.2
+
+  neighbor_output: |
+    LLDP neighbor-information of port 1 [GigabitEthernet1/0/25]:
+    System name               : core-switch-01
+
+  version_output: |
+    HPE Comware Platform Software
+    Comware Software, Version 7.0.045, Release 2222P01
+    Copyright (c) 2010-2020 Hewlett Packard Enterprise Development LP
+
+  port_channel_output: ""
+  fan_output: "Fan 1: Normal, Fan 2: Normal"
+  power_output: "Power Supply 1: Normal"
+  error_output: ""

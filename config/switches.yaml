@@ -16,6 +16,8 @@ maintenance:
   name: "2026年Q1歲修作業"
   start_date: "2026-01-15"
   end_date: "2026-01-31"
+  # 歲修開始錨點時間（用於區分 BEFORE/AFTER 比較）
+  anchor_time: "2026-01-20T02:00:00+08:00"
 
 # Switch 設備定義
 switches:
@@ -94,6 +96,22 @@ device_mappings:
     mapping_config:
       interface_mapping:
         Ethernet1/1: Ethernet1/1
+
+# 不斷電機台定義 (Reference Clients)
+# ============================================================================
+# 這些客戶端設備在歲修期間不會關機，用於驗證網路連通性
+# 理論上歲修前後所有資訊應該保持一致（除了符合 device_mapping 的變化）
+# ============================================================================
+reference_clients:
+  - mac_address: "00:11:22:33:44:55"
+    description: "不斷電測試機台A"
+    location: "機房A-1F-R01"
+    reason: "驗證核心網路連通性"
+    
+  - mac_address: "00:11:22:33:44:66"
+    description: "不斷電測試機台B"
+    location: "機房B-2F-R03"
+    reason: "驗證VLAN配置正確性"
 
 # Uplink 期望設定 (用於驗證拓撲)
 # ============================================================================

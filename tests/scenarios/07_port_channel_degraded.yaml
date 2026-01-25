@@ -1,0 +1,80 @@
+# Port-Channel Degraded Scenario
+#
+# Port-channel has some members down
+
+switch-new-01:
+  ip_address: "10.0.1.1"
+  vendor: "Cisco"
+  platform: "NXOS"
+  site: "t_site"
+  power: "on"
+  ping_reachable: true
+
+  transceiver_output: |
+    Ethernet1/1
+        transceiver is present
+        Temperature            38.5 C
+        Voltage                3.30 V
+        Tx Power               -2.5 dBm
+        Rx Power               -3.5 dBm
+
+    Ethernet1/2
+        transceiver is not present
+
+  neighbor_output: |
+    Chassis id: 0012.3456.789a
+    Port id: Ethernet1/1
+    Local Port id: Eth1/49
+    System Name: spine-01.example.com
+
+  version_output: "NXOS: version 9.3(10)"
+
+  port_channel_output: |
+    Flags:  D - Down        P - Up in port-channel (members)
+            I - Individual  H - Hot-standby (LACP only)
+            s - Suspended   r - Module-removed
+            S - Switched    R - Routed
+            U - Up (port-channel)
+            M - Not in use. Min-links not met
+    --------------------------------------------------------------------------------
+    Group Port-       Type     Protocol  Member Ports
+          Channel
+    --------------------------------------------------------------------------------
+    1     Po1(SU)     Eth      LACP      Eth1/1(P)    Eth1/2(D)
+
+  fan_output: "Fan1: Ok, Fan2: Ok"
+  power_output: "PS1: ok, PS2: ok"
+  error_output: ""
+
+switch-new-02:
+  ip_address: "10.0.1.2"
+  vendor: "HPE"
+  platform: "Comware"
+  site: "t_site"
+  power: "on"
+  ping_reachable: true
+
+  transceiver_output: |
+    GigabitEthernet1/0/1 transceiver information:
+      Temperature(C)                : 34.5
+      TX Power(dBm)                 : -3.1
+      RX Power(dBm)                 : -4.2
+
+  neighbor_output: |
+    LLDP neighbor-information of port 1 [GigabitEthernet1/0/25]:
+    System name               : core-switch-01
+
+  version_output: "Version 7.1.070, Release 3208P06"
+
+  port_channel_output: |
+    Aggregate Interface: Bridge-Aggregation1
+    Aggregation Mode: Dynamic
+    Loadsharing Type: Shar
+      Port             Status  Weight
+    --------------------------------------------------------------------------------
+      GE1/0/1          UP      1
+      GE1/0/2          DOWN    1
+
+  fan_output: "Fan 1: Normal, Fan 2: Normal"
+  power_output: "Power Supply 1: Normal"
+  error_output: ""

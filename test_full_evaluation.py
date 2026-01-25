@@ -1,7 +1,7 @@
 """
 完整評估流程測試。
 
-1. 準備 POST phase 測試數據
+1. 準備 NEW phase 測試數據
 2. 運行所有指標評估器
 3. 驗證結果
 """
@@ -18,9 +18,9 @@ from app.parsers.registry import auto_discover_parsers
 
 
 async def prepare_test_data(session) -> None:
-    """準備 POST phase 測試數據。"""
-    
-    print("\n[準備數據] 創建 POST phase 測試數據...")
+    """準備 NEW phase 測試數據。"""
+
+    print("\n[準備數據] 創建 NEW phase 測試數據...")
     
     # 測試光模塊數據 - 部分失敗
     transceiver_data = [
@@ -56,7 +56,7 @@ async def prepare_test_data(session) -> None:
     record1 = CollectionRecord(
         indicator_type="transceiver",
         switch_hostname="switch-new-01",
-        phase=MaintenancePhase.POST,
+        phase=MaintenancePhase.NEW,
         maintenance_id="2026Q1-ANNUAL",
         raw_data="[mock raw data]",
         parsed_data=transceiver_data,
@@ -73,7 +73,7 @@ async def prepare_test_data(session) -> None:
     record2 = CollectionRecord(
         indicator_type="version",
         switch_hostname="switch-new-01",
-        phase=MaintenancePhase.POST,
+        phase=MaintenancePhase.NEW,
         maintenance_id="2026Q1-ANNUAL",
         raw_data="[mock raw data]",
         parsed_data=version_data,
@@ -98,7 +98,7 @@ async def prepare_test_data(session) -> None:
     record3 = CollectionRecord(
         indicator_type="uplink",
         switch_hostname="switch-new-01",
-        phase=MaintenancePhase.POST,
+        phase=MaintenancePhase.NEW,
         maintenance_id="2026Q1-ANNUAL",
         raw_data="[mock raw data]",
         parsed_data=uplink_data,

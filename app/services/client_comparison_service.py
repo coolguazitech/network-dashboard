@@ -1,7 +1,7 @@
 """
 Client comparison service.
 
-比較客戶端在歲修前後的變化。
+比較客戶端在 OLD/NEW 階段的變化。
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from app.core.enums import MaintenancePhase
 class ClientComparisonService:
     """客戶端比較服務。
     
-    比較同一個 MAC 地址在歲修前後的變化情況，包括：
+    比較同一個 MAC 地址在 OLD/NEW 階段的變化情況，包括：
     - 拓樸角色（access/trunk/uplink）
     - 連接的交換機和埠口
     - 連接速率、雙工模式
@@ -31,6 +31,7 @@ class ClientComparisonService:
     def __init__(self):
         """初始化並載入配置。"""
         self._load_config()
+        self._reference_clients_cache = None
     
     def _load_config(self):
         """從 YAML 配置文件載入嚴重程度定義。"""
@@ -41,7 +42,6 @@ class ClientComparisonService:
             "critical_fields": [
                 "switch_hostname",
                 "interface_name",
-                "topology_role",
                 "link_status",
                 "ping_reachable",
                 "acl_passes",
@@ -50,7 +50,6 @@ class ClientComparisonService:
                 "speed",
                 "duplex",
                 "vlan_id",
-                "ping_latency_ms",
             ],
             "ping_latency_threshold_ms": 10.0,
         }
@@ -82,51 +81,51 @@ class ClientComparisonService:
         """
         生成客戶端比較結果。
         
-        查詢同一個 MAC 地址在 PRE 和 POST 階段的記錄，比較差異。
+        查詢同一個 MAC 地址在 OLD(舊設備) 和 NEW(新設備) 階段的記錄，比較差異。
         """
-        # 查詢 PRE 階段的記錄，按 MAC 地址分組，只保留最新的
-        pre_stmt = (
+        # 查詢 OLD 階段的記錄，按 MAC 地址分組，只保留最新的
+        old_stmt = (
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.PRE,
+                ClientRecord.phase == MaintenancePhase.OLD,
             )
             .order_by(ClientRecord.mac_address, ClientRecord.collected_at.desc())
         )
-        pre_result = await session.execute(pre_stmt)
-        pre_records = pre_result.scalars().all()
+        old_result = await session.execute(old_stmt)
+        old_records = old_result.scalars().all()
         
         # 按 MAC 地址分組，只保留最新記錄
-        pre_by_mac = {}
-        for record in pre_records:
-            if record.mac_address not in pre_by_mac:
-                pre_by_mac[record.mac_address] = record
+        old_by_mac = {}
+        for record in old_records:
+            if record.mac_address not in old_by_mac:
+                old_by_mac[record.mac_address] = record
         
-        # 查詢 POST 階段的記錄，按 MAC 地址分組，只保留最新的
-        post_stmt = (
+        # 查詢 NEW 階段的記錄，按 MAC 地址分組，只保留最新的
+        new_stmt = (
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.POST,
+                ClientRecord.phase == MaintenancePhase.NEW,
             )
             .order_by(ClientRecord.mac_address, ClientRecord.collected_at.desc())
         )
-        post_result = await session.execute(post_stmt)
-        post_records = post_result.scalars().all()
+        new_result = await session.execute(new_stmt)
+        new_records = new_result.scalars().all()
         
         # 按 MAC 地址分組，只保留最新記錄
-        post_by_mac = {}
-        for record in post_records:
-            if record.mac_address not in post_by_mac:
-                post_by_mac[record.mac_address] = record
+        new_by_mac = {}
+        for record in new_records:
+            if record.mac_address not in new_by_mac:
+                new_by_mac[record.mac_address] = record
         
         # 生成比較結果
         comparisons = []
-        all_macs = set(pre_by_mac.keys()) | set(post_by_mac.keys())
+        all_macs = set(old_by_mac.keys()) | set(new_by_mac.keys())
         
         for mac in all_macs:
-            pre_record = pre_by_mac.get(mac)
-            post_record = post_by_mac.get(mac)
+            old_record = old_by_mac.get(mac)
+            new_record = new_by_mac.get(mac)
             
             # 建立比較記錄
             comparison = ClientComparison(
@@ -135,41 +134,29 @@ class ClientComparisonService:
                 mac_address=mac,
             )
             
-            # 添加 PRE 階段數據
-            if pre_record:
-                comparison.pre_ip_address = pre_record.ip_address
-                comparison.pre_hostname = pre_record.hostname
-                comparison.pre_switch_hostname = pre_record.switch_hostname
-                comparison.pre_interface_name = pre_record.interface_name
-                comparison.pre_vlan_id = pre_record.vlan_id
-                comparison.pre_speed = pre_record.speed
-                comparison.pre_duplex = pre_record.duplex
-                comparison.pre_link_status = pre_record.link_status
-                comparison.pre_ping_reachable = pre_record.ping_reachable
-                comparison.pre_ping_latency_ms = pre_record.ping_latency_ms
-                comparison.pre_acl_passes = pre_record.acl_passes
-                
-                # 嘗試從 parsed_data 中提取 topology_role
-                if pre_record.parsed_data and "topology_role" in pre_record.parsed_data:
-                    comparison.pre_topology_role = pre_record.parsed_data["topology_role"]
+            # 添加 OLD（舊設備）數據
+            if old_record:
+                comparison.old_ip_address = old_record.ip_address
+                comparison.old_switch_hostname = old_record.switch_hostname
+                comparison.old_interface_name = old_record.interface_name
+                comparison.old_vlan_id = old_record.vlan_id
+                comparison.old_speed = old_record.speed
+                comparison.old_duplex = old_record.duplex
+                comparison.old_link_status = old_record.link_status
+                comparison.old_ping_reachable = old_record.ping_reachable
+                comparison.old_acl_passes = old_record.acl_passes
             
-            # 添加 POST 階段數據
-            if post_record:
-                comparison.post_ip_address = post_record.ip_address
-                comparison.post_hostname = post_record.hostname
-                comparison.post_switch_hostname = post_record.switch_hostname
-                comparison.post_interface_name = post_record.interface_name
-                comparison.post_vlan_id = post_record.vlan_id
-                comparison.post_speed = post_record.speed
-                comparison.post_duplex = post_record.duplex
-                comparison.post_link_status = post_record.link_status
-                comparison.post_ping_reachable = post_record.ping_reachable
-                comparison.post_ping_latency_ms = post_record.ping_latency_ms
-                comparison.post_acl_passes = post_record.acl_passes
-                
-                # 嘗試從 parsed_data 中提取 topology_role
-                if post_record.parsed_data and "topology_role" in post_record.parsed_data:
-                    comparison.post_topology_role = post_record.parsed_data["topology_role"]
+            # 添加 NEW（新設備）數據
+            if new_record:
+                comparison.new_ip_address = new_record.ip_address
+                comparison.new_switch_hostname = new_record.switch_hostname
+                comparison.new_interface_name = new_record.interface_name
+                comparison.new_vlan_id = new_record.vlan_id
+                comparison.new_speed = new_record.speed
+                comparison.new_duplex = new_record.duplex
+                comparison.new_link_status = new_record.link_status
+                comparison.new_ping_reachable = new_record.ping_reachable
+                comparison.new_acl_passes = new_record.acl_passes
             
             # 比較差異
             differences = self._find_differences(comparison)
@@ -191,64 +178,91 @@ class ClientComparisonService:
     
     def _find_differences(self, comparison: ClientComparison) -> dict[str, Any]:
         """找出比較記錄中的差異。"""
-        differences = {}
+        differences: dict[str, Any] = {}
         
-        # 定義要比較的欄位對
+        # 定義要比較的欄位對（old vs new）
         fields_to_compare = [
-            ("pre_switch_hostname", "post_switch_hostname", "switch_hostname"),
-            ("pre_interface_name", "post_interface_name", "interface_name"),
-            ("pre_topology_role", "post_topology_role", "topology_role"),
-            ("pre_vlan_id", "post_vlan_id", "vlan_id"),
-            ("pre_speed", "post_speed", "speed"),
-            ("pre_duplex", "post_duplex", "duplex"),
-            ("pre_link_status", "post_link_status", "link_status"),
-            ("pre_ping_reachable", "post_ping_reachable", "ping_reachable"),
-            ("pre_ping_latency_ms", "post_ping_latency_ms", "ping_latency_ms"),
-            ("pre_acl_passes", "post_acl_passes", "acl_passes"),
-            ("pre_ip_address", "post_ip_address", "ip_address"),
-            ("pre_hostname", "post_hostname", "hostname"),
+            ("old_switch_hostname", "new_switch_hostname", "switch_hostname"),
+            ("old_interface_name", "new_interface_name", "interface_name"),
+            ("old_vlan_id", "new_vlan_id", "vlan_id"),
+            ("old_speed", "new_speed", "speed"),
+            ("old_duplex", "new_duplex", "duplex"),
+            ("old_link_status", "new_link_status", "link_status"),
+            ("old_ping_reachable", "new_ping_reachable", "ping_reachable"),
+            ("old_acl_passes", "new_acl_passes", "acl_passes"),
+            ("old_ip_address", "new_ip_address", "ip_address"),
         ]
         
-        for pre_field, post_field, field_name in fields_to_compare:
-            pre_value = getattr(comparison, pre_field, None)
-            post_value = getattr(comparison, post_field, None)
+        for old_field, new_field, field_name in fields_to_compare:
+            old_value = getattr(comparison, old_field, None)
+            new_value = getattr(comparison, new_field, None)
             
             # 檢查是否有實際變化（忽略 None 值的比較）
-            if pre_value != post_value:
-                # 特殊處理 ping_latency_ms，只有差異超過閾值才記錄
-                if field_name == "ping_latency_ms":
-                    if pre_value is not None and post_value is not None:
-                        if abs(pre_value - post_value) > self.PING_LATENCY_THRESHOLD:
-                            differences[field_name] = {
-                                "pre": pre_value,
-                                "post": post_value,
-                                "change": post_value - pre_value,
-                            }
+            if old_value != new_value:
                 # 對於布林值，只有都不為 None 時才比較
-                elif field_name in ("ping_reachable", "acl_passes"):
-                    if pre_value is not None and post_value is not None and pre_value != post_value:
+                if field_name in ("ping_reachable", "acl_passes"):
+                    if old_value is not None and new_value is not None and old_value != new_value:
                         differences[field_name] = {
-                            "pre": pre_value,
-                            "post": post_value,
+                            "old": old_value,
+                            "new": new_value,
                         }
                 # 其他字符串字段，只有都不為 None 時才比較
-                elif pre_value is not None and post_value is not None:
+                elif old_value is not None and new_value is not None:
                     differences[field_name] = {
-                        "pre": pre_value,
-                        "post": post_value,
+                        "old": old_value,
+                        "new": new_value,
                     }
         
         return differences
     
-    def _calculate_severity(self, differences: dict[str, Any]) -> str:
-        """基於差異類型計算嚴重程度。"""
-        diff_keys = set(differences.keys())
+    def _calculate_severity(
+        self,
+        differences: dict[str, Any],
+        device_mappings: dict[str, str] | None = None,
+    ) -> str:
+        """基於差異類型計算嚴重程度。
         
-        # 如果包含 critical 欄位，則為 critical
-        if diff_keys & self.CRITICAL_FIELDS:
+        簡化邏輯：
+        1. link_status/ping/acl 變化 → critical
+        2. 設備變化 + 符合對應 → info（正常）
+        3. 設備變化 + 不符合對應 → warning（警告）
+        4. port 有變化 → warning（警告）
+        5. 其他 warning 欄位（speed, duplex, vlan）→ warning
+        """
+        diff_keys = set(differences.keys())
+        device_mappings = device_mappings or {}
+        
+        # 1. 真正的 critical 欄位（不管設備對應）
+        real_critical = {"link_status", "ping_reachable", "acl_passes"}
+        if diff_keys & real_critical:
             return "critical"
         
-        # 如果包含 warning 欄位，則為 warning
+        switch_change = differences.get("switch_hostname")
+        interface_change = differences.get("interface_name")
+        
+        # 2. 檢查設備變化
+        if switch_change:
+            old_switch = switch_change.get("old", "")
+            new_switch = switch_change.get("new", "")
+            # 使用小寫 key 來查詢設備對應（因為字典 key 是小寫）
+            expected_new = device_mappings.get(old_switch.lower() if old_switch else "")
+            
+            # 設備變化 + 符合對應 → 正常（比較時忽略大小寫）
+            if expected_new and expected_new.lower() == (new_switch.lower() if new_switch else ""):
+                # 檢查其他 warning 欄位
+                other_diffs = diff_keys - {"switch_hostname", "interface_name"}
+                if other_diffs & self.WARNING_FIELDS:
+                    return "warning"
+                return "info"
+            
+            # 設備變化 + 不符合對應 → 警告
+            return "warning"
+        
+        # 3. 設備沒變但 port 變化 → 警告
+        if interface_change:
+            return "warning"
+        
+        # 4. 其他 warning 欄位（speed, duplex, vlan）
         if diff_keys & self.WARNING_FIELDS:
             return "warning"
         
@@ -270,14 +284,10 @@ class ClientComparisonService:
             else:
                 prefix = "ℹ️ INFO: "
             
-            pre_val = change_info.get("pre")
-            post_val = change_info.get("post")
+            old_val = change_info.get("old")
+            new_val = change_info.get("new")
             
-            if field_name == "ping_latency_ms":
-                change = change_info.get("change", 0)
-                notes.append(f"{prefix}{field_name}: {pre_val}ms → {post_val}ms (變化: {change:+.1f}ms)")
-            else:
-                notes.append(f"{prefix}{field_name}: {pre_val} → {post_val}")
+            notes.append(f"{prefix}{field_name}: {old_val} → {new_val}")
         
         return " | ".join(notes) if notes else "未檢測到變化"
     
@@ -311,26 +321,70 @@ class ClientComparisonService:
         search_text: str | None = None,
         severity: str | None = None,
         changed_only: bool = False,
+        before_time: str | None = None,
     ) -> list[ClientComparison]:
         """
         查詢比較結果。
         
         支持按 MAC 地址、IP 地址、嚴重程度和是否變化進行篩選。
+        如果提供 before_time，则动态生成比较结果而非查询数据库。
         """
         from sqlalchemy import or_
         
+        # 如果提供了 before_time，动态生成比较结果
+        if before_time:
+            from datetime import datetime
+            
+            before_dt = datetime.fromisoformat(before_time)
+            
+            # 获取最新时间
+            from sqlalchemy import func
+            latest_stmt = (
+                select(func.max(ClientRecord.collected_at))
+                .where(ClientRecord.maintenance_id == maintenance_id)
+            )
+            latest_result = await session.execute(latest_stmt)
+            latest_time = latest_result.scalar()
+            
+            # 生成比较结果
+            comparisons = await self._generate_comparisons_at_time(
+                maintenance_id=maintenance_id,
+                before_time=before_dt,
+                after_time=latest_time,
+                session=session,
+            )
+            
+            # 应用筛选
+            if search_text:
+                search_lower = search_text.lower()
+                comparisons = [
+                    c for c in comparisons
+                    if (c.mac_address and search_lower in c.mac_address.lower())
+                    or (c.old_ip_address and search_lower in c.old_ip_address.lower())
+                    or (c.new_ip_address and search_lower in c.new_ip_address.lower())
+                ]
+            
+            if severity:
+                comparisons = [c for c in comparisons if c.severity == severity]
+            
+            if changed_only:
+                comparisons = [c for c in comparisons if c.is_changed]
+            
+            return comparisons
+        
+        # 否则查询数据库中保存的比较结果
         stmt = select(ClientComparison).where(
             ClientComparison.maintenance_id == maintenance_id
         )
         
         if search_text:
-            # 搜尋 MAC 地址或 IP 地址（PRE 或 POST 階段）
+            # 搜尋 MAC 地址或 IP 地址（OLD 或 NEW 階段）
             search_pattern = f"%{search_text}%"
             stmt = stmt.where(
                 or_(
                     ClientComparison.mac_address.ilike(search_pattern),
-                    ClientComparison.pre_ip_address.ilike(search_pattern),
-                    ClientComparison.post_ip_address.ilike(search_pattern),
+                    ClientComparison.old_ip_address.ilike(search_pattern),
+                    ClientComparison.new_ip_address.ilike(search_pattern),
                 )
             )
         
@@ -372,3 +426,534 @@ class ClientComparisonService:
             "warning": warning,
             "info": total - critical - warning - unchanged,
         }
+    
+    async def get_timepoints(
+        self,
+        maintenance_id: str,
+        session: AsyncSession,
+    ) -> list[dict[str, Any]]:
+        """获取所有历史时间点。
+        
+        返回该维护 ID 下所有采集数据的时间点列表。
+        """
+        from sqlalchemy import func, distinct
+        
+        stmt = (
+            select(
+                func.distinct(ClientRecord.collected_at).label('timepoint')
+            )
+            .where(ClientRecord.maintenance_id == maintenance_id)
+            .order_by('timepoint')
+        )
+        
+        result = await session.execute(stmt)
+        timepoints = result.scalars().all()
+        
+        return [
+            {
+                "timestamp": tp.isoformat(),
+                "label": tp.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            for tp in timepoints
+        ]
+    
+    async def get_statistics(
+        self,
+        maintenance_id: str,
+        session: AsyncSession,
+    ) -> list[dict[str, Any]]:
+        """获取每个时间点的统计数据。
+        
+        用于时间轴图表显示趋势。按用户自定义分类统计异常数。
+        如果没有 ClientRecord，则使用 ClientComparison 生成静态统计。
+        """
+        from sqlalchemy import func
+        from app.db.models import ClientCategory, ClientCategoryMember
+        
+        # 检查是否有 ClientRecord 数据
+        record_count_stmt = (
+            select(func.count())
+            .select_from(ClientRecord)
+            .where(ClientRecord.maintenance_id == maintenance_id)
+        )
+        record_count_result = await session.execute(record_count_stmt)
+        record_count = record_count_result.scalar() or 0
+        
+        # 如果没有 ClientRecord，使用 ClientComparison 生成静态统计
+        if record_count == 0:
+            return await self._get_static_statistics(maintenance_id, session)
+        
+        # 获取所有时间点（从 ClientRecord）
+        timepoints_data = await self.get_timepoints(maintenance_id, session)
+        
+        # 获取用户自定义分类和成员（只取活躍分類）
+        cat_stmt = select(ClientCategory).where(ClientCategory.is_active == True)
+        cat_result = await session.execute(cat_stmt)
+        categories = cat_result.scalars().all()
+        
+        # 只查詢活躍分類的成員
+        active_cat_ids = [c.id for c in categories]
+        member_stmt = (
+            select(ClientCategoryMember)
+            .where(ClientCategoryMember.category_id.in_(active_cat_ids))
+        )
+        member_result = await session.execute(member_stmt)
+        members = member_result.scalars().all()
+        
+        # 建立 MAC -> category_ids 对照（一對多：一個 MAC 可屬於多個分類）
+        mac_to_categories: dict[str, list[int]] = {}
+        for m in members:
+            normalized_mac = m.mac_address.upper() if m.mac_address else ""
+            if normalized_mac:
+                if normalized_mac not in mac_to_categories:
+                    mac_to_categories[normalized_mac] = []
+                mac_to_categories[normalized_mac].append(m.category_id)
+        
+        # 分类信息
+        category_info = {cat.id: {"name": cat.name, "color": cat.color} for cat in categories}
+        
+        statistics = []
+
+        def summarize(comps):
+            total = len(comps)
+            has_issues = sum(1 for c in comps if c.is_changed)
+            critical = sum(1 for c in comps if c.severity == "critical")
+            warning = sum(1 for c in comps if c.severity == "warning")
+            return {
+                "total": total,
+                "has_issues": has_issues,
+                "critical": critical,
+                "warning": warning,
+            }
+        
+        for tp_data in timepoints_data:
+            from datetime import datetime
+            tp = datetime.fromisoformat(tp_data["timestamp"])
+            
+            # 获取最新时间
+            latest_stmt = (
+                select(func.max(ClientRecord.collected_at))
+                .where(ClientRecord.maintenance_id == maintenance_id)
+            )
+            latest_result = await session.execute(latest_stmt)
+            latest_time = latest_result.scalar()
+            
+            # 生成该时间点的比较结果（不保存）
+            comparisons = await self._generate_comparisons_at_time(
+                maintenance_id=maintenance_id,
+                before_time=tp,
+                after_time=latest_time,
+                session=session,
+            )
+            
+            # 总计统计
+            all_summary = summarize(comparisons)
+            
+            # 按用户分类统计
+            by_user_category: dict[str, dict[str, Any]] = {}
+            
+            # 初始化分类统计
+            for cat_id, cat_data in category_info.items():
+                by_user_category[str(cat_id)] = {
+                    "name": cat_data["name"],
+                    "color": cat_data["color"],
+                    "total": 0,
+                    "has_issues": 0,
+                    "undetected": 0,
+                }
+            by_user_category["null"] = {
+                "name": "未分類",
+                "color": "#6B7280",
+                "total": 0,
+                "has_issues": 0,
+                "undetected": 0,
+            }
+            
+            # 建立已偵測到的 MAC 集合
+            detected_macs = {
+                c.mac_address.upper() for c in comparisons if c.mac_address
+            }
+            
+            # 统计每个分类的异常数
+            for comp in comparisons:
+                normalized_mac = comp.mac_address.upper() if comp.mac_address else ""
+                cat_ids = mac_to_categories.get(normalized_mac, [])
+                
+                # 如果沒有分類，歸入未分類
+                if not cat_ids:
+                    cat_ids = [None]
+                
+                # 統計到每個所屬分類
+                for cat_id in cat_ids:
+                    cat_key = str(cat_id) if cat_id else "null"
+                    if cat_key not in by_user_category:
+                        cat_key = "null"
+                    by_user_category[cat_key]["total"] += 1
+                    if comp.is_changed:
+                        by_user_category[cat_key]["has_issues"] += 1
+            
+            # 統計分類成員中未偵測到的 MAC（未偵測也算異常！）
+            for mac, cat_ids in mac_to_categories.items():
+                if mac not in detected_macs:
+                    for cat_id in cat_ids:
+                        cat_key = str(cat_id) if cat_id else "null"
+                        if cat_key in by_user_category:
+                            by_user_category[cat_key]["total"] += 1
+                            by_user_category[cat_key]["undetected"] += 1
+                            by_user_category[cat_key]["has_issues"] += 1
+            
+            # 計算 normal（正常數 = 總數 - 異常數）
+            for cat_key in by_user_category:
+                cat_data = by_user_category[cat_key]
+                cat_data["normal"] = cat_data["total"] - cat_data["has_issues"]
+            
+            statistics.append({
+                "timestamp": tp_data["timestamp"],
+                "label": tp_data["label"],
+                "total": all_summary["total"],
+                "has_issues": all_summary["has_issues"],
+                "critical": all_summary["critical"],
+                "warning": all_summary["warning"],
+                "by_user_category": by_user_category,
+            })
+        
+        return statistics
+    
+    async def _generate_comparisons_at_time(
+        self,
+        maintenance_id: str,
+        before_time: datetime,
+        after_time: datetime | None,
+        session: AsyncSession,
+    ) -> list[ClientComparison]:
+        """在指定时间点生成比较结果（不保存到数据库）。"""
+        from app.db.models import MaintenanceDeviceList
+        
+        # 載入設備對應（從新的 MaintenanceDeviceList 表格）
+        dev_stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+        dev_result = await session.execute(dev_stmt)
+        device_mappings_list = dev_result.scalars().all()
+        
+        # 建立設備對應字典 {old_hostname: new_hostname}（大小寫不敏感）
+        device_mappings: dict[str, str] = {}
+        for dm in device_mappings_list:
+            # 使用小寫 key 以確保比較時大小寫不敏感
+            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
+        
+        # 查询 BEFORE 时间点的记录
+        before_stmt = (
+            select(ClientRecord)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.collected_at <= before_time,
+            )
+            .order_by(ClientRecord.mac_address, ClientRecord.collected_at.desc())
+        )
+        before_result = await session.execute(before_stmt)
+        before_records = before_result.scalars().all()
+        
+        # 按 MAC 地址分组，只保留最新记录
+        before_by_mac = {}
+        for record in before_records:
+            if record.mac_address not in before_by_mac:
+                before_by_mac[record.mac_address] = record
+        
+        # 查询 AFTER 时间点的记录
+        if after_time:
+            after_stmt = (
+                select(ClientRecord)
+                .where(
+                    ClientRecord.maintenance_id == maintenance_id,
+                    ClientRecord.collected_at <= after_time,
+                )
+                .order_by(
+                    ClientRecord.mac_address,
+                    ClientRecord.collected_at.desc()
+                )
+            )
+        else:
+            after_stmt = (
+                select(ClientRecord)
+                .where(ClientRecord.maintenance_id == maintenance_id)
+                .order_by(
+                    ClientRecord.mac_address,
+                    ClientRecord.collected_at.desc()
+                )
+            )
+        after_result = await session.execute(after_stmt)
+        after_records = after_result.scalars().all()
+        
+        # 按 MAC 地址分组，只保留最新记录
+        after_by_mac = {}
+        for record in after_records:
+            if record.mac_address not in after_by_mac:
+                after_by_mac[record.mac_address] = record
+        
+        # 生成比较结果
+        comparisons = []
+        all_macs = set(before_by_mac.keys()) | set(after_by_mac.keys())
+        
+        for mac in all_macs:
+            before_record = before_by_mac.get(mac)
+            after_record = after_by_mac.get(mac)
+            
+            comparison = ClientComparison(
+                maintenance_id=maintenance_id,
+                collected_at=datetime.utcnow(),
+                mac_address=mac,
+            )
+            
+            # 添加 BEFORE 数据
+            if before_record:
+                comparison.old_ip_address = before_record.ip_address
+                comparison.old_switch_hostname = before_record.switch_hostname
+                comparison.old_interface_name = before_record.interface_name
+                comparison.old_vlan_id = before_record.vlan_id
+                comparison.old_speed = before_record.speed
+                comparison.old_duplex = before_record.duplex
+                comparison.old_link_status = before_record.link_status
+                comparison.old_ping_reachable = before_record.ping_reachable
+                comparison.old_acl_passes = before_record.acl_passes
+            
+            # 添加 AFTER 数据
+            if after_record:
+                comparison.new_ip_address = after_record.ip_address
+                comparison.new_switch_hostname = after_record.switch_hostname
+                comparison.new_interface_name = after_record.interface_name
+                comparison.new_vlan_id = after_record.vlan_id
+                comparison.new_speed = after_record.speed
+                comparison.new_duplex = after_record.duplex
+                comparison.new_link_status = after_record.link_status
+                comparison.new_ping_reachable = after_record.ping_reachable
+                comparison.new_acl_passes = after_record.acl_passes
+            
+            # 比较差异（傳入設備對應）
+            comparison = self._compare_records(comparison, device_mappings)
+            comparisons.append(comparison)
+        
+        return comparisons
+
+    def _compare_records(
+        self,
+        comparison: ClientComparison,
+        device_mappings: dict[str, str] | None = None,
+    ) -> ClientComparison:
+        """給定一筆比較記錄，填充差異、嚴重度與備註。
+        
+        處理單邊未偵測的情況：
+        - OLD有值 → NEW未偵測 = critical（設備消失了！）
+        - OLD未偵測 → NEW有值 = warning（新出現的設備）
+        - 兩邊都未偵測 = undetected（灰色標記，不計入異常）
+        
+        Args:
+            comparison: 比較記錄
+            device_mappings: 設備對應 {old_hostname: new_hostname}
+        """
+        device_mappings = device_mappings or {}
+        
+        # 檢查是否單邊未偵測
+        old_detected = self._has_any_data(comparison, 'old')
+        new_detected = self._has_any_data(comparison, 'new')
+        
+        # 情況1：兩邊都未偵測
+        if not old_detected and not new_detected:
+            comparison.is_changed = False
+            comparison.severity = "undetected"
+            comparison.differences = {}
+            comparison.notes = "兩個時間點都未偵測到"
+            return comparison
+        
+        # 情況2：OLD有值，NEW未偵測 → 重大問題（設備消失）
+        if old_detected and not new_detected:
+            comparison.is_changed = True
+            comparison.severity = "critical"
+            comparison.differences = {
+                "_status": {"old": "已偵測", "new": "未偵測"}
+            }
+            comparison.notes = "🔴 重大：NEW 階段未偵測到該設備"
+            return comparison
+        
+        # 情況3：OLD未偵測，NEW有值 → 警告（新出現）
+        if not old_detected and new_detected:
+            comparison.is_changed = True
+            comparison.severity = "warning"
+            comparison.differences = {
+                "_status": {"old": "未偵測", "new": "已偵測"}
+            }
+            comparison.notes = "🟡 警告：OLD 階段未偵測到該設備"
+            return comparison
+        
+        # 情況4：兩邊都有值，正常比較差異
+        differences = self._find_differences(comparison)
+        comparison.differences = differences
+
+        if differences:
+            comparison.is_changed = True
+            # 傳入設備對應來判斷嚴重度
+            comparison.severity = self._calculate_severity(
+                differences,
+                device_mappings,
+            )
+            comparison.notes = self._generate_notes(comparison, differences)
+        else:
+            comparison.is_changed = False
+            comparison.severity = "info"
+            comparison.notes = "未檢測到變化"
+
+        return comparison
+    
+    def _has_any_data(self, comparison: ClientComparison, prefix: str) -> bool:
+        """檢查指定前綴（old/new）是否有任何有效數據。"""
+        fields = [
+            f"{prefix}_switch_hostname",
+            f"{prefix}_interface_name",
+            f"{prefix}_ip_address",
+            f"{prefix}_vlan_id",
+            f"{prefix}_speed",
+            f"{prefix}_duplex",
+            f"{prefix}_link_status",
+        ]
+        for field in fields:
+            value = getattr(comparison, field, None)
+            if value is not None and value != "":
+                return True
+        return False
+
+    async def _get_static_statistics(
+        self,
+        maintenance_id: str,
+        session: AsyncSession,
+    ) -> list[dict[str, Any]]:
+        """
+        当没有 ClientRecord 时，使用 ClientComparison 生成静态统计。
+        
+        只生成一个时间点的统计数据（当前快照）。
+        """
+        from sqlalchemy import func
+        from app.db.models import ClientCategory, ClientCategoryMember
+        
+        # 获取所有比较结果
+        comp_stmt = (
+            select(ClientComparison)
+            .where(ClientComparison.maintenance_id == maintenance_id)
+        )
+        comp_result = await session.execute(comp_stmt)
+        comparisons = comp_result.scalars().all()
+        
+        if not comparisons:
+            return []
+        
+        # 获取最早时间点作为标签
+        min_time = min(
+            (c.collected_at for c in comparisons if c.collected_at),
+            default=datetime.utcnow()
+        )
+        max_time = max(
+            (c.collected_at for c in comparisons if c.collected_at),
+            default=datetime.utcnow()
+        )
+        
+        # 获取用户自定义分类和成员
+        cat_stmt = select(ClientCategory).where(ClientCategory.is_active == True)
+        cat_result = await session.execute(cat_stmt)
+        categories = cat_result.scalars().all()
+        
+        active_cat_ids = [c.id for c in categories]
+        member_stmt = (
+            select(ClientCategoryMember)
+            .where(ClientCategoryMember.category_id.in_(active_cat_ids))
+        )
+        member_result = await session.execute(member_stmt)
+        members = member_result.scalars().all()
+        
+        # 建立 MAC -> category_ids 对照
+        mac_to_categories: dict[str, list[int]] = {}
+        for m in members:
+            normalized_mac = m.mac_address.upper() if m.mac_address else ""
+            if normalized_mac:
+                if normalized_mac not in mac_to_categories:
+                    mac_to_categories[normalized_mac] = []
+                mac_to_categories[normalized_mac].append(m.category_id)
+        
+        # 分类信息
+        category_info = {
+            cat.id: {"name": cat.name, "color": cat.color}
+            for cat in categories
+        }
+        
+        # 初始化分类统计
+        by_user_category: dict[str, dict[str, Any]] = {}
+        for cat_id, cat_data in category_info.items():
+            by_user_category[str(cat_id)] = {
+                "name": cat_data["name"],
+                "color": cat_data["color"],
+                "total": 0,
+                "has_issues": 0,
+                "undetected": 0,
+                "normal": 0,
+            }
+        by_user_category["null"] = {
+            "name": "未分類",
+            "color": "#6B7280",
+            "total": 0,
+            "has_issues": 0,
+            "undetected": 0,
+            "normal": 0,
+        }
+        
+        # 统计每个比较结果
+        total = len(comparisons)
+        has_issues = 0
+        critical = 0
+        warning = 0
+        
+        for comp in comparisons:
+            normalized_mac = comp.mac_address.upper() if comp.mac_address else ""
+            cat_ids = mac_to_categories.get(normalized_mac, [])
+            
+            if not cat_ids:
+                cat_ids = [None]
+            
+            for cat_id in cat_ids:
+                cat_key = str(cat_id) if cat_id else "null"
+                if cat_key not in by_user_category:
+                    cat_key = "null"
+                by_user_category[cat_key]["total"] += 1
+                if comp.is_changed:
+                    by_user_category[cat_key]["has_issues"] += 1
+            
+            if comp.is_changed:
+                has_issues += 1
+                if comp.severity == "critical":
+                    critical += 1
+                elif comp.severity == "warning":
+                    warning += 1
+        
+        # 计算 normal
+        for cat_key in by_user_category:
+            cat_data = by_user_category[cat_key]
+            cat_data["normal"] = cat_data["total"] - cat_data["has_issues"]
+        
+        # 返回两个时间点（起点和终点），让图表能显示
+        return [
+            {
+                "timestamp": min_time.isoformat(),
+                "label": min_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "total": total,
+                "has_issues": has_issues,
+                "critical": critical,
+                "warning": warning,
+                "by_user_category": by_user_category,
+            },
+            {
+                "timestamp": max_time.isoformat(),
+                "label": max_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "total": total,
+                "has_issues": has_issues,
+                "critical": critical,
+                "warning": warning,
+                "by_user_category": by_user_category,
+            },
+        ]

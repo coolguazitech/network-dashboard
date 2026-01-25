@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel
 
-from app.parsers.base import BaseParser
+from app.parsers.protocols import BaseParser
 
 
 class ClientData(BaseModel):

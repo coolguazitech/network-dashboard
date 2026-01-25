@@ -54,7 +54,7 @@ async def create_pre_data():
         record_pre = CollectionRecord(
             indicator_type="transceiver",
             switch_hostname="switch-old-01",
-            phase=MaintenancePhase.PRE,
+            phase=MaintenancePhase.OLD,
             maintenance_id="2026Q1-ANNUAL",
             raw_data="[mock pre-maintenance data]",
             parsed_data=transceiver_data_pre,
@@ -71,7 +71,7 @@ async def create_pre_data():
         record_version_pre = CollectionRecord(
             indicator_type="version",
             switch_hostname="switch-old-01",
-            phase=MaintenancePhase.PRE,
+            phase=MaintenancePhase.OLD,
             maintenance_id="2026Q1-ANNUAL",
             raw_data="[mock version data]",
             parsed_data=version_data_pre,
@@ -81,14 +81,14 @@ async def create_pre_data():
         
         await session.commit()
         
-        print("\n✅ PRE phase 數據創建完成！")
-        print("\nPRE 光模塊統計:")
+        print("\n✅ OLD phase 數據創建完成！")
+        print("\nOLD 光模塊統計:")
         print("  • Ethernet1/1 - 有 4 個問題 (Tx低、Rx低、溫度高、電壓低)")
         print("  • Ethernet1/2 - 有 1 個問題 (Tx低)")
         print("  • Ethernet1/3 - 正常")
-        print("  → PRE 通過率: 1/3 = 33%")
-        print("\nPOST 光模塊統計 (來自之前的測試):")
-        print("  → POST 通過率: 1/6 = 17%")
+        print("  → OLD 通過率: 1/3 = 33%")
+        print("\nNEW 光模塊統計 (來自之前的測試):")
+        print("  → NEW 通過率: 1/6 = 17%")
         print("\n現在訪問 API 可以看到對比結果！")
         print("=" * 70)
 
