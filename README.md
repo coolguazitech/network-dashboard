@@ -306,7 +306,6 @@ Mock 結果範例（TEST-100）：
 | Cisco | IOS | transceiver, neighbor |
 | Cisco | NX-OS | transceiver, neighbor, port_channel, error, fan, power |
 | HPE | Comware | transceiver, neighbor, port_channel, error, fan, power, ping |
-| Aruba | AOS-CX | transceiver |
 
 ---
 
