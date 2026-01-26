@@ -41,6 +41,11 @@ const routes = [
     component: () => import('./views/IndicatorDetail.vue'),
   },
   {
+    path: '/devices',
+    name: 'Devices',
+    component: () => import('./views/Devices.vue'),
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('./views/Settings.vue'),

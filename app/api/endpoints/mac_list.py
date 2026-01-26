@@ -84,14 +84,25 @@ async def list_macs(
         )
         
         if search:
+            from sqlalchemy import and_, or_
             keywords = search.strip().split()
-            for keyword in keywords:
-                search_pattern = f"%{keyword.upper()}%"
-                desc_pattern = f"%{keyword}%"
-                stmt = stmt.where(
-                    (MaintenanceMacList.mac_address.like(search_pattern)) |
-                    (MaintenanceMacList.description.like(desc_pattern))
-                )
+
+            field_conditions = []
+            # MAC address field (需要轉大寫)
+            mac_match = and_(*[
+                MaintenanceMacList.mac_address.like(f"%{kw.upper()}%")
+                for kw in keywords
+            ])
+            field_conditions.append(mac_match)
+
+            # Description field
+            desc_match = and_(*[
+                MaintenanceMacList.description.like(f"%{kw}%")
+                for kw in keywords
+            ])
+            field_conditions.append(desc_match)
+
+            stmt = stmt.where(or_(*field_conditions))
         
         stmt = stmt.order_by(MaintenanceMacList.mac_address)
         stmt = stmt.offset(offset).limit(limit)
@@ -448,14 +459,25 @@ async def list_macs_detailed(
         )
         
         if search:
+            from sqlalchemy import and_, or_
             keywords = search.strip().split()
-            for keyword in keywords:
-                search_pattern = f"%{keyword.upper()}%"
-                desc_pattern = f"%{keyword}%"
-                stmt = stmt.where(
-                    (MaintenanceMacList.mac_address.like(search_pattern)) |
-                    (MaintenanceMacList.description.like(desc_pattern))
-                )
+
+            field_conditions = []
+            # MAC address field (需要轉大寫)
+            mac_match = and_(*[
+                MaintenanceMacList.mac_address.like(f"%{kw.upper()}%")
+                for kw in keywords
+            ])
+            field_conditions.append(mac_match)
+
+            # Description field
+            desc_match = and_(*[
+                MaintenanceMacList.description.like(f"%{kw}%")
+                for kw in keywords
+            ])
+            field_conditions.append(desc_match)
+
+            stmt = stmt.where(or_(*field_conditions))
         
         stmt = stmt.order_by(MaintenanceMacList.mac_address)
         result = await session.execute(stmt)
@@ -550,14 +572,25 @@ async def export_csv(
 
         # 多關鍵字搜尋
         if search:
+            from sqlalchemy import and_, or_
             keywords = search.strip().split()
-            for keyword in keywords:
-                search_pattern = f"%{keyword.upper()}%"
-                desc_pattern = f"%{keyword}%"
-                stmt = stmt.where(
-                    (MaintenanceMacList.mac_address.like(search_pattern)) |
-                    (MaintenanceMacList.description.like(desc_pattern))
-                )
+
+            field_conditions = []
+            # MAC address field (需要轉大寫)
+            mac_match = and_(*[
+                MaintenanceMacList.mac_address.like(f"%{kw.upper()}%")
+                for kw in keywords
+            ])
+            field_conditions.append(mac_match)
+
+            # Description field
+            desc_match = and_(*[
+                MaintenanceMacList.description.like(f"%{kw}%")
+                for kw in keywords
+            ])
+            field_conditions.append(desc_match)
+
+            stmt = stmt.where(or_(*field_conditions))
 
         stmt = stmt.order_by(MaintenanceMacList.mac_address)
         result = await session.execute(stmt)

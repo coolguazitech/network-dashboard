@@ -73,3 +73,4 @@ class HpePingParser(CiscoNxosPingParser):
 
 # Register parsers
 parser_registry.register(CiscoNxosPingParser())
+parser_registry.register(HpePingParser())

@@ -1,8 +1,8 @@
 # Network Dashboard - 網路設備歲修監控系統
 
-一個用於監控網路設備歲修過程的 Dashboard 系統，支援前後對比、多種指標評估。
+一個用於監控網路設備歲修過程的 Dashboard 系統，支援 8 種指標自動評估、前後對比、失敗原因追蹤，協助工程師快速定位問題。
 
-## 🚀 快速啟動
+## 快速啟動
 
 ### 1. 啟動資料庫
 
@@ -22,15 +22,24 @@ source venv/bin/activate  # macOS/Linux
 pip install -e ".[dev]"
 ```
 
-### 3. 啟動後端
+### 3. 初始化測試資料
+
+```bash
+python scripts/init_factory_data.py
+```
+
+建立 `TEST-100` 歲修作業，包含 34 台新設備、設備分類、MAC 清單、期望值等。
+
+### 4. 啟動後端
 
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-API 文件：`http://localhost:8000/api/docs`
+- API 文件：`http://localhost:8000/api/docs`
+- API 前綴：`/api/v1`
 
-### 4. 啟動前端
+### 5. 啟動前端
 
 ```bash
 cd frontend
@@ -38,40 +47,42 @@ npm install
 npm run dev
 ```
 
-前端：`http://localhost:3000`
+- 前端：`http://localhost:3000`
 
 ---
 
-## 🔄 資料流架構
+## 資料流架構
 
 ```
 ┌─────────────────┐     ┌──────────────┐     ┌─────────────────┐
-│  Scheduled Job  │────▶│   Parser     │────▶│  DB (Raw Data)  │
-│  (APScheduler)  │     │  (解析CLI)   │     │  collection_    │
-│  定期撈資料     │     │              │     │  records        │
-└─────────────────┘     └──────────────┘     └────────┬────────┘
-        │                                             │
-        │ 呼叫外部 API                                │ Indicator 查詢
-        ▼                                             ▼
+│  Scheduler Jobs │────▶│   Parser     │────▶│  DB             │
+│  (APScheduler)  │     │  (解析 CLI)  │     │  collection_    │
+│  各自獨立排程   │     │              │     │  records        │
+└────────┬────────┘     └──────────────┘     └────────┬────────┘
+         │                                            │
+         │ 呼叫外部 API                               │ Indicator 讀取
+         ▼                                            ▼
 ┌─────────────────┐                         ┌─────────────────┐
 │  External API   │                         │   Indicator     │
-│  (純文字回傳)   │                         │   .calculate()  │
-└─────────────────┘                         │   用 Metric 計算│
-                                            └────────┬────────┘
+│  show/display   │                         │   .evaluate()   │
+│  ping, etc.     │                         │   計算通過率    │
+└─────────────────┘                         └────────┬────────┘
                                                      │
                                                      ▼
                                             ┌─────────────────┐
-                                            │  DB (Results)   │
-                                            │  indicator_     │
-                                            │  results        │
-                                            └────────┬────────┘
-                                                     │
-                                                     ▼
-                                            ┌─────────────────┐
-                                            │  Frontend API   │
-                                            │  時間序列/Raw   │
+                                            │  Dashboard API  │
+                                            │  /summary       │
+                                            │  /details       │
                                             └─────────────────┘
 ```
+
+### 關鍵設計
+
+- **Scheduler 與 Indicator 獨立**：Scheduler 負責從外部 API 採集原始資料（show transceiver、display fan、ping 等），Indicator 從 DB 讀取已採集的資料進行評估
+- **Scheduler 不綁定 Indicator**：也會有 MAC TABLE、ARP TABLE 等採集 scheduler，這些不直接對應指標，而是供多個 Indicator 使用
+- **兩種分母來源**：
+  - **期望類**（ping、port_channel、uplink）：分母來自使用者定義的期望清單（MaintenanceDeviceList、PortChannelExpectation 等）
+  - **固定類**（power、fan、error_count、transceiver、version）：分母來自實際採集到的資料筆數
 
 ### 為什麼需要 DB？
 
@@ -82,124 +93,210 @@ npm run dev
 
 ---
 
-## 🏗️ 目錄結構
+## 指標總覽
+
+系統支援 8 種指標，每種都會計算通過率並記錄失敗原因：
+
+| 指標 | 說明 | 分母來源 | 通過條件 |
+|------|------|----------|----------|
+| `ping` | 新設備連通性檢查 | MaintenanceDeviceList (新設備數) | 可達且成功率 >= 80% |
+| `power` | 電源供應器狀態 | 設備數 | 所有 PSU 狀態正常 |
+| `fan` | 風扇狀態 | 設備數 | 所有風扇狀態正常 |
+| `transceiver` | 光模塊 Tx/Rx/溫度 | 光模塊數 | 功率與溫度在範圍內 |
+| `error_count` | 介面錯誤計數 | 介面數 | CRC/In/Out 錯誤為 0 |
+| `port_channel` | Port-Channel 狀態 | PortChannelExpectation | 所有成員 UP |
+| `uplink` | Uplink 拓撲驗證 | UplinkExpectation | 鄰居符合期望 |
+| `version` | 韌體版本驗證 | 設備數 | 版本符合期望值 |
+
+---
+
+## 目錄結構
 
 ```
 network_dashboard/
 ├── app/
-│   ├── api/                  # FastAPI 路由
-│   ├── core/                 # 核心設定
-│   │   ├── config.py         # pydantic-settings 設定
-│   │   └── enums.py          # 列舉定義
-│   ├── db/                   # 資料庫
-│   │   ├── base.py           # SQLAlchemy 設定
-│   │   └── models.py         # ORM 模型
-│   ├── indicators/           # 指標系統
-│   │   ├── base.py           # Indicator 抽象基類
-│   │   ├── metrics.py        # Metric 評估類
-│   │   └── transceiver.py    # TransceiverIndicator 實作
-│   ├── parsers/              # Parser 系統 (Plugin-based)
-│   │   ├── protocols.py      # Protocol 定義
-│   │   ├── registry.py       # Auto-discovery Registry
-│   │   └── plugins/          # Parser 插件
-│   ├── repositories/         # Repository Pattern (資料存取層)
-│   │   ├── base.py           # BaseRepository
-│   │   ├── switch.py         # SwitchRepository
+│   ├── main.py                     # FastAPI 入口，lifespan 管理
+│   ├── api/
+│   │   ├── routes.py               # Router 彙整
+│   │   └── endpoints/
+│   │       ├── dashboard.py        # Dashboard 摘要 & 指標詳情
+│   │       ├── maintenance.py      # 歲修作業管理
+│   │       ├── comparisons.py      # 前後對比
+│   │       ├── switches.py         # 設備管理
+│   │       ├── categories.py       # 設備分類
+│   │       ├── device_mappings.py  # 新舊設備對應
+│   │       ├── interface_mappings.py
+│   │       ├── mac_list.py         # MAC 清單
+│   │       ├── maintenance_devices.py
+│   │       ├── expectations.py     # 期望值設定
+│   │       └── indicators.py       # 指標評估
+│   ├── core/
+│   │   ├── config.py               # pydantic-settings 設定
+│   │   └── enums.py                # 列舉 (Phase, Vendor, Platform)
+│   ├── db/
+│   │   ├── base.py                 # SQLAlchemy async engine
+│   │   └── models.py              # ORM 模型
+│   ├── indicators/                 # 指標評估器
+│   │   ├── base.py                 # BaseIndicator ABC + IndicatorEvaluationResult
+│   │   ├── metrics.py              # Metric 評估類
+│   │   ├── ping.py                 # Ping 連通性
+│   │   ├── power.py                # 電源狀態
+│   │   ├── fan.py                  # 風扇狀態
+│   │   ├── transceiver.py          # 光模塊
+│   │   ├── error_count.py          # 錯誤計數
+│   │   ├── port_channel.py         # Port-Channel
+│   │   ├── uplink.py               # Uplink 拓撲
+│   │   └── version.py              # 韌體版本
+│   ├── parsers/                    # Parser 系統 (Plugin-based)
+│   │   ├── protocols.py            # Protocol 定義 & 資料模型
+│   │   ├── registry.py             # Auto-discovery Registry
+│   │   └── plugins/                # 各廠牌 Parser 插件
+│   │       ├── cisco_nxos_*.py     # Cisco NX-OS 系列
+│   │       ├── cisco_ios_*.py      # Cisco IOS 系列
+│   │       ├── hpe_*.py            # HPE Comware 系列
+│   │       ├── aruba_*.py          # Aruba 系列
+│   │       └── ping.py             # 通用 Ping Parser
+│   ├── repositories/               # Repository Pattern
+│   │   ├── base.py
+│   │   ├── switch.py
 │   │   ├── collection_record.py
 │   │   └── indicator_result.py
-│   └── services/             # 服務層
-│       ├── api_client.py     # 外部 API 客戶端
-│       ├── data_collection.py # 資料收集服務
-│       └── scheduler.py      # APScheduler 排程
-├── config/                   # YAML 設定檔
-│   ├── switches.yaml         # 設備定義
-│   ├── indicators.yaml       # 指標定義
-│   └── scheduler.yaml        # 排程設定
-├── frontend/                 # Vue.js 前端
-├── docker-compose.yml        # MariaDB + phpMyAdmin
-└── pyproject.toml            # 專案設定
+│   ├── schemas/                    # Pydantic schemas
+│   │   ├── switch.py
+│   │   └── indicator.py
+│   └── services/
+│       ├── indicator_service.py    # 指標評估服務 (支援 mock 模式)
+│       ├── data_collection.py      # 資料採集服務
+│       ├── api_client.py           # 外部 API 客戶端 (含 MockApiClient)
+│       ├── scheduler.py            # APScheduler 排程管理
+│       └── client_comparison_service.py
+├── config/
+│   ├── switches.yaml               # 設備定義
+│   ├── indicators.yaml             # 指標定義
+│   ├── scheduler.yaml              # 排程設定 (8 個指標 + ACL)
+│   └── client_comparison.yaml      # 對比設定
+├── scripts/
+│   ├── init_factory_data.py        # 初始化測試資料
+│   ├── seed_test_data.py
+│   └── ...
+├── migrations/                     # SQL migration 檔案
+├── frontend/                       # Vue 3 前端
+│   └── src/
+│       ├── views/
+│       │   ├── Dashboard.vue       # 主 Dashboard
+│       │   ├── IndicatorDetail.vue # 指標詳情 (含失敗清單)
+│       │   ├── Comparison.vue      # 前後對比
+│       │   ├── Settings.vue        # 設定頁面
+│       │   ├── Switches.vue        # 設備管理
+│       │   └── Devices.vue         # 設備清單
+│       └── components/
+│           ├── IndicatorCard.vue
+│           ├── IndicatorPie.vue
+│           ├── FailureTable.vue
+│           ├── CategoryModal.vue
+│           └── DeviceMappingModal.vue
+├── docker-compose.yml              # MariaDB + phpMyAdmin
+├── pyproject.toml
+├── .env
+└── README.md
 ```
 
 ---
 
-## 🎯 核心設計原則
+## API 端點
 
-### SOLID 原則應用
+### Dashboard
 
-1. **Single Responsibility**: 每個類只做一件事
-2. **Open-Closed**: Plugin-based 架構，新增功能不需修改現有程式碼
-3. **Liskov Substitution**: 所有 Parser/Indicator 實作相同介面
-4. **Interface Segregation**: 細分的 Protocol 定義
-5. **Dependency Inversion**: 透過 Protocol 和 Repository 解耦
-
-### Repository Pattern
-
-```python
-# 資料存取透過 Repository，不直接操作 Model
-async with get_session_context() as session:
-    repo = SwitchRepository(session)
-    switches = await repo.get_active_switches()
-```
-
-### Scheduler 設計
-
-```yaml
-# config/scheduler.yaml
-jobs:
-  transceiver:
-    indicator: transceiver
-    interval: 300  # 每 5 分鐘
-    enabled: true
-```
-
----
-
-## 📊 Metric 系統
-
-支援多種評估類型：
-
-| 類型 | 用途 | 範例 |
+| 方法 | 路徑 | 說明 |
 |------|------|------|
-| `RangeMetric` | 範圍內判斷 | Tx Power -10~2 dBm |
-| `ThresholdMetric` | 閾值判斷 | Error Count < 100 |
-| `EqualsMetric` | 字串相等 | 版本是否升級成功 |
-| `BooleanMetric` | 狀態判斷 | Fan 是否正常 |
+| GET | `/api/v1/dashboard/maintenance/{id}/summary` | 所有指標通過率摘要 |
+| GET | `/api/v1/dashboard/maintenance/{id}/indicator/{type}/details` | 單一指標詳情 + 失敗清單 |
+| GET | `/api/v1/dashboard/maintenance/{id}/comparison` | PRE/POST 對比 |
+
+### 歲修管理
+
+| 方法 | 路徑 | 說明 |
+|------|------|------|
+| GET | `/api/v1/maintenance` | 列出所有歲修作業 |
+| POST | `/api/v1/maintenance` | 建立歲修作業 |
+| DELETE | `/api/v1/maintenance/{id}` | 刪除歲修作業 |
+| GET | `/api/v1/maintenance/config/{id}` | 取得歲修設定 |
+
+### 對比分析
+
+| 方法 | 路徑 | 說明 |
+|------|------|------|
+| GET | `/api/v1/comparisons/timepoints/{id}` | 歷史時間點 |
+| GET | `/api/v1/comparisons/statistics/{id}` | 統計趨勢 |
+| POST | `/api/v1/comparisons/generate/{id}` | 產生對比結果 |
 
 ---
 
-## 📝 設定檔範例
+## 排程設定
 
-### switches.yaml
-
-```yaml
-switches:
-  - hostname: switch-new-01
-    ip_address: 10.0.1.1
-    vendor: cisco
-    platform: nxos
-    site: t_site
-
-device_mappings:
-  - old_hostname: switch-old-01
-    new_hostname: switch-new-01
-
-version_expectations:
-  switch-new-01: "9.3(10)"
-```
-
-### scheduler.yaml
+`config/scheduler.yaml` 定義所有採集任務：
 
 ```yaml
+settings:
+  default_maintenance_id: "TEST-100"
+  default_phase: "post"
+
 jobs:
   transceiver:
-    indicator: transceiver
-    interval: 300
-    enabled: true
+    interval: 300     # 5 分鐘
+  version:
+    interval: 3600    # 1 小時
+  uplink:
+    interval: 600     # 10 分鐘
+  fan:
+    interval: 600     # 10 分鐘
+  error_count:
+    interval: 300     # 5 分鐘
+  power:
+    interval: 600     # 10 分鐘
+  ping:
+    interval: 60      # 1 分鐘
+  port_channel:
+    interval: 300     # 5 分鐘
 ```
 
 ---
 
-## ⚙️ 環境變數
+## Mock 測試模式
+
+設定 `APP_ENV=testing`（見 `.env`）即可啟用 mock 模式：
+
+- **IndicatorService**：`evaluate_all()` 直接回傳預定義的 mock 結果，涵蓋所有 8 個指標的通過/失敗情境
+- **MockApiClient**：模擬外部 API 回傳 CLI 原始文字
+- 用於前端開發測試，不需要真實的外部 API 和完整採集流程
+
+Mock 結果範例（TEST-100）：
+
+| 指標 | 通過/總數 | 通過率 |
+|------|-----------|--------|
+| ping | 31/34 | 91.2% |
+| power | 33/34 | 97.1% |
+| fan | 34/34 | 100.0% |
+| transceiver | 198/204 | 97.1% |
+| error_count | 674/680 | 99.1% |
+| port_channel | 30/32 | 93.8% |
+| uplink | 62/64 | 96.9% |
+| version | 32/34 | 94.1% |
+
+---
+
+## 支援廠牌
+
+| 廠牌 | 平台 | Parser 支援 |
+|------|------|-------------|
+| Cisco | IOS | transceiver, neighbor |
+| Cisco | NX-OS | transceiver, neighbor, port_channel, error, fan, power |
+| HPE | Comware | transceiver, neighbor, port_channel, error, fan, power, ping |
+| Aruba | AOS-CX | transceiver |
+
+---
+
+## 環境變數
 
 ```bash
 # .env
@@ -209,26 +306,31 @@ DB_NAME=network_dashboard
 DB_USER=admin
 DB_PASSWORD=admin
 
-EXTERNAL_API_SERVER=http://your-api-server.com
+EXTERNAL_API_SERVER=http://localhost:9000
+EXTERNAL_API_TIMEOUT=30
+
+APP_NAME=Network Dashboard
 APP_DEBUG=true
+APP_ENV=testing  # testing = mock 模式, development/production = 真實模式
+API_PREFIX=/api/v1
 ```
 
 ---
 
-## 📝 支援廠牌
+## 技術棧
 
-| 廠牌 | 平台 | 狀態 |
-|------|------|------|
-| Cisco | IOS | ✅ |
-| Cisco | NX-OS (N9K) | ✅ |
-| HPE | ProCurve | ✅ |
-| HPE | Comware | ✅ |
-| Aruba | AOS | ✅ |
-| Aruba | AOS-CX | ✅ |
+**後端**
+- Python 3.9+, FastAPI, SQLAlchemy 2.0 (async), Pydantic 2
+- MariaDB (aiomysql), APScheduler
+- Plugin-based Parser, Repository Pattern
+
+**前端**
+- Vue 3, Vite, Tailwind CSS, ECharts
+- Axios, Day.js, Vue Router
 
 ---
 
-## 🔧 開發工具
+## 開發工具
 
 ```bash
 # 格式化
@@ -245,6 +347,6 @@ pre-commit install
 
 ---
 
-## 📄 License
+## License
 
 MIT

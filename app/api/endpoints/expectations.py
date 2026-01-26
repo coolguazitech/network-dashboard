@@ -94,15 +94,20 @@ async def list_uplink_expectations(
     )
     
     if search:
+        from sqlalchemy import and_, or_
         keywords = search.strip().split()
-        for keyword in keywords:
-            search_pattern = f"%{keyword}%"
-            stmt = stmt.where(
-                (UplinkExpectation.hostname.ilike(search_pattern)) |
-                (UplinkExpectation.expected_neighbor.ilike(search_pattern)) |
-                (UplinkExpectation.local_interface.ilike(search_pattern)) |
-                (UplinkExpectation.expected_interface.ilike(search_pattern))
-            )
+
+        field_conditions = []
+        for field in [
+            UplinkExpectation.hostname,
+            UplinkExpectation.expected_neighbor,
+            UplinkExpectation.local_interface,
+            UplinkExpectation.expected_interface,
+        ]:
+            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+            field_conditions.append(field_match)
+
+        stmt = stmt.where(or_(*field_conditions))
     
     stmt = stmt.order_by(UplinkExpectation.hostname)
     result = await session.execute(stmt)
@@ -402,15 +407,20 @@ async def export_uplink_csv(
     )
 
     if search:
+        from sqlalchemy import and_, or_
         keywords = search.strip().split()
-        for keyword in keywords:
-            search_pattern = f"%{keyword}%"
-            stmt = stmt.where(
-                (UplinkExpectation.hostname.ilike(search_pattern)) |
-                (UplinkExpectation.expected_neighbor.ilike(search_pattern)) |
-                (UplinkExpectation.local_interface.ilike(search_pattern)) |
-                (UplinkExpectation.expected_interface.ilike(search_pattern))
-            )
+
+        field_conditions = []
+        for field in [
+            UplinkExpectation.hostname,
+            UplinkExpectation.expected_neighbor,
+            UplinkExpectation.local_interface,
+            UplinkExpectation.expected_interface,
+        ]:
+            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+            field_conditions.append(field_match)
+
+        stmt = stmt.where(or_(*field_conditions))
 
     stmt = stmt.order_by(UplinkExpectation.hostname)
     result = await session.execute(stmt)
@@ -527,13 +537,18 @@ async def list_version_expectations(
     )
     
     if search:
+        from sqlalchemy import and_, or_
         keywords = search.strip().split()
-        for keyword in keywords:
-            search_pattern = f"%{keyword}%"
-            stmt = stmt.where(
-                (VersionExpectation.hostname.ilike(search_pattern)) |
-                (VersionExpectation.expected_versions.ilike(search_pattern))
-            )
+
+        field_conditions = []
+        for field in [
+            VersionExpectation.hostname,
+            VersionExpectation.expected_versions,
+        ]:
+            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+            field_conditions.append(field_match)
+
+        stmt = stmt.where(or_(*field_conditions))
     
     stmt = stmt.order_by(VersionExpectation.hostname)
     result = await session.execute(stmt)
@@ -716,13 +731,18 @@ async def export_version_csv(
     )
 
     if search:
+        from sqlalchemy import and_, or_
         keywords = search.strip().split()
-        for keyword in keywords:
-            search_pattern = f"%{keyword}%"
-            stmt = stmt.where(
-                (VersionExpectation.hostname.ilike(search_pattern)) |
-                (VersionExpectation.expected_versions.ilike(search_pattern))
-            )
+
+        field_conditions = []
+        for field in [
+            VersionExpectation.hostname,
+            VersionExpectation.expected_versions,
+        ]:
+            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+            field_conditions.append(field_match)
+
+        stmt = stmt.where(or_(*field_conditions))
 
     stmt = stmt.order_by(VersionExpectation.hostname)
     result = await session.execute(stmt)
@@ -844,13 +864,15 @@ async def list_arp_sources(
     )
 
     if search:
+        from sqlalchemy import and_, or_
         keywords = search.strip().split()
-        for keyword in keywords:
-            search_pattern = f"%{keyword}%"
-            stmt = stmt.where(
-                (ArpSource.hostname.ilike(search_pattern)) |
-                (ArpSource.ip_address.ilike(search_pattern))
-            )
+
+        field_conditions = []
+        for field in [ArpSource.hostname, ArpSource.ip_address]:
+            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+            field_conditions.append(field_match)
+
+        stmt = stmt.where(or_(*field_conditions))
 
     stmt = stmt.order_by(ArpSource.priority, ArpSource.hostname)
     result = await session.execute(stmt)
@@ -1030,13 +1052,15 @@ async def export_arp_csv(
     )
 
     if search:
+        from sqlalchemy import and_, or_
         keywords = search.strip().split()
-        for keyword in keywords:
-            search_pattern = f"%{keyword}%"
-            stmt = stmt.where(
-                (ArpSource.hostname.ilike(search_pattern)) |
-                (ArpSource.ip_address.ilike(search_pattern))
-            )
+
+        field_conditions = []
+        for field in [ArpSource.hostname, ArpSource.ip_address]:
+            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+            field_conditions.append(field_match)
+
+        stmt = stmt.where(or_(*field_conditions))
 
     stmt = stmt.order_by(ArpSource.priority, ArpSource.hostname)
     result = await session.execute(stmt)
@@ -1164,14 +1188,19 @@ async def list_port_channel_expectations(
     )
 
     if search:
+        from sqlalchemy import and_, or_
         keywords = search.strip().split()
-        for keyword in keywords:
-            search_pattern = f"%{keyword}%"
-            stmt = stmt.where(
-                (PortChannelExpectation.hostname.ilike(search_pattern)) |
-                (PortChannelExpectation.port_channel.ilike(search_pattern)) |
-                (PortChannelExpectation.member_interfaces.ilike(search_pattern))
-            )
+
+        field_conditions = []
+        for field in [
+            PortChannelExpectation.hostname,
+            PortChannelExpectation.port_channel,
+            PortChannelExpectation.member_interfaces,
+        ]:
+            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+            field_conditions.append(field_match)
+
+        stmt = stmt.where(or_(*field_conditions))
 
     stmt = stmt.order_by(
         PortChannelExpectation.hostname,
@@ -1387,14 +1416,19 @@ async def export_port_channel_csv(
     )
 
     if search:
+        from sqlalchemy import and_, or_
         keywords = search.strip().split()
-        for keyword in keywords:
-            search_pattern = f"%{keyword}%"
-            stmt = stmt.where(
-                (PortChannelExpectation.hostname.ilike(search_pattern)) |
-                (PortChannelExpectation.port_channel.ilike(search_pattern)) |
-                (PortChannelExpectation.member_interfaces.ilike(search_pattern))
-            )
+
+        field_conditions = []
+        for field in [
+            PortChannelExpectation.hostname,
+            PortChannelExpectation.port_channel,
+            PortChannelExpectation.member_interfaces,
+        ]:
+            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+            field_conditions.append(field_match)
+
+        stmt = stmt.where(or_(*field_conditions))
 
     stmt = stmt.order_by(
         PortChannelExpectation.hostname,

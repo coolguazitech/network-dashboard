@@ -198,6 +198,16 @@ class MockApiClient(BaseApiClient):
             return self._generate_version_mock()
         if "neighbor" in function.lower():
             return self._generate_neighbor_mock()
+        if "ping" in function.lower():
+            return self._generate_ping_mock(switch_ip)
+        if "power" in function.lower():
+            return self._generate_power_mock()
+        if "fan" in function.lower():
+            return self._generate_fan_mock()
+        if "error" in function.lower():
+            return self._generate_error_mock()
+        if "port_channel" in function.lower():
+            return self._generate_port_channel_mock()
         return f"Mock data for {function} on {switch_ip}"
 
     def _generate_transceiver_mock(self, switch_ip: str) -> str:
@@ -243,6 +253,74 @@ Hardware
 Device ID        Local Intrfc  Hldtme Capability  Port ID
 switch-02        Eth1/1        120    R S         Eth1/1
 switch-03        Eth1/2        120    R S         Eth1/1
+"""
+
+    def _generate_ping_mock(self, switch_ip: str) -> str:
+        """Generate mock ping data."""
+        import random
+        # 90% 機率成功，10% 機率失敗
+        if random.random() < 0.9:
+            loss = 0
+        else:
+            loss = random.choice([20, 40, 100])
+        return f"""
+PING {switch_ip} ({switch_ip}): 56 data bytes
+64 bytes from {switch_ip}: icmp_seq=0 ttl=64 time=1.2 ms
+64 bytes from {switch_ip}: icmp_seq=1 ttl=64 time=1.1 ms
+64 bytes from {switch_ip}: icmp_seq=2 ttl=64 time=1.3 ms
+64 bytes from {switch_ip}: icmp_seq=3 ttl=64 time=1.2 ms
+64 bytes from {switch_ip}: icmp_seq=4 ttl=64 time=1.1 ms
+
+--- {switch_ip} ping statistics ---
+5 packets transmitted, {5 - int(loss/20)} packets received, {loss}% packet loss
+round-trip min/avg/max = 1.1/1.2/1.3 ms
+"""
+
+    def _generate_power_mock(self) -> str:
+        """Generate mock power supply data."""
+        import random
+        statuses = ["Ok", "Ok"] if random.random() < 0.95 else ["Ok", "Failed"]
+        return f"""
+Power Supply Status:
+  PS1: {statuses[0]}
+  PS2: {statuses[1]}
+"""
+
+    def _generate_fan_mock(self) -> str:
+        """Generate mock fan data."""
+        import random
+        statuses = ["Ok"] * 4 if random.random() < 0.95 else ["Ok", "Ok", "Failed", "Ok"]
+        return f"""
+Fan Status:
+  Fan1: {statuses[0]}
+  Fan2: {statuses[1]}
+  Fan3: {statuses[2]}
+  Fan4: {statuses[3]}
+"""
+
+    def _generate_error_mock(self) -> str:
+        """Generate mock interface error data."""
+        import random
+        lines = []
+        for i in range(1, 5):
+            crc = random.choice([0, 0, 0, 0, 5, 10])  # 大部分無錯誤
+            inp = random.choice([0, 0, 0, 0, 2, 8])
+            out = random.choice([0, 0, 0, 0, 1, 3])
+            lines.append(f"Ethernet1/{i}  CRC:{crc}  Input:{inp}  Output:{out}")
+        return "\n".join(lines)
+
+    def _generate_port_channel_mock(self) -> str:
+        """Generate mock port-channel data."""
+        return """
+Port-channel1:
+  Status: UP
+  Members: Ethernet1/1, Ethernet1/2
+  Member Status: Ethernet1/1(UP), Ethernet1/2(UP)
+
+Port-channel2:
+  Status: UP
+  Members: Ethernet1/3, Ethernet1/4
+  Member Status: Ethernet1/3(UP), Ethernet1/4(UP)
 """
 
 

@@ -26,6 +26,13 @@
                 Compare
               </router-link>
               <router-link
+                to="/devices"
+                class="nav-link"
+                :class="{ active: $route.path === '/devices' }"
+              >
+                Devices
+              </router-link>
+              <router-link
                 to="/settings"
                 class="nav-link"
                 :class="{ active: $route.path === '/settings' }"

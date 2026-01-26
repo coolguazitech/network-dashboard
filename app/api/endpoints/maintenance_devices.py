@@ -260,20 +260,25 @@ async def list_devices(
         .where(MaintenanceDeviceList.maintenance_id == maintenance_id)
     )
     
-    # 多關鍵字搜尋（空格分隔，所有關鍵字都必須匹配）
+    # 多關鍵字搜尋（空格分隔，所有關鍵字都必須在同一個欄位中匹配）
     if search:
-        from sqlalchemy import or_
+        from sqlalchemy import or_, and_
         keywords = search.strip().split()
-        for keyword in keywords:
-            search_pattern = f"%{keyword}%"
-            stmt = stmt.where(
-                or_(
-                    MaintenanceDeviceList.old_hostname.ilike(search_pattern),
-                    MaintenanceDeviceList.old_ip_address.ilike(search_pattern),
-                    MaintenanceDeviceList.new_hostname.ilike(search_pattern),
-                    MaintenanceDeviceList.new_ip_address.ilike(search_pattern),
-                )
-            )
+
+        # 對每個欄位，檢查是否所有關鍵字都在該欄位中
+        field_conditions = []
+        for field in [
+            MaintenanceDeviceList.old_hostname,
+            MaintenanceDeviceList.old_ip_address,
+            MaintenanceDeviceList.new_hostname,
+            MaintenanceDeviceList.new_ip_address,
+        ]:
+            # 所有關鍵字都必須在這個欄位中
+            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+            field_conditions.append(field_match)
+
+        # 只要有任何一個欄位滿足所有關鍵字，就匹配
+        stmt = stmt.where(or_(*field_conditions))
     
     # 篩選可達性
     if is_reachable is not None:
@@ -861,20 +866,22 @@ async def export_devices_csv(
         .where(MaintenanceDeviceList.maintenance_id == maintenance_id)
     )
 
-    # 多關鍵字搜尋
+    # 多關鍵字搜尋（所有關鍵字都必須在同一個欄位中匹配）
     if search:
-        from sqlalchemy import or_
+        from sqlalchemy import or_, and_
         keywords = search.strip().split()
-        for keyword in keywords:
-            search_pattern = f"%{keyword}%"
-            stmt = stmt.where(
-                or_(
-                    MaintenanceDeviceList.old_hostname.ilike(search_pattern),
-                    MaintenanceDeviceList.old_ip_address.ilike(search_pattern),
-                    MaintenanceDeviceList.new_hostname.ilike(search_pattern),
-                    MaintenanceDeviceList.new_ip_address.ilike(search_pattern),
-                )
-            )
+
+        field_conditions = []
+        for field in [
+            MaintenanceDeviceList.old_hostname,
+            MaintenanceDeviceList.old_ip_address,
+            MaintenanceDeviceList.new_hostname,
+            MaintenanceDeviceList.new_ip_address,
+        ]:
+            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+            field_conditions.append(field_match)
+
+        stmt = stmt.where(or_(*field_conditions))
 
     # 篩選可達性
     if is_reachable is not None:
