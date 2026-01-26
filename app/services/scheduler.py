@@ -12,7 +12,6 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.core.enums import MaintenancePhase
 from app.services.data_collection import DataCollectionService
 
 logger = logging.getLogger(__name__)
@@ -29,32 +28,36 @@ class SchedulerService:
         """Initialize scheduler."""
         self.scheduler = AsyncIOScheduler()
         self.collection_service = DataCollectionService()
-        self._jobs: dict[str, str] = {}  # indicator_type -> job_id
+        self._jobs: dict[str, str] = {}  # job_name -> job_id
 
     def add_collection_job(
         self,
-        indicator_type: str,
+        job_name: str,
         interval_seconds: int,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
         maintenance_id: str | None = None,
+        url: str | None = None,
+        source: str | None = None,
+        brand: str | None = None,
     ) -> str:
         """
         Add a scheduled collection job.
 
         Args:
-            indicator_type: Type of indicator to collect
+            job_name: Data type name (e.g., "transceiver", "mac-table")
             interval_seconds: Collection interval in seconds
-            phase: Maintenance phase
-            maintenance_id: Maintenance job ID (optional)
+            maintenance_id: APM maintenance ID
+            url: External API endpoint URL
+            source: Data source (FNA/DNA)
+            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
 
         Returns:
             str: Job ID
         """
-        job_id = f"collect_{indicator_type}"
+        job_id = f"collect_{job_name}"
 
         # Remove existing job if any
-        if job_id in self._jobs:
-            self.remove_job(indicator_type)
+        if job_name in self._jobs:
+            self.remove_job(job_name)
 
         # Add new job
         job = self.scheduler.add_job(
@@ -62,36 +65,37 @@ class SchedulerService:
             trigger=IntervalTrigger(seconds=interval_seconds),
             id=job_id,
             kwargs={
-                "indicator_type": indicator_type,
-                "phase": phase,
+                "job_name": job_name,
                 "maintenance_id": maintenance_id,
+                "url": url,
+                "source": source,
+                "brand": brand,
             },
             replace_existing=True,
         )
 
-        self._jobs[indicator_type] = job.id
+        self._jobs[job_name] = job.id
         logger.info(
-            f"Added collection job for {indicator_type} "
-            f"every {interval_seconds}s"
+            f"Added collection job '{job_name}' every {interval_seconds}s"
         )
 
         return job.id
 
-    def remove_job(self, indicator_type: str) -> bool:
+    def remove_job(self, job_name: str) -> bool:
         """
         Remove a scheduled job.
 
         Args:
-            indicator_type: Type of indicator
+            job_name: Job name
 
         Returns:
             bool: True if job was removed
         """
-        job_id = self._jobs.get(indicator_type)
+        job_id = self._jobs.get(job_name)
         if job_id:
             self.scheduler.remove_job(job_id)
-            del self._jobs[indicator_type]
-            logger.info(f"Removed collection job for {indicator_type}")
+            del self._jobs[job_name]
+            logger.info(f"Removed collection job '{job_name}'")
             return True
         return False
 
@@ -114,31 +118,37 @@ class SchedulerService:
 
     async def _run_collection(
         self,
-        indicator_type: str,
-        phase: MaintenancePhase,
+        job_name: str,
         maintenance_id: str | None,
+        url: str | None = None,
+        source: str | None = None,
+        brand: str | None = None,
     ) -> None:
         """
         Run a collection job.
 
         Args:
-            indicator_type: Type of indicator
-            phase: Maintenance phase
-            maintenance_id: Maintenance job ID
+            job_name: Data type name (e.g., "transceiver", "mac-table")
+            maintenance_id: APM maintenance ID
+            url: External API endpoint URL
+            source: Data source (FNA/DNA)
+            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
         """
-        logger.info(f"Running scheduled collection for {indicator_type}")
+        logger.info(f"Running scheduled collection for '{job_name}'")
         try:
             result = await self.collection_service.collect_indicator_data(
-                indicator_type=indicator_type,
-                phase=phase,
+                indicator_type=job_name,
                 maintenance_id=maintenance_id,
+                url=url,
+                source=source,
+                brand=brand,
             )
             logger.info(
-                f"Collection complete: {result['success']}/{result['total']} "
-                f"successful"
+                f"Collection complete for '{job_name}': "
+                f"{result['success']}/{result['total']} successful"
             )
         except Exception as e:
-            logger.error(f"Collection failed for {indicator_type}: {e}")
+            logger.error(f"Collection failed for '{job_name}': {e}")
 
     def start(self) -> None:
         """Start the scheduler."""
@@ -179,41 +189,25 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
     Setup scheduled jobs from configuration.
 
     Args:
-        job_configs: List of job configurations
+        job_configs: List of job configurations.
             Each config should have:
-            - indicator: str (indicator type)
+            - name: str (data type, e.g., "transceiver", "mac-table")
             - interval: int (seconds)
-            - enabled: bool (optional)
-            - phase: str (optional, "old" or "new")
-            - maintenance_id: str (optional)
-
-    Example:
-        job_configs = [
-            {"indicator": "transceiver", "interval": 300, "enabled": True},
-            {"indicator": "version", "interval": 3600},
-        ]
+            - maintenance_id: str (APM ID)
+            - url: str (external API endpoint, optional)
+            - source: str (FNA/DNA, optional)
+            - brand: str (HPE/Cisco-IOS/Cisco-NXOS, optional)
     """
     scheduler = get_scheduler_service()
 
     for config in job_configs:
-        if not config.get("enabled", True):
-            continue
-
-        indicator = config["indicator"]
-        interval = config["interval"]
-        phase_str = config.get("phase", "new")
-        phase = (
-            MaintenancePhase.OLD
-            if phase_str == "old"
-            else MaintenancePhase.NEW
-        )
-        maintenance_id = config.get("maintenance_id")
-
         scheduler.add_collection_job(
-            indicator_type=indicator,
-            interval_seconds=interval,
-            phase=phase,
-            maintenance_id=maintenance_id,
+            job_name=config["name"],
+            interval_seconds=config.get("interval", 30),
+            maintenance_id=config.get("maintenance_id"),
+            url=config.get("url"),
+            source=config.get("source"),
+            brand=config.get("brand"),
         )
 
     scheduler.start()

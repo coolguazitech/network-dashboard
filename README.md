@@ -80,9 +80,9 @@ npm run dev
 
 - **Scheduler 與 Indicator 獨立**：Scheduler 負責從外部 API 採集原始資料（show transceiver、display fan、ping 等），Indicator 從 DB 讀取已採集的資料進行評估
 - **Scheduler 不綁定 Indicator**：也會有 MAC TABLE、ARP TABLE 等採集 scheduler，這些不直接對應指標，而是供多個 Indicator 使用
-- **兩種分母來源**：
+- **兩種分母來源**（所有指標的對象皆為新設備，若未換機則新設備 = 舊設備）：
   - **期望類**（ping、port_channel、uplink）：分母來自使用者定義的期望清單（MaintenanceDeviceList、PortChannelExpectation 等）
-  - **固定類**（power、fan、error_count、transceiver、version）：分母來自實際採集到的資料筆數
+  - **採集類**（power、fan、error_count、transceiver、version）：分母來自實際採集到的新設備資料筆數
 
 ### 為什麼需要 DB？
 
@@ -99,14 +99,14 @@ npm run dev
 
 | 指標 | 說明 | 分母來源 | 通過條件 |
 |------|------|----------|----------|
-| `ping` | 新設備連通性檢查 | MaintenanceDeviceList (新設備數) | 可達且成功率 >= 80% |
-| `power` | 電源供應器狀態 | 設備數 | 所有 PSU 狀態正常 |
-| `fan` | 風扇狀態 | 設備數 | 所有風扇狀態正常 |
-| `transceiver` | 光模塊 Tx/Rx/溫度 | 光模塊數 | 功率與溫度在範圍內 |
-| `error_count` | 介面錯誤計數 | 介面數 | CRC/In/Out 錯誤為 0 |
-| `port_channel` | Port-Channel 狀態 | PortChannelExpectation | 所有成員 UP |
-| `uplink` | Uplink 拓撲驗證 | UplinkExpectation | 鄰居符合期望 |
-| `version` | 韌體版本驗證 | 設備數 | 版本符合期望值 |
+| `ping` | 新設備連通性檢查 | 新設備數 (MaintenanceDeviceList) | 可達且成功率 >= 80% |
+| `power` | 電源供應器狀態 | 新設備數 | 所有 PSU 狀態正常 |
+| `fan` | 風扇狀態 | 新設備數 | 所有風扇狀態正常 |
+| `transceiver` | 光模塊 Tx/Rx/溫度 | 新設備光模塊數 | 功率與溫度在範圍內 |
+| `error_count` | 介面錯誤計數 | 新設備介面數 | CRC/In/Out 錯誤為 0 |
+| `port_channel` | Port-Channel 狀態 | Port-Channel 期望數 | 所有成員 UP |
+| `uplink` | Uplink 拓撲驗證 | Uplink 期望數 | 鄰居符合期望 |
+| `version` | 韌體版本驗證 | 新設備數 | 版本符合期望值 |
 
 ---
 
@@ -234,31 +234,45 @@ network_dashboard/
 
 ## 排程設定
 
-`config/scheduler.yaml` 定義所有採集任務：
+`config/scheduler.yaml` 定義所有資料採集任務。每個 job 的 name 即為採集的資料類型，Scheduler 與 Indicator 獨立運作：
 
 ```yaml
-settings:
-  default_maintenance_id: "TEST-100"
-  default_phase: "post"
+maintenance_id: "TEST-100"    # APM ID
 
 jobs:
+  mac-table:
+    url:                       # 外部 API endpoint
+    source:                    # FNA/DNA
+    brand:                     # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30               # seconds
+    description: "MAC Table 採集"
+
+  arp-table:
+    url:
+    source:
+    brand:
+    interval: 30
+    description: "ARP Table 採集"
+
   transceiver:
-    interval: 300     # 5 分鐘
-  version:
-    interval: 3600    # 1 小時
-  uplink:
-    interval: 600     # 10 分鐘
-  fan:
-    interval: 600     # 10 分鐘
-  error_count:
-    interval: 300     # 5 分鐘
-  power:
-    interval: 600     # 10 分鐘
-  ping:
-    interval: 60      # 1 分鐘
-  port_channel:
-    interval: 300     # 5 分鐘
+    url:
+    source:
+    brand:
+    interval: 30
+    description: "光模組 Tx/Rx 功率資料收集"
+
+  # ... (version, neighbor, fan, error_count, power, ping, port_channel)
 ```
+
+每個 job 欄位說明：
+
+| 欄位 | 說明 |
+|------|------|
+| `url` | 外部 API endpoint（採集資料來源） |
+| `source` | 資料來源系統（FNA / DNA） |
+| `brand` | 設備廠牌（HPE / Cisco-IOS / Cisco-NXOS） |
+| `interval` | 採集間隔（秒） |
+| `description` | 任務描述 |
 
 ---
 

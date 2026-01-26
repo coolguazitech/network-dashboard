@@ -25,41 +25,42 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_scheduler_config() -> list[dict[str, Any]]:
-    """Load scheduler configuration from YAML file."""
+def load_scheduler_config() -> dict[str, Any]:
+    """
+    Load scheduler configuration from YAML file.
+
+    Returns:
+        dict with 'maintenance_id' and 'jobs' list.
+        Each job has: name, url, source, brand, interval, description.
+    """
     config_path = Path("config/scheduler.yaml")
     if not config_path.exists():
         logger.warning("scheduler.yaml not found, no jobs will be scheduled")
-        return []
+        return {"maintenance_id": None, "jobs": []}
 
     with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     if not config or "jobs" not in config:
-        return []
+        return {"maintenance_id": None, "jobs": []}
 
-    # Convert jobs dict to list format
-    jobs_config = []
-    settings_config = config.get("settings", {})
-    default_phase = settings_config.get("default_phase", "post")
-    default_maintenance_id = settings_config.get("default_maintenance_id")
+    maintenance_id = config.get("maintenance_id")
 
+    jobs = []
     for job_name, job_config in config["jobs"].items():
-        if not job_config.get("enabled", True):
-            continue
-
-        jobs_config.append({
-            "indicator": job_config.get("indicator", job_name),
-            "interval": job_config.get("interval", 300),
-            "enabled": job_config.get("enabled", True),
-            "phase": job_config.get("phase", default_phase),
-            "maintenance_id": job_config.get(
-                "maintenance_id",
-                default_maintenance_id,
-            ),
+        if not job_config:
+            job_config = {}
+        jobs.append({
+            "name": job_name,
+            "url": job_config.get("url"),
+            "source": job_config.get("source"),
+            "brand": job_config.get("brand"),
+            "interval": job_config.get("interval", 30),
+            "description": job_config.get("description", ""),
+            "maintenance_id": maintenance_id,
         })
 
-    return jobs_config
+    return {"maintenance_id": maintenance_id, "jobs": jobs}
 
 
 @asynccontextmanager
@@ -76,10 +77,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     auto_discover_parsers()
 
     # Load and start scheduled jobs
-    jobs_config = load_scheduler_config()
-    if jobs_config:
-        await setup_scheduled_jobs(jobs_config)
-        logger.info(f"Started {len(jobs_config)} scheduled jobs")
+    scheduler_config = load_scheduler_config()
+    jobs = scheduler_config.get("jobs", [])
+    if jobs:
+        await setup_scheduled_jobs(jobs)
+        logger.info(f"Started {len(jobs)} scheduled jobs")
 
     yield
 

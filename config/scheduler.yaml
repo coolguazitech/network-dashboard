@@ -2,76 +2,80 @@
 # 排程設定檔
 # =============================================================================
 # 此檔案定義所有資料收集的排程任務
+# 每個 job 的 name 即為採集的資料類型
+# source: FNA (Factory Network Automation) / DNA (Device Network Automation)
+# brand: HPE / Cisco-IOS / Cisco-NXOS
 # =============================================================================
 
-# 全域設定
-settings:
-  # 預設維護作業 ID
-  default_maintenance_id: "TEST-100"
-  # 預設階段 (pre 或 post)
-  default_phase: "post"
+maintenance_id: "TEST-100"    # APM ID
 
-# 收集任務排程
 jobs:
-  # 光模組資料收集
+  mac-table:
+    url:
+    source:        # FNA/DNA
+    brand:         # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30   # seconds
+    description: "MAC Table 採集"
+
+  arp-table:
+    url:
+    source:        # FNA/DNA
+    brand:         # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30   # seconds
+    description: "ARP Table 採集"
+
   transceiver:
-    indicator: transceiver
-    interval: 300  # 每 5 分鐘收集一次
-    enabled: true
+    url:
+    source:        # FNA/DNA
+    brand:         # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30   # seconds
     description: "光模組 Tx/Rx 功率資料收集"
 
-  # 版本資訊收集
   version:
-    indicator: version
-    interval: 3600  # 每小時收集一次
-    enabled: true
+    url:
+    source:        # FNA/DNA
+    brand:         # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30   # seconds
     description: "韌體版本資訊收集"
 
-  # Uplink 連接狀態收集
-  uplink:
-    indicator: uplink
-    interval: 600  # 每 10 分鐘收集一次
-    enabled: true
-    description: "Uplink 鄰居連接狀態收集"
+  neighbor:
+    url:
+    source:        # FNA/DNA
+    brand:         # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30   # seconds
+    description: "鄰居連接狀態收集"
 
-  # 風扇狀態收集
   fan:
-    indicator: fan
-    interval: 600  # 每 10 分鐘收集一次
-    enabled: true
+    url:
+    source:        # FNA/DNA
+    brand:         # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30   # seconds
     description: "設備風扇狀態收集"
 
-  # 錯誤計數收集
   error_count:
-    indicator: error_count
-    interval: 300  # 每 5 分鐘收集一次
-    enabled: true
+    url:
+    source:        # FNA/DNA
+    brand:         # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30   # seconds
     description: "Interface 錯誤計數收集"
 
-  # 電源狀態收集
   power:
-    indicator: power
-    interval: 600  # 每 10 分鐘收集一次
-    enabled: true
+    url:
+    source:        # FNA/DNA
+    brand:         # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30   # seconds
     description: "設備電源供應器狀態收集"
 
-  # Ping 連通性收集
   ping:
-    indicator: ping
-    interval: 60  # 每 1 分鐘收集一次
-    enabled: true
+    url:
+    source:        # FNA/DNA
+    brand:         # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30   # seconds
     description: "新設備 Ping 連通性檢查"
 
-  # Port-Channel 狀態收集
   port_channel:
-    indicator: port_channel
-    interval: 300  # 每 5 分鐘收集一次
-    enabled: true
+    url:
+    source:        # FNA/DNA
+    brand:         # HPE/Cisco-IOS/Cisco-NXOS
+    interval: 30   # seconds
     description: "Port-Channel 狀態及成員檢查"
-
-  # ACL 設定收集 (預設停用)
-  acl:
-    indicator: acl
-    interval: 1800  # 每 30 分鐘收集一次
-    enabled: false
-    description: "ACL 設定驗證"

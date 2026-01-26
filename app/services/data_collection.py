@@ -60,18 +60,24 @@ class DataCollectionService:
         indicator_type: str,
         phase: MaintenancePhase = MaintenancePhase.NEW,
         maintenance_id: str | None = None,
+        url: str | None = None,
+        source: str | None = None,
+        brand: str | None = None,
     ) -> dict[str, Any]:
         """
-        Collect data for a specific indicator.
+        Collect data for a specific indicator / data type.
 
         根據 indicator_type 決定設備來源：
         - ping: 從 MaintenanceDeviceList 取新設備
         - 其他: 從 switches 表取活躍設備
 
         Args:
-            indicator_type: Type of indicator (e.g., "transceiver", "ping")
+            indicator_type: Data type (e.g., "transceiver", "ping", "mac-table")
             phase: Maintenance phase (OLD/NEW)
-            maintenance_id: Maintenance job ID (optional)
+            maintenance_id: APM maintenance ID
+            url: External API endpoint URL (from scheduler config)
+            source: Data source identifier (FNA/DNA)
+            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
 
         Returns:
             dict: Collection summary with success/fail counts
