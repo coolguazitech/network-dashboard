@@ -13,32 +13,33 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import MaintenancePhase
-from app.db.models import CollectionRecord, MaintenanceDeviceList
+from app.db.models import MaintenanceDeviceList, PingRecord
 from app.indicators.base import (
     BaseIndicator,
+    DisplayConfig,
     IndicatorEvaluationResult,
     IndicatorMetadata,
     ObservedField,
-    DisplayConfig,
-    TimeSeriesPoint,
     RawDataRow,
+    TimeSeriesPoint,
 )
+from app.repositories.typed_records import PingRecordRepo
 
 
 class PingIndicator(BaseIndicator):
     """
     Ping 指標評估器。
-    
+
     檢查項目：
     1. 設備是否可達
     2. 封包遺失率是否低於閾值 (成功率 >= 80%)
     """
-    
+
     indicator_type = "ping"
-    
+
     # 成功率閾值
     SUCCESS_RATE_THRESHOLD = 80.0
-    
+
     async def evaluate(
         self,
         maintenance_id: str,
@@ -73,8 +74,8 @@ class PingIndicator(BaseIndicator):
                 summary="無新設備資料"
             )
 
-        # 2. 獲取採集數據，建立 hostname -> 結果 的映射
-        collected_results = await self._get_collected_results(
+        # 2. 獲取採集數據，建立 hostname -> PingRecord 的映射
+        collected = await self._get_collected_results(
             session, maintenance_id, phase
         )
 
@@ -84,9 +85,9 @@ class PingIndicator(BaseIndicator):
 
         for device in expected_devices:
             hostname = device["new_hostname"]
-            result = collected_results.get(hostname)
+            record = collected.get(hostname)
 
-            if result is None:
+            if record is None:
                 # 尚未採集數據
                 failures.append({
                     "device": hostname,
@@ -94,34 +95,31 @@ class PingIndicator(BaseIndicator):
                     "reason": "尚未採集 Ping 數據",
                     "data": None
                 })
-            elif result.get("error"):
-                # 採集失敗
-                failures.append({
-                    "device": hostname,
-                    "interface": "Mgmt",
-                    "reason": f"Ping 採集失敗: {result.get('error')}",
-                    "data": result
-                })
-            elif not result.get("is_reachable", False):
+            elif not record.is_reachable:
                 # 不可達
                 failures.append({
                     "device": hostname,
                     "interface": "Mgmt",
                     "reason": "Ping 不可達",
-                    "data": result
+                    "data": {
+                        "is_reachable": record.is_reachable,
+                        "success_rate": record.success_rate,
+                    }
                 })
             else:
-                success_rate = result.get("success_rate", 0.0)
-                if success_rate < self.SUCCESS_RATE_THRESHOLD:
+                if record.success_rate < self.SUCCESS_RATE_THRESHOLD:
                     # 成功率過低
                     failures.append({
                         "device": hostname,
                         "interface": "Mgmt",
                         "reason": (
-                            f"Ping 成功率過低: {success_rate}% "
+                            f"Ping 成功率過低: {record.success_rate}% "
                             f"(預期 >= {self.SUCCESS_RATE_THRESHOLD}%)"
                         ),
-                        "data": result
+                        "data": {
+                            "is_reachable": record.is_reachable,
+                            "success_rate": record.success_rate,
+                        }
                     })
                 else:
                     # 通過
@@ -165,46 +163,15 @@ class PingIndicator(BaseIndicator):
         session: AsyncSession,
         maintenance_id: str,
         phase: MaintenancePhase,
-    ) -> dict[str, dict]:
-        """獲取採集數據，返回 hostname -> 結果 的映射。"""
-        stmt = (
-            select(CollectionRecord)
-            .where(
-                CollectionRecord.indicator_type == "ping",
-                CollectionRecord.phase == phase,
-                CollectionRecord.maintenance_id == maintenance_id,
-            )
-            .order_by(CollectionRecord.collected_at.desc())
-        )
-        result = await session.execute(stmt)
-        all_records = result.scalars().all()
+    ) -> dict[str, PingRecord]:
+        """獲取採集數據，返回 hostname -> PingRecord 的映射。"""
+        repo = PingRecordRepo(session)
+        records = await repo.get_latest_per_device(phase, maintenance_id)
 
-        # 按設備去重，只保留最新記錄
-        collected = {}
-        for record in all_records:
-            hostname = record.switch_hostname
-            if hostname in collected:
-                continue
-
-            if not record.parsed_data:
-                collected[hostname] = {"error": "無數據"}
-                continue
-
-            # 解析數據
-            items = []
-            if isinstance(record.parsed_data, dict):
-                if "items" in record.parsed_data:
-                    items = record.parsed_data["items"]
-                else:
-                    items = [record.parsed_data]
-            elif isinstance(record.parsed_data, list):
-                items = record.parsed_data
-
-            # 取第一筆結果（通常一台設備只有一筆 ping 結果）
-            if items:
-                collected[hostname] = items[0]
-            else:
-                collected[hostname] = {"error": "無數據"}
+        # Ping 每台設備一筆記錄，直接以 switch_hostname 作為 key
+        collected: dict[str, PingRecord] = {}
+        for record in records:
+            collected[record.switch_hostname] = record
 
         return collected
 
@@ -243,37 +210,28 @@ class PingIndicator(BaseIndicator):
         phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[TimeSeriesPoint]:
         """獲取時間序列數據。"""
-        stmt = (
-            select(CollectionRecord)
-            .where(
-                CollectionRecord.indicator_type == "ping",
-                CollectionRecord.phase == phase,
-                CollectionRecord.maintenance_id == maintenance_id,
-            )
-            .order_by(CollectionRecord.collected_at.desc())
-            .limit(limit)
+        repo = PingRecordRepo(session)
+        records = await repo.get_time_series_records(
+            maintenance_id, phase, limit=limit
         )
-        result = await session.execute(stmt)
-        records = result.scalars().all()
+
+        # Group records by collected_at to compute reachable rate per timestamp
+        from collections import defaultdict
+
+        by_timestamp: dict[object, list[PingRecord]] = defaultdict(list)
+        for record in records:
+            by_timestamp[record.collected_at].append(record)
 
         time_series = []
-        for record in reversed(records):
-            if not record.parsed_data:
-                continue
-
-            items = []
-            if isinstance(record.parsed_data, dict) and "items" in record.parsed_data:
-                items = record.parsed_data["items"]
-            elif isinstance(record.parsed_data, list):
-                items = record.parsed_data
-
-            reachable_count = sum(1 for item in items if item.get("is_reachable", False))
-            total = len(items) if items else 1
-            reachable_rate = (reachable_count / total) * 100
+        for ts in sorted(by_timestamp.keys()):
+            batch = by_timestamp[ts]
+            reachable_count = sum(1 for r in batch if r.is_reachable)
+            total = len(batch)
+            reachable_rate = (reachable_count / total) * 100 if total > 0 else 0.0
 
             time_series.append(
                 TimeSeriesPoint(
-                    timestamp=record.collected_at,
+                    timestamp=ts,
                     values={"reachable": reachable_rate},
                 )
             )
@@ -288,38 +246,20 @@ class PingIndicator(BaseIndicator):
         phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
-        stmt = (
-            select(CollectionRecord)
-            .where(
-                CollectionRecord.indicator_type == "ping",
-                CollectionRecord.phase == phase,
-                CollectionRecord.maintenance_id == maintenance_id,
-            )
-            .order_by(CollectionRecord.collected_at.desc())
-            .limit(limit)
+        repo = PingRecordRepo(session)
+        records = await repo.get_latest_records(
+            maintenance_id, phase, limit=limit
         )
-        result = await session.execute(stmt)
-        records = result.scalars().all()
 
         raw_data = []
         for record in records:
-            if not record.parsed_data:
-                continue
-
-            items = []
-            if isinstance(record.parsed_data, dict) and "items" in record.parsed_data:
-                items = record.parsed_data["items"]
-            elif isinstance(record.parsed_data, list):
-                items = record.parsed_data
-
-            for item in items:
-                raw_data.append(
-                    RawDataRow(
-                        switch_hostname=record.switch_hostname,
-                        is_reachable=item.get("is_reachable"),
-                        success_rate=item.get("success_rate"),
-                        collected_at=record.collected_at,
-                    )
+            raw_data.append(
+                RawDataRow(
+                    switch_hostname=record.switch_hostname,
+                    is_reachable=record.is_reachable,
+                    success_rate=record.success_rate,
+                    collected_at=record.collected_at,
                 )
+            )
 
-        return raw_data[:limit]
+        return raw_data

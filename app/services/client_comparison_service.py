@@ -119,21 +119,32 @@ class ClientComparisonService:
             if record.mac_address not in new_by_mac:
                 new_by_mac[record.mac_address] = record
         
+        # 載入設備對應（用於 severity 計算）
+        from app.db.models import MaintenanceDeviceList
+        dev_stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+        dev_result = await session.execute(dev_stmt)
+        device_mappings_list = dev_result.scalars().all()
+        device_mappings: dict[str, str] = {}
+        for dm in device_mappings_list:
+            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
+
         # 生成比較結果
         comparisons = []
         all_macs = set(old_by_mac.keys()) | set(new_by_mac.keys())
-        
+
         for mac in all_macs:
             old_record = old_by_mac.get(mac)
             new_record = new_by_mac.get(mac)
-            
+
             # 建立比較記錄
             comparison = ClientComparison(
                 maintenance_id=maintenance_id,
                 collected_at=datetime.utcnow(),
                 mac_address=mac,
             )
-            
+
             # 添加 OLD（舊設備）數據
             if old_record:
                 comparison.old_ip_address = old_record.ip_address
@@ -145,7 +156,7 @@ class ClientComparisonService:
                 comparison.old_link_status = old_record.link_status
                 comparison.old_ping_reachable = old_record.ping_reachable
                 comparison.old_acl_passes = old_record.acl_passes
-            
+
             # 添加 NEW（新設備）數據
             if new_record:
                 comparison.new_ip_address = new_record.ip_address
@@ -157,23 +168,11 @@ class ClientComparisonService:
                 comparison.new_link_status = new_record.link_status
                 comparison.new_ping_reachable = new_record.ping_reachable
                 comparison.new_acl_passes = new_record.acl_passes
-            
-            # 比較差異
-            differences = self._find_differences(comparison)
-            comparison.differences = differences
-            
-            # 判斷是否有變化和嚴重程度
-            if differences:
-                comparison.is_changed = True
-                comparison.severity = self._calculate_severity(differences)
-                comparison.notes = self._generate_notes(comparison, differences)
-            else:
-                comparison.is_changed = False
-                comparison.severity = "info"
-                comparison.notes = "未檢測到變化"
-            
+
+            # 使用 _compare_records 處理單邊未偵測情況
+            comparison = self._compare_records(comparison, device_mappings)
             comparisons.append(comparison)
-        
+
         return comparisons
     
     def _find_differences(self, comparison: ClientComparison) -> dict[str, Any]:
@@ -334,14 +333,17 @@ class ClientComparisonService:
         # 如果提供了 before_time，动态生成比较结果
         if before_time:
             from datetime import datetime
-            
+
             before_dt = datetime.fromisoformat(before_time)
-            
-            # 获取最新时间
+
+            # 获取最新 NEW 階段時間
             from sqlalchemy import func
             latest_stmt = (
                 select(func.max(ClientRecord.collected_at))
-                .where(ClientRecord.maintenance_id == maintenance_id)
+                .where(
+                    ClientRecord.maintenance_id == maintenance_id,
+                    ClientRecord.phase == MaintenancePhase.NEW,
+                )
             )
             latest_result = await session.execute(latest_stmt)
             latest_time = latest_result.scalar()
@@ -432,17 +434,22 @@ class ClientComparisonService:
         maintenance_id: str,
         session: AsyncSession,
     ) -> list[dict[str, Any]]:
-        """获取所有历史时间点。
-        
-        返回该维护 ID 下所有采集数据的时间点列表。
+        """获取 NEW 階段的歷史時間點。
+
+        只返回 NEW phase 的時間點，確保統計圖表只顯示
+        有歲修後資料可比較的時間點。
         """
-        from sqlalchemy import func, distinct
-        
+        from sqlalchemy import func
+
         stmt = (
             select(
-                func.distinct(ClientRecord.collected_at).label('timepoint')
+                func.distinct(ClientRecord.collected_at)
+                .label('timepoint')
             )
-            .where(ClientRecord.maintenance_id == maintenance_id)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.phase == MaintenancePhase.NEW,
+            )
             .order_by('timepoint')
         )
         
@@ -529,20 +536,14 @@ class ClientComparisonService:
         for tp_data in timepoints_data:
             from datetime import datetime
             tp = datetime.fromisoformat(tp_data["timestamp"])
-            
-            # 获取最新时间
-            latest_stmt = (
-                select(func.max(ClientRecord.collected_at))
-                .where(ClientRecord.maintenance_id == maintenance_id)
-            )
-            latest_result = await session.execute(latest_stmt)
-            latest_time = latest_result.scalar()
-            
+
             # 生成该时间点的比较结果（不保存）
+            # after_time=tp：只取到該時間點為止的 NEW 記錄，
+            # 這樣每個時間點反映的是當時的偵測狀態
             comparisons = await self._generate_comparisons_at_time(
                 maintenance_id=maintenance_id,
                 before_time=tp,
-                after_time=latest_time,
+                after_time=tp,
                 session=session,
             )
             
@@ -642,49 +643,58 @@ class ClientComparisonService:
             # 使用小寫 key 以確保比較時大小寫不敏感
             device_mappings[dm.old_hostname.lower()] = dm.new_hostname
         
-        # 查询 BEFORE 时间点的记录
+        # 查询 OLD 階段記錄（歲修前基線）
         before_stmt = (
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.phase == MaintenancePhase.OLD,
                 ClientRecord.collected_at <= before_time,
             )
-            .order_by(ClientRecord.mac_address, ClientRecord.collected_at.desc())
+            .order_by(
+                ClientRecord.mac_address,
+                ClientRecord.collected_at.desc(),
+            )
         )
         before_result = await session.execute(before_stmt)
         before_records = before_result.scalars().all()
-        
+
         # 按 MAC 地址分组，只保留最新记录
         before_by_mac = {}
         for record in before_records:
             if record.mac_address not in before_by_mac:
                 before_by_mac[record.mac_address] = record
-        
-        # 查询 AFTER 时间点的记录
+
+        # 查询 NEW 階段記錄（歲修後）
+        # 僅查詢 NEW phase，避免 OLD 記錄洩漏到 after 端
         if after_time:
             after_stmt = (
                 select(ClientRecord)
                 .where(
                     ClientRecord.maintenance_id == maintenance_id,
+                    ClientRecord.phase == MaintenancePhase.NEW,
                     ClientRecord.collected_at <= after_time,
                 )
                 .order_by(
                     ClientRecord.mac_address,
-                    ClientRecord.collected_at.desc()
+                    ClientRecord.collected_at.desc(),
                 )
             )
         else:
             after_stmt = (
                 select(ClientRecord)
-                .where(ClientRecord.maintenance_id == maintenance_id)
+                .where(
+                    ClientRecord.maintenance_id == maintenance_id,
+                    ClientRecord.phase == MaintenancePhase.NEW,
+                )
                 .order_by(
                     ClientRecord.mac_address,
-                    ClientRecord.collected_at.desc()
+                    ClientRecord.collected_at.desc(),
                 )
             )
         after_result = await session.execute(after_stmt)
         after_records = after_result.scalars().all()
-        
+
         # 按 MAC 地址分组，只保留最新记录
         after_by_mac = {}
         for record in after_records:

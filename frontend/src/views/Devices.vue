@@ -83,8 +83,8 @@
             <div class="flex gap-3">
               <select v-model="macFilterStatus" @change="loadMacList" class="px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
                 <option value="all">全部狀態</option>
-                <option value="detected">✓ 可偵測</option>
-                <option value="undetected">✗ 未偵測</option>
+                <option value="detected">🟢 可偵測</option>
+                <option value="undetected">⚪ 未偵測</option>
               </select>
               <select v-model="macFilterCategory" @change="loadMacList" class="px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
                 <option value="all">全部分類</option>
@@ -132,8 +132,8 @@
                   </td>
                   <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ mac.mac_address }}</td>
                   <td class="px-3 py-2">
-                    <span v-if="mac.is_detected" class="text-green-400 text-xs">✓ 可偵測</span>
-                    <span v-else class="text-slate-500 text-xs">✗ 未偵測</span>
+                    <span v-if="mac.is_detected" class="text-green-400 text-xs">🟢</span>
+                    <span v-else class="text-slate-500 text-xs">⚪</span>
                   </td>
                   <td class="px-3 py-2">
                     <span v-if="mac.category_name" class="px-2 py-0.5 bg-cyan-600/30 text-cyan-300 rounded text-xs">{{ mac.category_name }}</span>

@@ -350,32 +350,29 @@ class PortChannelExpectation(Base):
         return f"<PortChannelExpectation {self.hostname}:{self.port_channel}>"
 
 
-class CollectionRecord(Base):
+class CollectionBatch(Base):
     """
-    Record of data collection runs.
+    採集批次表（取代 CollectionRecord）。
 
-    Tracks when data was collected and its status.
+    每次 DataCollectionService 對一台設備採集一種指標，產生一個 batch。
+    保留 raw_data（除錯用），並作為 typed rows 的 parent。
     """
 
-    __tablename__ = "collection_records"
+    __tablename__ = "collection_batches"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    indicator_type: Mapped[str] = mapped_column(String(100), index=True)
+    collection_type: Mapped[str] = mapped_column(String(100), index=True)
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
     phase: Mapped[MaintenancePhase] = mapped_column(
         Enum(MaintenancePhase),
         default=MaintenancePhase.NEW,
     )
-    maintenance_id: Mapped[str | None] = mapped_column(
+    maintenance_id: Mapped[str] = mapped_column(
         String(100),
-        nullable=True,
         index=True,
     )
     raw_data: Mapped[str | None] = mapped_column(Text, nullable=True)
-    parsed_data: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON,
-        nullable=True,
-    )
+    item_count: Mapped[int] = mapped_column(Integer, default=0)
     collected_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),
@@ -383,7 +380,230 @@ class CollectionRecord(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<CollectionRecord {self.indicator_type}@{self.switch_hostname}>"
+        return f"<CollectionBatch {self.collection_type}@{self.switch_hostname}>"
+
+
+# ── Typed Record Models ──────────────────────────────────────────
+
+
+class TransceiverRecord(Base):
+    """光模塊採集記錄（typed table）。"""
+
+    __tablename__ = "transceiver_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    interface_name: Mapped[str] = mapped_column(String(100))
+    tx_power: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rx_power: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    voltage: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current: Mapped[float | None] = mapped_column(Float, nullable=True)
+    serial_number: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    part_number: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<TransceiverRecord {self.switch_hostname}:{self.interface_name}>"
+
+
+class VersionRecord(Base):
+    """韌體版本採集記錄（typed table）。"""
+
+    __tablename__ = "version_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    version: Mapped[str] = mapped_column(String(255))
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    serial_number: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    uptime: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<VersionRecord {self.switch_hostname}:{self.version}>"
+
+
+class NeighborRecord(Base):
+    """LLDP 鄰居採集記錄（typed table，uplink indicator 用）。"""
+
+    __tablename__ = "neighbor_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    local_interface: Mapped[str] = mapped_column(String(100))
+    remote_hostname: Mapped[str] = mapped_column(String(255))
+    remote_interface: Mapped[str] = mapped_column(String(100))
+    remote_platform: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<NeighborRecord {self.switch_hostname}:{self.local_interface}>"
+
+
+class PortChannelRecord(Base):
+    """Port-Channel 採集記錄（typed table）。"""
+
+    __tablename__ = "port_channel_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    interface_name: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(50))
+    protocol: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    members: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    member_status: Mapped[dict[str, str] | None] = mapped_column(
+        JSON, nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<PortChannelRecord {self.switch_hostname}:{self.interface_name}>"
+
+
+class PowerRecord(Base):
+    """電源狀態採集記錄（typed table）。"""
+
+    __tablename__ = "power_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    ps_id: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(50))
+    input_status: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
+    output_status: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
+    capacity_watts: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    actual_output_watts: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<PowerRecord {self.switch_hostname}:{self.ps_id}>"
+
+
+class FanRecord(Base):
+    """風扇狀態採集記錄（typed table）。"""
+
+    __tablename__ = "fan_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    fan_id: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(50))
+    speed_rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    speed_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<FanRecord {self.switch_hostname}:{self.fan_id}>"
+
+
+class InterfaceErrorRecord(Base):
+    """介面錯誤計數採集記錄（typed table）。"""
+
+    __tablename__ = "interface_error_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    interface_name: Mapped[str] = mapped_column(String(100))
+    crc_errors: Mapped[int] = mapped_column(Integer, default=0)
+    input_errors: Mapped[int] = mapped_column(Integer, default=0)
+    output_errors: Mapped[int] = mapped_column(Integer, default=0)
+    collisions: Mapped[int] = mapped_column(Integer, default=0)
+    giants: Mapped[int] = mapped_column(Integer, default=0)
+    runts: Mapped[int] = mapped_column(Integer, default=0)
+
+    def __repr__(self) -> str:
+        return f"<InterfaceErrorRecord {self.switch_hostname}:{self.interface_name}>"
+
+
+class PingRecord(Base):
+    """Ping 可達性採集記錄（typed table）。"""
+
+    __tablename__ = "ping_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    target: Mapped[str] = mapped_column(String(255))
+    is_reachable: Mapped[bool] = mapped_column(Boolean)
+    success_rate: Mapped[float] = mapped_column(Float)
+    avg_rtt_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<PingRecord {self.switch_hostname}:{self.target}>"
 
 
 class IndicatorResult(Base):

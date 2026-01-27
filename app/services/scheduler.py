@@ -137,7 +137,7 @@ class SchedulerService:
         logger.info(f"Running scheduled collection for '{job_name}'")
         try:
             result = await self.collection_service.collect_indicator_data(
-                indicator_type=job_name,
+                collection_type=job_name,
                 maintenance_id=maintenance_id,
                 url=url,
                 source=source,

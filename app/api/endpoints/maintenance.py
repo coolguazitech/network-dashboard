@@ -21,7 +21,7 @@ from app.db.models import (
     DeviceMapping,
     InterfaceMapping,
     UplinkExpectation,
-    CollectionRecord,
+    CollectionBatch,
     IndicatorResult,
     ClientRecord,
     ClientComparison,
@@ -190,13 +190,13 @@ async def delete_maintenance(
     )
     deleted_counts["uplink_expectations"] = result.rowcount
     
-    # 4. 刪除 CollectionRecord
+    # 4. 刪除 CollectionBatch（FK CASCADE 自動刪除 typed records）
     result = await session.execute(
-        delete(CollectionRecord).where(
-            CollectionRecord.maintenance_id == maintenance_id
+        delete(CollectionBatch).where(
+            CollectionBatch.maintenance_id == maintenance_id
         )
     )
-    deleted_counts["collection_records"] = result.rowcount
+    deleted_counts["collection_batches"] = result.rowcount
     
     # 5. 刪除 IndicatorResult
     result = await session.execute(

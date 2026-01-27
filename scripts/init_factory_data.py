@@ -38,151 +38,22 @@ from app.db.models import (
     VersionExpectation,
     PortChannelExpectation,
     ArpSource,
-    CollectionRecord,
+    CollectionBatch,
     IndicatorResult,
     ClientRecord,
     ClientComparison,
 )
 from app.core.enums import VendorType, PlatformType, SiteType
 
-# Configuration
-MAINTENANCE_ID = "TEST-100"
-TARGET_VERSION = "6635P07"
-
-# Network topology - Device naming
-# Format: {number: type}
-DEVICES_CONFIG = {
-    # CORE switches (2 devices)
-    1: "CORE",
-    2: "CORE",
-    # AGG switches (8 devices)
-    3: "AGG",
-    4: "AGG",
-    5: "AGG",
-    6: "AGG",
-    7: "AGG",
-    8: "AGG",
-    9: "AGG",
-    10: "AGG",
-    # EQP switches (10 devices)
-    11: "EQP",
-    12: "EQP",
-    13: "EQP",
-    14: "EQP",
-    15: "EQP",
-    16: "EQP",
-    17: "EQP",
-    18: "EQP",
-    19: "EQP",
-    20: "EQP",
-    # AMHS switches (4 devices)
-    21: "AMHS",
-    22: "AMHS",
-    23: "AMHS",
-    24: "AMHS",
-    # SNR switches (5 devices)
-    25: "SNR",
-    26: "SNR",
-    27: "SNR",
-    28: "SNR",
-    29: "SNR",
-    # OTHERS switches (5 devices)
-    30: "OTHERS",
-    31: "OTHERS",
-    32: "OTHERS",
-    33: "OTHERS",
-    34: "OTHERS",
-}
-
-# Devices NOT being replaced (OLD = OLD, not OLD → NEW)
-# These devices keep their OLD hostname in both old and new columns
-DEVICES_NOT_REPLACED = {11, 12, 21}  # SW-OLD-011-EQP, SW-OLD-012-EQP, SW-OLD-021-AMHS
-
-# MAC address distribution
-MAC_DISTRIBUTION = {
-    "EQP": 50,
-    "AMHS": 25,
-    "SNR": 15,
-    "OTHERS": 10,
-}
-
-
-def get_device_type_for_number(num: int) -> str:
-    """Get device type for a given number."""
-    return DEVICES_CONFIG.get(num, "UNKNOWN")
-
-
-def get_old_ip(num: int, device_type: str) -> str:
-    """Generate OLD device IP address (10.1.x.x range)."""
-    if device_type == "CORE":
-        return f"10.1.1.{num}"
-    elif device_type == "AGG":
-        return f"10.1.2.{num}"
-    else:  # EDGE devices
-        return f"10.1.3.{num}"
-
-
-def get_new_ip(num: int, device_type: str) -> str:
-    """Generate NEW device IP address (10.2.x.x range)."""
-    if device_type == "CORE":
-        return f"10.2.1.{num}"
-    elif device_type == "AGG":
-        return f"10.2.2.{num}"
-    else:  # EDGE devices
-        return f"10.2.3.{num}"
-
-
-def get_device_mappings() -> list[tuple[str, str, str, str]]:
-    """
-    Generate device mappings.
-
-    Returns list of (old_hostname, old_ip, new_hostname, new_ip) tuples.
-    """
-    mappings = []
-
-    for num, device_type in DEVICES_CONFIG.items():
-        old_hostname = f"SW-OLD-{num:03d}-{device_type}"
-        old_ip = get_old_ip(num, device_type)
-
-        if num in DEVICES_NOT_REPLACED:
-            # Not replaced - keep OLD hostname
-            new_hostname = old_hostname
-            new_ip = old_ip
-        else:
-            # Being replaced
-            new_hostname = f"SW-NEW-{num:03d}-{device_type}"
-            new_ip = get_new_ip(num, device_type)
-
-        mappings.append((old_hostname, old_ip, new_hostname, new_ip))
-
-    return mappings
-
-
-def generate_mac_addresses() -> dict[str, list[tuple[str, str]]]:
-    """Generate 100 MAC addresses with descriptions."""
-    macs = {}
-
-    macs["EQP"] = [
-        (f"00:11:22:EQ:{i:02d}:{i:02d}", f"EQP Equipment {i:02d}")
-        for i in range(1, 51)
-    ]
-
-    macs["AMHS"] = [
-        (f"00:11:22:AM:{i:02d}:{i:02d}", f"AMHS Robot {i:02d}")
-        for i in range(1, 26)
-    ]
-
-    macs["SNR"] = [
-        (f"00:11:22:SN:{i:02d}:{i:02d}", f"SNR Storage {i:02d}")
-        for i in range(1, 16)
-    ]
-
-    macs["OTHERS"] = [
-        (f"00:11:22:OT:{i:02d}:{i:02d}", f"Other Device {i:02d}")
-        for i in range(1, 11)
-    ]
-
-    return macs
+# Import shared device configuration
+from factory_device_config import (
+    MAINTENANCE_ID,
+    TARGET_VERSION,
+    DEVICES_CONFIG,
+    DEVICES_NOT_REPLACED,
+    get_device_mappings,
+    generate_mac_addresses,
+)
 
 
 def generate_uplink_topology(
@@ -290,7 +161,7 @@ async def cleanup_database(session):
         ClientComparison,
         ClientRecord,
         IndicatorResult,
-        CollectionRecord,
+        CollectionBatch,
         ArpSource,
         PortChannelExpectation,
         VersionExpectation,
@@ -325,18 +196,34 @@ async def cleanup_database(session):
 
     # Clear TEST-100's existing data
     print(f"\nClearing existing {MAINTENANCE_ID} data...")
+
+    # First, delete ClientCategoryMember for TEST-100 categories
+    if test_100_category_ids:
+        stmt = delete(ClientCategoryMember).where(
+            ClientCategoryMember.category_id.in_(test_100_category_ids)
+        )
+        result = await session.execute(stmt)
+        print(f"  - Cleared {result.rowcount} rows from "
+              f"client_category_members (TEST-100)")
+
     for table in tables_with_maintenance_id:
         stmt = delete(table).where(table.maintenance_id == MAINTENANCE_ID)
         result = await session.execute(stmt)
         print(f"  - Cleared {result.rowcount} rows from "
               f"{table.__tablename__}")
 
-    # Remove old test switches
+    # Remove old test switches (including short-name remnants)
     print("\nRemoving old test switches...")
     stmt = delete(Switch).where(
         (Switch.hostname.like("switch-%")) |
         (Switch.hostname.like("SW-OLD-%")) |
-        (Switch.hostname.like("SW-NEW-%"))
+        (Switch.hostname.like("SW-NEW-%")) |
+        (Switch.hostname.like("CORE-%")) |
+        (Switch.hostname.like("AGG-%")) |
+        (Switch.hostname.like("EQP-%")) |
+        (Switch.hostname.like("AMHS-%")) |
+        (Switch.hostname.like("SNR-%")) |
+        (Switch.hostname.like("OTHERS-%"))
     )
     result = await session.execute(stmt)
     print(f"  - Deleted {result.rowcount} old switches")
@@ -403,6 +290,8 @@ async def create_switches(session):
         num = int(old_h.split("-")[2])
 
         # Create OLD device
+        # OLD replaced switches are inactive; un-replaced OLD switches stay active
+        old_is_active = (num in DEVICES_NOT_REPLACED)
         if old_h not in created_hostnames:
             old_switch = Switch(
                 hostname=old_h,
@@ -413,6 +302,7 @@ async def create_switches(session):
                 model="HPE FlexFabric 5710" if device_type not in ["CORE", "AGG"] else "HPE FlexFabric 5930",
                 location=f"{device_type} Area",
                 description=f"OLD {device_type} switch {num}",
+                is_active=old_is_active,
             )
             switches.append(old_switch)
             session.add(old_switch)
@@ -713,6 +603,10 @@ async def main():
     print("=" * 60)
     print("Network Dashboard - Factory Data Initialization")
     print("=" * 60)
+
+    # 確保所有表存在（含新增的 typed tables）
+    from app.db.base import init_db
+    await init_db()
 
     async with get_session_context() as session:
         try:

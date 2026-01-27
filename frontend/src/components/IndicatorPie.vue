@@ -89,9 +89,10 @@ const getTitle = (type) => {
 
 const getIcon = (type) => {
   const icons = {
-    transceiver: '🔌',
+    transceiver: '💡',
     version: '📦',
     uplink: '🔗',
+    port_channel: '⛓️',
   }
   return icons[type] || '📊'
 }

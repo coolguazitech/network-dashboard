@@ -31,7 +31,6 @@ import httpx
 
 from app.core.enums import MaintenancePhase
 from app.db.base import get_session_context
-from app.repositories.collection_record import CollectionRecordRepository
 from app.repositories.indicator_result import IndicatorResultRepository
 from app.services.data_collection import DataCollectionService
 from app.services.indicator_service import IndicatorService
@@ -97,7 +96,7 @@ async def collect_all_indicators(
         print(f"\nCollecting {indicator_type} data...")
         try:
             result = await collection_service.collect_indicator_data(
-                indicator_type=indicator_type,
+                collection_type=indicator_type,
                 phase=phase,
                 maintenance_id=maintenance_id,
             )
@@ -168,7 +167,6 @@ async def evaluate_all_indicators(maintenance_id: str) -> dict[str, any]:
 async def verify_data(maintenance_id: str) -> bool:
     """Verify data was stored in database."""
     async with get_session_context() as session:
-        record_repo = CollectionRecordRepository(session)
         result_repo = IndicatorResultRepository(session)
 
         print("\nVerifying database records...")

@@ -2,36 +2,39 @@
 Interface Error Count indicator evaluator.
 
 Evaluates if interfaces have any errors.
+Uses typed record table (InterfaceErrorRecord) instead of CollectionRecord JSON.
 """
 from __future__ import annotations
 
-from sqlalchemy import select
+from collections import defaultdict
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import MaintenancePhase
-from app.db.models import CollectionRecord
+from app.db.models import InterfaceErrorRecord
 from app.indicators.base import (
     BaseIndicator,
+    DisplayConfig,
     IndicatorEvaluationResult,
     IndicatorMetadata,
     ObservedField,
-    DisplayConfig,
-    TimeSeriesPoint,
     RawDataRow,
+    TimeSeriesPoint,
 )
+from app.repositories.typed_records import InterfaceErrorRecordRepo
 
 
 class ErrorCountIndicator(BaseIndicator):
     """
     Error Count 指標評估器。
-    
+
     檢查項目：
     1. 介面是否有 CRC 錯誤
     2. 介面是否有 Input/Output 錯誤
     """
-    
+
     indicator_type = "error_count"
-    
+
     async def evaluate(
         self,
         maintenance_id: str,
@@ -40,7 +43,7 @@ class ErrorCountIndicator(BaseIndicator):
     ) -> IndicatorEvaluationResult:
         """
         評估錯誤計數指標。
-        
+
         Args:
             maintenance_id: 維護作業 ID
             session: 資料庫 session
@@ -48,68 +51,40 @@ class ErrorCountIndicator(BaseIndicator):
         """
         if phase is None:
             phase = MaintenancePhase.NEW
-            
-        # 獲取實際採集數據
-        stmt = (
-            select(CollectionRecord)
-            .where(
-                CollectionRecord.indicator_type == "error_count",
-                CollectionRecord.phase == phase,
-                CollectionRecord.maintenance_id == maintenance_id,
-            )
-            .order_by(CollectionRecord.collected_at.desc())
-        )
-        result = await session.execute(stmt)
-        all_records = result.scalars().all()
-        
-        # 按設備去重
-        seen_devices = set()
-        records = []
-        for record in all_records:
-            if record.switch_hostname not in seen_devices:
-                records.append(record)
-                seen_devices.add(record.switch_hostname)
-                
+
+        repo = InterfaceErrorRecordRepo(session)
+        records = await repo.get_latest_per_device(phase, maintenance_id)
+
         total_count = 0
         pass_count = 0
         failures = []
-        
+
         for record in records:
-            if not record.parsed_data:
-                continue
-                
-            items = []
-            if isinstance(record.parsed_data, dict) and "items" in record.parsed_data:
-                items = record.parsed_data["items"]
-            elif isinstance(record.parsed_data, list):
-                items = record.parsed_data
-            
-            for item in items:
-                interface = item.get("interface_name")
-                crc = item.get("crc_errors", 0)
-                input_err = item.get("input_errors", 0)
-                output_err = item.get("output_errors", 0)
-                
-                total_count += 1
-                
-                errors = []
-                if crc > 0:
-                    errors.append(f"CRC: {crc}")
-                if input_err > 0:
-                    errors.append(f"In: {input_err}")
-                if output_err > 0:
-                    errors.append(f"Out: {output_err}")
-                
-                if not errors:
-                    pass_count += 1
-                else:
-                    failures.append({
-                        "device": record.switch_hostname,
-                        "interface": interface,
-                        "reason": ", ".join(errors),
-                        "data": item
-                    })
-        
+            total_count += 1
+
+            errors = []
+            if record.crc_errors > 0:
+                errors.append(f"CRC: {record.crc_errors}")
+            if record.input_errors > 0:
+                errors.append(f"In: {record.input_errors}")
+            if record.output_errors > 0:
+                errors.append(f"Out: {record.output_errors}")
+
+            if not errors:
+                pass_count += 1
+            else:
+                failures.append({
+                    "device": record.switch_hostname,
+                    "interface": record.interface_name,
+                    "reason": ", ".join(errors),
+                    "data": {
+                        "interface_name": record.interface_name,
+                        "crc_errors": record.crc_errors,
+                        "input_errors": record.input_errors,
+                        "output_errors": record.output_errors,
+                    },
+                })
+
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
             phase=phase,
@@ -167,39 +142,35 @@ class ErrorCountIndicator(BaseIndicator):
         phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[TimeSeriesPoint]:
         """獲取時間序列數據。"""
-        stmt = (
-            select(CollectionRecord)
-            .where(
-                CollectionRecord.indicator_type == "error_count",
-                CollectionRecord.phase == phase,
-                CollectionRecord.maintenance_id == maintenance_id,
-            )
-            .order_by(CollectionRecord.collected_at.desc())
-            .limit(limit)
+        repo = InterfaceErrorRecordRepo(session)
+        records = await repo.get_time_series_records(
+            maintenance_id=maintenance_id,
+            phase=phase,
+            limit=limit,
         )
-        result = await session.execute(stmt)
-        records = result.scalars().all()
 
-        time_series = []
-        for record in reversed(records):
-            if not record.parsed_data:
-                continue
+        # Group records by collected_at timestamp, sum errors across interfaces
+        ts_map: dict[str, dict] = defaultdict(
+            lambda: {"timestamp": None, "crc_errors": 0, "input_errors": 0}
+        )
+        for record in records:
+            key = record.collected_at.isoformat()
+            entry = ts_map[key]
+            entry["timestamp"] = record.collected_at
+            entry["crc_errors"] += record.crc_errors
+            entry["input_errors"] += record.input_errors
 
-            items = []
-            if isinstance(record.parsed_data, dict) and "items" in record.parsed_data:
-                items = record.parsed_data["items"]
-            elif isinstance(record.parsed_data, list):
-                items = record.parsed_data
-
-            total_crc = sum(item.get("crc_errors", 0) for item in items)
-            total_input = sum(item.get("input_errors", 0) for item in items)
-
-            time_series.append(
-                TimeSeriesPoint(
-                    timestamp=record.collected_at,
-                    values={"crc_errors": float(total_crc), "input_errors": float(total_input)},
-                )
+        # Sort by timestamp ascending
+        time_series = [
+            TimeSeriesPoint(
+                timestamp=entry["timestamp"],
+                values={
+                    "crc_errors": float(entry["crc_errors"]),
+                    "input_errors": float(entry["input_errors"]),
+                },
             )
+            for entry in sorted(ts_map.values(), key=lambda e: e["timestamp"])
+        ]
 
         return time_series
 
@@ -211,48 +182,24 @@ class ErrorCountIndicator(BaseIndicator):
         phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
-        stmt = (
-            select(CollectionRecord)
-            .where(
-                CollectionRecord.indicator_type == "error_count",
-                CollectionRecord.phase == phase,
-                CollectionRecord.maintenance_id == maintenance_id,
-            )
-            .order_by(CollectionRecord.collected_at.desc())
-            .limit(10)
+        repo = InterfaceErrorRecordRepo(session)
+        records = await repo.get_latest_records(
+            maintenance_id=maintenance_id,
+            phase=phase,
+            limit=limit,
         )
-        result = await session.execute(stmt)
-        records = result.scalars().all()
 
         raw_data = []
-        count = 0
         for record in records:
-            if not record.parsed_data:
-                continue
-
-            items = []
-            if isinstance(record.parsed_data, dict) and "items" in record.parsed_data:
-                items = record.parsed_data["items"]
-            elif isinstance(record.parsed_data, list):
-                items = record.parsed_data
-
-            for item in items:
-                if count >= limit:
-                    break
-
-                raw_data.append(
-                    RawDataRow(
-                        switch_hostname=record.switch_hostname,
-                        interface_name=item.get("interface_name"),
-                        crc_errors=item.get("crc_errors"),
-                        input_errors=item.get("input_errors"),
-                        output_errors=item.get("output_errors"),
-                        collected_at=record.collected_at,
-                    )
+            raw_data.append(
+                RawDataRow(
+                    switch_hostname=record.switch_hostname,
+                    interface_name=record.interface_name,
+                    crc_errors=record.crc_errors,
+                    input_errors=record.input_errors,
+                    output_errors=record.output_errors,
+                    collected_at=record.collected_at,
                 )
-                count += 1
-
-            if count >= limit:
-                break
+            )
 
         return raw_data

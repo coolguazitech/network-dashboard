@@ -5,116 +5,89 @@ Version indicator evaluator.
 """
 from __future__ import annotations
 
-import yaml
-from pathlib import Path
-from typing import Any
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CollectionRecord
+from app.db.models import VersionExpectation, VersionRecord
 from app.indicators.base import (
     BaseIndicator,
+    DisplayConfig,
     IndicatorEvaluationResult,
     IndicatorMetadata,
     ObservedField,
-    DisplayConfig,
-    TimeSeriesPoint,
     RawDataRow,
+    TimeSeriesPoint,
 )
 from app.core.enums import MaintenancePhase
-from app.core.config import settings
+from app.repositories.typed_records import VersionRecordRepo
 
 
 class VersionIndicator(BaseIndicator):
     """
     Version 版本指標評估器。
-    
+
     檢查 NEW phase 中的設備版本是否符合預期。
     """
-    
+
     indicator_type = "version"
-    
-    def __init__(self) -> None:
-        """初始化並讀取版本期望配置。"""
-        self.version_expectations = self._load_version_expectations()
-    
-    def _load_version_expectations(self) -> dict[str, str]:
-        """從 switches.yaml 讀取版本期望。"""
-        try:
-            config_path = Path(settings.switches_config_path)
-            with open(config_path, encoding="utf-8") as f:
-                config = yaml.safe_load(f)
-            
-            # 從配置中提取 version_expectations
-            return config.get("version_expectations", {})
-        except Exception as e:
-            print(f"Warning: Failed to load version expectations: {e}")
-            return {}
-    
+
     async def evaluate(
         self,
         maintenance_id: str,
         session: AsyncSession,
         phase: MaintenancePhase | None = None,
     ) -> IndicatorEvaluationResult:
-        """
-        評估版本指標。
-        """
+        """評估版本指標。"""
         if phase is None:
             phase = MaintenancePhase.NEW
-        
-        # 查詢所有指定階段的版本數據
-        stmt = (
-            select(CollectionRecord)
-            .where(
-                CollectionRecord.indicator_type == "version",
-                CollectionRecord.phase == phase,
-                CollectionRecord.maintenance_id == maintenance_id,
-            )
-            .order_by(CollectionRecord.collected_at.desc())
+
+        # 從 DB 讀取版本期望
+        version_expectations = await self._load_expectations(
+            session, maintenance_id
         )
-        result = await session.execute(stmt)
-        records = result.scalars().all()
-        
+
+        # 查詢所有指定階段的版本數據（每台設備最新一筆）
+        repo = VersionRecordRepo(session)
+        records = await repo.get_latest_per_device(phase, maintenance_id)
+
+        # 按設備去重（get_latest_per_device 已取最新 batch，但每台設備可能有一筆）
+        seen_devices: set[str] = set()
+        unique_records: list[VersionRecord] = []
+        for record in records:
+            if record.switch_hostname not in seen_devices:
+                unique_records.append(record)
+                seen_devices.add(record.switch_hostname)
+
         total_count = 0
         pass_count = 0
         failures = []
-        
+
         # 遍歷每條採集記錄
-        for record in records:
-            if not record.parsed_data:
-                continue
-            
-            total_count += 1
+        for record in unique_records:
             device_hostname = record.switch_hostname
-            
-            # 獲取期望版本
-            expected_version = self.version_expectations.get(device_hostname)
-            
-            if not expected_version:
-                failures.append({
-                    "device": device_hostname,
-                    "reason": "未定義版本期望",
-                    "expected": None,
-                    "actual": record.parsed_data.get("version")
-                })
+
+            # 獲取期望版本（無期望則跳過，不計入總數）
+            expected_versions = version_expectations.get(device_hostname)
+
+            if not expected_versions:
                 continue
-            
+
+            total_count += 1
+
             # 獲取實際版本
-            actual_version = record.parsed_data.get("version")
-            
-            # 比較版本
-            if actual_version == expected_version:
+            actual_version = record.version
+
+            # 比較版本（支援分號分隔的多個期望版本）
+            if actual_version and actual_version in expected_versions:
                 pass_count += 1
             else:
                 failures.append({
                     "device": device_hostname,
-                    "reason": f"版本不符",
-                    "expected": expected_version,
+                    "reason": "版本不符",
+                    "expected": ";".join(expected_versions),
                     "actual": actual_version,
                 })
-        
+
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
             phase=phase,
@@ -123,14 +96,40 @@ class VersionIndicator(BaseIndicator):
             pass_count=pass_count,
             fail_count=total_count - pass_count,
             pass_rates={
-                "version_match": (pass_count / total_count * 100) 
-                    if total_count > 0 else 0
+                "version_match": (pass_count / total_count * 100)
+                if total_count > 0 else 0
             },
             failures=failures if failures else None,
-            summary=f"版本驗收: {pass_count}/{total_count} 通過 "
-                   f"({pass_count/total_count*100:.1f}%)"
-                   if total_count > 0 else "無版本數據"
+            summary=(
+                f"版本驗收: {pass_count}/{total_count} 通過 "
+                f"({pass_count / total_count * 100:.1f}%)"
+            )
+            if total_count > 0 else "無版本數據",
         )
+
+    async def _load_expectations(
+        self,
+        session: AsyncSession,
+        maintenance_id: str,
+    ) -> dict[str, list[str]]:
+        """從 DB 讀取版本期望。返回 hostname -> [expected_versions]。"""
+        stmt = select(VersionExpectation).where(
+            VersionExpectation.maintenance_id == maintenance_id
+        )
+        result = await session.execute(stmt)
+        expectations = result.scalars().all()
+
+        exp_map: dict[str, list[str]] = {}
+        for exp in expectations:
+            # expected_versions 是分號分隔的字串
+            versions = [
+                v.strip()
+                for v in exp.expected_versions.split(";")
+                if v.strip()
+            ]
+            exp_map[exp.hostname] = versions
+
+        return exp_map
 
     def get_metadata(self) -> IndicatorMetadata:
         """獲取指標元數據。"""
@@ -163,28 +162,26 @@ class VersionIndicator(BaseIndicator):
         phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[TimeSeriesPoint]:
         """獲取時間序列數據。"""
-        stmt = (
-            select(CollectionRecord)
-            .where(
-                CollectionRecord.indicator_type == "version",
-                CollectionRecord.phase == phase,
-                CollectionRecord.maintenance_id == maintenance_id,
-            )
-            .order_by(CollectionRecord.collected_at.desc())
-            .limit(limit)
+        version_expectations = await self._load_expectations(
+            session, maintenance_id
         )
-        result = await session.execute(stmt)
-        records = result.scalars().all()
+
+        repo = VersionRecordRepo(session)
+        records = await repo.get_time_series_records(
+            maintenance_id, phase, limit
+        )
 
         time_series = []
         for record in reversed(records):
-            if not record.parsed_data:
-                continue
-
-            # 計算版本匹配率
-            expected = self.version_expectations.get(record.switch_hostname)
-            actual = record.parsed_data.get("version")
-            match_rate = 100.0 if expected and actual == expected else 0.0
+            expected = version_expectations.get(
+                record.switch_hostname, []
+            )
+            actual = record.version
+            match_rate = (
+                100.0
+                if expected and actual in expected
+                else 0.0
+            )
 
             time_series.append(
                 TimeSeriesPoint(
@@ -203,33 +200,32 @@ class VersionIndicator(BaseIndicator):
         phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
-        stmt = (
-            select(CollectionRecord)
-            .where(
-                CollectionRecord.indicator_type == "version",
-                CollectionRecord.phase == phase,
-                CollectionRecord.maintenance_id == maintenance_id,
-            )
-            .order_by(CollectionRecord.collected_at.desc())
-            .limit(limit)
+        version_expectations = await self._load_expectations(
+            session, maintenance_id
         )
-        result = await session.execute(stmt)
-        records = result.scalars().all()
+
+        repo = VersionRecordRepo(session)
+        records = await repo.get_latest_records(
+            maintenance_id, phase, limit
+        )
 
         raw_data = []
         for record in records:
-            if not record.parsed_data:
-                continue
-
-            expected = self.version_expectations.get(record.switch_hostname)
-            actual = record.parsed_data.get("version")
+            expected = version_expectations.get(
+                record.switch_hostname, []
+            )
+            actual = record.version
 
             raw_data.append(
                 RawDataRow(
                     switch_hostname=record.switch_hostname,
                     version=actual,
-                    expected_version=expected,
-                    version_match=actual == expected if expected else None,
+                    expected_version=(
+                        ";".join(expected) if expected else None
+                    ),
+                    version_match=(
+                        actual in expected if expected else None
+                    ),
                     collected_at=record.collected_at,
                 )
             )

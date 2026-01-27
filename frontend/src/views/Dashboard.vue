@@ -191,10 +191,10 @@ const getTitle = (type) => {
 
 const getIcon = (type) => {
   const icons = {
-    transceiver: '🔌',      // Optical module - plug
+    transceiver: '💡',      // Optical module - light
     version: '📦',          // Version - package
     uplink: '🔗',           // Uplink - link
-    port_channel: '📊',     // Port Channel - chart
+    port_channel: '⛓️',     // Port Channel - chain
     power: '⚡',            // Power - lightning
     fan: '💨',              // Fan - wind
     error_count: '⚠️',     // Error - warning

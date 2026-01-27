@@ -21,5 +21,6 @@ from . import (
     ping,
     cisco_nxos_neighbor,
     hpe_neighbor,
+    hpe_version,
     cisco_ios_neighbor,
 )

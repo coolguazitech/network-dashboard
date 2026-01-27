@@ -3,7 +3,7 @@ from .base import Base, get_async_session, engine, get_session_context
 from .models import (
     Switch,
     Interface,
-    CollectionRecord,
+    CollectionBatch,
     IndicatorResult,
     DeviceMapping,
     ClientRecord,
@@ -16,7 +16,7 @@ __all__ = [
     "get_session_context",
     "Switch",
     "Interface",
-    "CollectionRecord",
+    "CollectionBatch",
     "IndicatorResult",
     "DeviceMapping",
     "ClientRecord",

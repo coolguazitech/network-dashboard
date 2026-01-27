@@ -38,12 +38,12 @@ jobs:
     interval: 30   # seconds
     description: "韌體版本資訊收集"
 
-  neighbor:
+  uplink:
     url:
     source:        # FNA/DNA
     brand:         # HPE/Cisco-IOS/Cisco-NXOS
     interval: 30   # seconds
-    description: "鄰居連接狀態收集"
+    description: "Uplink 鄰居拓撲收集"
 
   fan:
     url:
