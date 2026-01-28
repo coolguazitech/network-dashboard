@@ -129,7 +129,7 @@ class IndicatorService:
         return summary
 
     def get_all_indicators(self) -> list:
-        """返回所有指标实例。"""
+        """回傳所有指標實例。"""
         return [
             self.transceiver_indicator,
             self.version_indicator,
@@ -142,7 +142,7 @@ class IndicatorService:
         ]
 
     def get_indicator(self, name: str):
-        """根据名称获取指标实例。"""
+        """根據名稱獲取指標實例。"""
         mapping = {
             "transceiver": self.transceiver_indicator,
             "version": self.version_indicator,

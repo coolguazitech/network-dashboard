@@ -17,7 +17,6 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import MaintenancePhase
@@ -37,8 +36,9 @@ from app.parsers.protocols import (
     MacTableData,
     PingManyData,
 )
+from app.fetchers.base import FetchContext
+from app.fetchers.registry import fetcher_registry
 from app.repositories.switch import SwitchRepository
-from app.services.api_client import BaseApiClient, get_api_client
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +80,8 @@ class ClientCollectionService:
     8 個指標的 Fetchers (1-8) 由既有的 DataCollectionService 處理。
     """
 
-    def __init__(
-        self,
-        api_client: BaseApiClient | None = None,
-        use_mock: bool = False,
-    ) -> None:
-        self.api_client = api_client or get_api_client(use_mock=use_mock)
-
-        # Parser instances (skeleton — parse() 待 Fetcher 完成後實作)
+    def __init__(self) -> None:
+        # Parser instances
         self._mac_parser = MacTableParser()
         self._arp_parser = ArpParser()
         self._if_parser = InterfaceStatusParser()
@@ -166,17 +160,12 @@ class ClientCollectionService:
         Returns:
             寫入 DB 的 ClientRecord 列表。
         """
-        site = switch.site.value
-        sw_ip = switch.ip_address
-
         # ── Phase 1: 並行 Type A Fetchers ────────────────────────
-        raw = await self._phase1_parallel_fetch(site, sw_ip)
+        raw = await self._phase1_parallel_fetch(switch)
         intermediates = self._phase1_parse(raw)
 
         # ── Phase 2: 依賴呼叫 ────────────────────────────────────
-        await self._phase2_dependent_fetch(
-            site, sw_ip, intermediates,
-        )
+        await self._phase2_dependent_fetch(switch, intermediates)
 
         # ── Phase 3: 組裝 ClientRecord ───────────────────────────
         records = self._phase3_assemble(
@@ -198,23 +187,45 @@ class ClientCollectionService:
     # ── Phase 1: 並行呼叫 Type A Fetchers ────────────────────────
 
     async def _phase1_parallel_fetch(
-        self, site: str, sw_ip: str,
+        self, switch: Switch,
     ) -> _FetcherResults:
         """
         並行呼叫 3 個 Type A Fetchers:
-        get_mac_table, get_arp_table, get_interface_status
+        mac_table, arp_table, interface_status
 
         全部只需 switch_ip，無依賴。
         """
         raw = _FetcherResults()
 
-        mac_task = self.api_client.fetch(site, "get_mac_table", sw_ip)
-        arp_task = self.api_client.fetch(site, "get_arp_table", sw_ip)
-        if_task = self.api_client.fetch(site, "get_interface_status", sw_ip)
+        def _ctx() -> FetchContext:
+            return FetchContext(
+                switch_ip=switch.ip_address,
+                switch_hostname=switch.hostname,
+                site=switch.site.value,
+                vendor=switch.vendor.value,
+                platform=switch.platform.value,
+            )
 
-        raw.mac_table_raw, raw.arp_table_raw, raw.interface_status_raw = (
-            await asyncio.gather(mac_task, arp_task, if_task)
+        mac_fetcher = fetcher_registry.get_or_raise("mac_table")
+        arp_fetcher = fetcher_registry.get_or_raise("arp_table")
+        if_fetcher = fetcher_registry.get_or_raise("interface_status")
+
+        mac_result, arp_result, if_result = await asyncio.gather(
+            mac_fetcher.fetch(_ctx()),
+            arp_fetcher.fetch(_ctx()),
+            if_fetcher.fetch(_ctx()),
         )
+
+        for label, r in [("mac_table", mac_result), ("arp_table", arp_result), ("interface_status", if_result)]:
+            if not r.success:
+                raise RuntimeError(
+                    f"Fetch failed for {label} on "
+                    f"{switch.hostname}: {r.error}"
+                )
+
+        raw.mac_table_raw = mac_result.raw_output
+        raw.arp_table_raw = arp_result.raw_output
+        raw.interface_status_raw = if_result.raw_output
 
         return raw
 
@@ -232,22 +243,21 @@ class ClientCollectionService:
 
     async def _phase2_dependent_fetch(
         self,
-        site: str,
-        sw_ip: str,
+        switch: Switch,
         intermediates: _ParsedIntermediates,
     ) -> None:
         """
         Phase 2: 依賴 Phase 1 結果的呼叫。
 
-        2a. get_acl_number — 需要 interface 清單 (從 mac_table)
+        2a. acl — 需要 interface 清單 (從 mac_table)
         2b. ping_many — 需要客戶端 IP 清單 (從 mac_table + arp_table)
 
         兩者互不依賴，可並行。
         """
         # 2a: 取出有 MAC 的 interface 清單
-        unique_interfaces = {
+        unique_interfaces = sorted({
             e.interface_name for e in intermediates.mac_entries
-        }
+        })
 
         # 2b: 透過 MAC → IP 對應取出客戶端 IP
         mac_to_ip = {e.mac_address: e.ip_address for e in intermediates.arp_entries}
@@ -257,56 +267,47 @@ class ClientCollectionService:
             if e.mac_address in mac_to_ip
         ]
 
-        # 並行呼叫 ACL + ping_many
-        acl_task = self._fetch_acl(site, sw_ip, unique_interfaces)
-        ping_task = self._fetch_ping_many(site, sw_ip, client_ips)
+        # 建立 FetchContext（ACL 帶 interfaces，ping_many 帶 target_ips）
+        acl_ctx = FetchContext(
+            switch_ip=switch.ip_address,
+            switch_hostname=switch.hostname,
+            site=switch.site.value,
+            vendor=switch.vendor.value,
+            platform=switch.platform.value,
+            params={"interfaces": unique_interfaces},
+        )
+        ping_ctx = FetchContext(
+            switch_ip=switch.ip_address,
+            switch_hostname=switch.hostname,
+            site=switch.site.value,
+            vendor=switch.vendor.value,
+            platform=switch.platform.value,
+            params={"target_ips": client_ips},
+        )
 
-        acl_raw, ping_raw = await asyncio.gather(acl_task, ping_task)
+        acl_fetcher = fetcher_registry.get_or_raise("acl")
+        ping_fetcher = fetcher_registry.get_or_raise("ping_many")
+
+        # 並行呼叫 ACL + ping_many
+        acl_result, ping_result = await asyncio.gather(
+            acl_fetcher.fetch(acl_ctx),
+            ping_fetcher.fetch(ping_ctx),
+        )
+
+        if not acl_result.success:
+            raise RuntimeError(
+                f"Fetch failed for acl on "
+                f"{switch.hostname}: {acl_result.error}"
+            )
+        if not ping_result.success:
+            raise RuntimeError(
+                f"Fetch failed for ping_many on "
+                f"{switch.hostname}: {ping_result.error}"
+            )
 
         # Parse
-        intermediates.acl_entries = self._acl_parser.parse(acl_raw)
-        intermediates.ping_entries = self._ping_parser.parse(ping_raw)
-
-    async def _fetch_acl(
-        self,
-        site: str,
-        sw_ip: str,
-        interfaces: set[str],
-    ) -> str:
-        """
-        呼叫 get_acl_number Fetcher。
-
-        Fetcher 內部已處理 per-interface 迴圈並聚合結果，
-        所以從 service 角度只需一次呼叫。
-        """
-        # Fetcher 封裝後只需 switch_ip，內部自行迭代 interface
-        return await self.api_client.fetch(
-            site, "get_acl_number", sw_ip,
-        )
-
-    async def _fetch_ping_many(
-        self,
-        site: str,
-        sw_ip: str,
-        client_ips: list[str],
-    ) -> str:
-        """
-        呼叫 ping_many Fetcher。
-
-        TODO: 目前透過 api_client.fetch() 呼叫，需確認 ping_many API
-              如何接收 target IP 清單（query param / POST body）。
-              暫時以 switch_ip 呼叫，Fetcher 端需自行取得 targets。
-        """
-        if not client_ips:
-            return ""
-
-        # TODO: 實際呼叫方式可能需要調整，例如:
-        #   - POST body: api_client.post(site, "ping_many", sw_ip, body=client_ips)
-        #   - Query param: api_client.fetch(site, "ping_many", sw_ip + "?targets=ip1,ip2")
-        # 目前先以標準 fetch 呼叫，Fetcher 端可從 switch 的 ARP table 自行取得 targets
-        return await self.api_client.fetch(
-            site, "ping_many", sw_ip,
-        )
+        intermediates.acl_entries = self._acl_parser.parse(acl_result.raw_output)
+        intermediates.ping_entries = self._ping_parser.parse(ping_result.raw_output)
 
     # ── Phase 3: 組裝 ClientRecord ───────────────────────────────
 
@@ -394,13 +395,9 @@ class ClientCollectionService:
 _client_collection_service: ClientCollectionService | None = None
 
 
-def get_client_collection_service(
-    use_mock: bool = False,
-) -> ClientCollectionService:
+def get_client_collection_service() -> ClientCollectionService:
     """Get or create ClientCollectionService instance."""
     global _client_collection_service
     if _client_collection_service is None:
-        _client_collection_service = ClientCollectionService(
-            use_mock=use_mock,
-        )
+        _client_collection_service = ClientCollectionService()
     return _client_collection_service

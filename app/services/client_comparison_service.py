@@ -326,17 +326,17 @@ class ClientComparisonService:
         查詢比較結果。
         
         支持按 MAC 地址、IP 地址、嚴重程度和是否變化進行篩選。
-        如果提供 before_time，则动态生成比较结果而非查询数据库。
+        如果提供 before_time，則動態生成比較結果而非查詢資料庫。
         """
         from sqlalchemy import or_
         
-        # 如果提供了 before_time，动态生成比较结果
+        # 如果提供了 before_time，動態生成比較結果
         if before_time:
             from datetime import datetime
 
             before_dt = datetime.fromisoformat(before_time)
 
-            # 获取最新 NEW 階段時間
+            # 獲取最新 NEW 階段時間
             from sqlalchemy import func
             latest_stmt = (
                 select(func.max(ClientRecord.collected_at))
@@ -348,7 +348,7 @@ class ClientComparisonService:
             latest_result = await session.execute(latest_stmt)
             latest_time = latest_result.scalar()
             
-            # 生成比较结果
+            # 生成比較結果
             comparisons = await self._generate_comparisons_at_time(
                 maintenance_id=maintenance_id,
                 before_time=before_dt,
@@ -356,7 +356,7 @@ class ClientComparisonService:
                 session=session,
             )
             
-            # 应用筛选
+            # 套用篩選
             if search_text:
                 search_lower = search_text.lower()
                 comparisons = [
@@ -374,7 +374,7 @@ class ClientComparisonService:
             
             return comparisons
         
-        # 否则查询数据库中保存的比较结果
+        # 否則查詢資料庫中保存的比較結果
         stmt = select(ClientComparison).where(
             ClientComparison.maintenance_id == maintenance_id
         )
@@ -434,7 +434,7 @@ class ClientComparisonService:
         maintenance_id: str,
         session: AsyncSession,
     ) -> list[dict[str, Any]]:
-        """获取 NEW 階段的歷史時間點。
+        """獲取 NEW 階段的歷史時間點。
 
         只返回 NEW phase 的時間點，確保統計圖表只顯示
         有歲修後資料可比較的時間點。
@@ -469,15 +469,15 @@ class ClientComparisonService:
         maintenance_id: str,
         session: AsyncSession,
     ) -> list[dict[str, Any]]:
-        """获取每个时间点的统计数据。
-        
-        用于时间轴图表显示趋势。按用户自定义分类统计异常数。
-        如果没有 ClientRecord，则使用 ClientComparison 生成静态统计。
+        """獲取每個時間點的統計資料。
+
+        用於時間軸圖表顯示趨勢。按使用者自訂分類統計異常數。
+        如果沒有 ClientRecord，則使用 ClientComparison 生成靜態統計。
         """
         from sqlalchemy import func
         from app.db.models import ClientCategory, ClientCategoryMember
         
-        # 检查是否有 ClientRecord 数据
+        # 檢查是否有 ClientRecord 資料
         record_count_stmt = (
             select(func.count())
             .select_from(ClientRecord)
@@ -486,14 +486,14 @@ class ClientComparisonService:
         record_count_result = await session.execute(record_count_stmt)
         record_count = record_count_result.scalar() or 0
         
-        # 如果没有 ClientRecord，使用 ClientComparison 生成静态统计
+        # 如果沒有 ClientRecord，使用 ClientComparison 生成靜態統計
         if record_count == 0:
             return await self._get_static_statistics(maintenance_id, session)
         
-        # 获取所有时间点（从 ClientRecord）
+        # 獲取所有時間點（從 ClientRecord）
         timepoints_data = await self.get_timepoints(maintenance_id, session)
         
-        # 获取用户自定义分类和成员（只取活躍分類）
+        # 獲取使用者自訂分類和成員（只取活躍分類）
         cat_stmt = select(ClientCategory).where(ClientCategory.is_active == True)
         cat_result = await session.execute(cat_stmt)
         categories = cat_result.scalars().all()
@@ -507,7 +507,7 @@ class ClientComparisonService:
         member_result = await session.execute(member_stmt)
         members = member_result.scalars().all()
         
-        # 建立 MAC -> category_ids 对照（一對多：一個 MAC 可屬於多個分類）
+        # 建立 MAC -> category_ids 對照（一對多：一個 MAC 可屬於多個分類）
         mac_to_categories: dict[str, list[int]] = {}
         for m in members:
             normalized_mac = m.mac_address.upper() if m.mac_address else ""
@@ -516,7 +516,7 @@ class ClientComparisonService:
                     mac_to_categories[normalized_mac] = []
                 mac_to_categories[normalized_mac].append(m.category_id)
         
-        # 分类信息
+        # 分類資訊
         category_info = {cat.id: {"name": cat.name, "color": cat.color} for cat in categories}
         
         statistics = []
@@ -537,7 +537,7 @@ class ClientComparisonService:
             from datetime import datetime
             tp = datetime.fromisoformat(tp_data["timestamp"])
 
-            # 生成该时间点的比较结果（不保存）
+            # 生成該時間點的比較結果（不保存）
             # after_time=tp：只取到該時間點為止的 NEW 記錄，
             # 這樣每個時間點反映的是當時的偵測狀態
             comparisons = await self._generate_comparisons_at_time(
@@ -547,13 +547,13 @@ class ClientComparisonService:
                 session=session,
             )
             
-            # 总计统计
+            # 總計統計
             all_summary = summarize(comparisons)
             
-            # 按用户分类统计
+            # 按使用者分類統計
             by_user_category: dict[str, dict[str, Any]] = {}
             
-            # 初始化分类统计
+            # 初始化分類統計
             for cat_id, cat_data in category_info.items():
                 by_user_category[str(cat_id)] = {
                     "name": cat_data["name"],
@@ -575,7 +575,7 @@ class ClientComparisonService:
                 c.mac_address.upper() for c in comparisons if c.mac_address
             }
             
-            # 统计每个分类的异常数
+            # 統計每個分類的異常數
             for comp in comparisons:
                 normalized_mac = comp.mac_address.upper() if comp.mac_address else ""
                 cat_ids = mac_to_categories.get(normalized_mac, [])
@@ -627,7 +627,7 @@ class ClientComparisonService:
         after_time: datetime | None,
         session: AsyncSession,
     ) -> list[ClientComparison]:
-        """在指定时间点生成比较结果（不保存到数据库）。"""
+        """在指定時間點生成比較結果（不保存到資料庫）。"""
         from app.db.models import MaintenanceDeviceList
         
         # 載入設備對應（從新的 MaintenanceDeviceList 表格）
@@ -643,7 +643,7 @@ class ClientComparisonService:
             # 使用小寫 key 以確保比較時大小寫不敏感
             device_mappings[dm.old_hostname.lower()] = dm.new_hostname
         
-        # 查询 OLD 階段記錄（歲修前基線）
+        # 查詢 OLD 階段記錄（歲修前基線）
         before_stmt = (
             select(ClientRecord)
             .where(
@@ -659,13 +659,13 @@ class ClientComparisonService:
         before_result = await session.execute(before_stmt)
         before_records = before_result.scalars().all()
 
-        # 按 MAC 地址分组，只保留最新记录
+        # 按 MAC 地址分組，只保留最新記錄
         before_by_mac = {}
         for record in before_records:
             if record.mac_address not in before_by_mac:
                 before_by_mac[record.mac_address] = record
 
-        # 查询 NEW 階段記錄（歲修後）
+        # 查詢 NEW 階段記錄（歲修後）
         # 僅查詢 NEW phase，避免 OLD 記錄洩漏到 after 端
         if after_time:
             after_stmt = (
@@ -695,13 +695,13 @@ class ClientComparisonService:
         after_result = await session.execute(after_stmt)
         after_records = after_result.scalars().all()
 
-        # 按 MAC 地址分组，只保留最新记录
+        # 按 MAC 地址分組，只保留最新記錄
         after_by_mac = {}
         for record in after_records:
             if record.mac_address not in after_by_mac:
                 after_by_mac[record.mac_address] = record
         
-        # 生成比较结果
+        # 生成比較結果
         comparisons = []
         all_macs = set(before_by_mac.keys()) | set(after_by_mac.keys())
         
@@ -715,7 +715,7 @@ class ClientComparisonService:
                 mac_address=mac,
             )
             
-            # 添加 BEFORE 数据
+            # 添加 BEFORE 資料
             if before_record:
                 comparison.old_ip_address = before_record.ip_address
                 comparison.old_switch_hostname = before_record.switch_hostname
@@ -727,7 +727,7 @@ class ClientComparisonService:
                 comparison.old_ping_reachable = before_record.ping_reachable
                 comparison.old_acl_passes = before_record.acl_passes
             
-            # 添加 AFTER 数据
+            # 添加 AFTER 資料
             if after_record:
                 comparison.new_ip_address = after_record.ip_address
                 comparison.new_switch_hostname = after_record.switch_hostname
@@ -739,7 +739,7 @@ class ClientComparisonService:
                 comparison.new_ping_reachable = after_record.ping_reachable
                 comparison.new_acl_passes = after_record.acl_passes
             
-            # 比较差异（傳入設備對應）
+            # 比較差異（傳入設備對應）
             comparison = self._compare_records(comparison, device_mappings)
             comparisons.append(comparison)
         
@@ -837,14 +837,14 @@ class ClientComparisonService:
         session: AsyncSession,
     ) -> list[dict[str, Any]]:
         """
-        当没有 ClientRecord 时，使用 ClientComparison 生成静态统计。
-        
-        只生成一个时间点的统计数据（当前快照）。
+        當沒有 ClientRecord 時，使用 ClientComparison 生成靜態統計。
+
+        只生成一個時間點的統計資料（當前快照）。
         """
         from sqlalchemy import func
         from app.db.models import ClientCategory, ClientCategoryMember
         
-        # 获取所有比较结果
+        # 獲取所有比較結果
         comp_stmt = (
             select(ClientComparison)
             .where(ClientComparison.maintenance_id == maintenance_id)
@@ -855,7 +855,7 @@ class ClientComparisonService:
         if not comparisons:
             return []
         
-        # 获取最早时间点作为标签
+        # 獲取最早時間點作為標籤
         min_time = min(
             (c.collected_at for c in comparisons if c.collected_at),
             default=datetime.utcnow()
@@ -865,7 +865,7 @@ class ClientComparisonService:
             default=datetime.utcnow()
         )
         
-        # 获取用户自定义分类和成员
+        # 獲取使用者自訂分類和成員
         cat_stmt = select(ClientCategory).where(ClientCategory.is_active == True)
         cat_result = await session.execute(cat_stmt)
         categories = cat_result.scalars().all()
@@ -878,7 +878,7 @@ class ClientComparisonService:
         member_result = await session.execute(member_stmt)
         members = member_result.scalars().all()
         
-        # 建立 MAC -> category_ids 对照
+        # 建立 MAC -> category_ids 對照
         mac_to_categories: dict[str, list[int]] = {}
         for m in members:
             normalized_mac = m.mac_address.upper() if m.mac_address else ""
@@ -887,13 +887,13 @@ class ClientComparisonService:
                     mac_to_categories[normalized_mac] = []
                 mac_to_categories[normalized_mac].append(m.category_id)
         
-        # 分类信息
+        # 分類資訊
         category_info = {
             cat.id: {"name": cat.name, "color": cat.color}
             for cat in categories
         }
         
-        # 初始化分类统计
+        # 初始化分類統計
         by_user_category: dict[str, dict[str, Any]] = {}
         for cat_id, cat_data in category_info.items():
             by_user_category[str(cat_id)] = {
@@ -913,7 +913,7 @@ class ClientComparisonService:
             "normal": 0,
         }
         
-        # 统计每个比较结果
+        # 統計每個比較結果
         total = len(comparisons)
         has_issues = 0
         critical = 0
@@ -941,12 +941,12 @@ class ClientComparisonService:
                 elif comp.severity == "warning":
                     warning += 1
         
-        # 计算 normal
+        # 計算 normal
         for cat_key in by_user_category:
             cat_data = by_user_category[cat_key]
             cat_data["normal"] = cat_data["total"] - cat_data["has_issues"]
         
-        # 返回两个时间点（起点和终点），让图表能显示
+        # 回傳兩個時間點（起點和終點），讓圖表能顯示
         return [
             {
                 "timestamp": min_time.isoformat(),

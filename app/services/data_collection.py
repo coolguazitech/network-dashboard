@@ -19,10 +19,14 @@ from sqlalchemy import select
 from app.core.enums import MaintenancePhase, PlatformType, VendorType
 from app.db.base import get_session_context
 from app.db.models import Switch, MaintenanceDeviceList
-from app.parsers import BaseParser, parser_registry
+from app.fetchers.base import FetchContext
+from app.fetchers.registry import fetcher_registry
+from app.parsers import parser_registry
 from app.repositories.switch import SwitchRepository
-from app.repositories.typed_records import TypedRecordRepository, get_typed_repo
-from app.services.api_client import BaseApiClient, get_api_client
+from app.repositories.typed_records import (
+    TypedRecordRepository,
+    get_typed_repo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,24 +40,14 @@ class DataCollectionService:
 
     Flow:
     1. Get list of active switches
-    2. For each switch, call external API
+    2. For each switch, call Fetcher to get raw data
     3. Parse raw output using appropriate parser
     4. Store parsed data to collection_records table
     """
 
-    def __init__(
-        self,
-        api_client: BaseApiClient | None = None,
-        use_mock: bool = False,
-    ) -> None:
-        """
-        Initialize service.
-
-        Args:
-            api_client: API client instance (optional)
-            use_mock: Use mock API client for testing
-        """
-        self.api_client = api_client or get_api_client(use_mock=use_mock)
+    def __init__(self) -> None:
+        """Initialize service."""
+        pass
 
     async def collect_indicator_data(
         self,
@@ -88,6 +82,8 @@ class DataCollectionService:
                 collection_type=collection_type,
                 phase=phase,
                 maintenance_id=maintenance_id,
+                source=source,
+                brand=brand,
             )
 
         # 其他從 switches 表取設備
@@ -95,6 +91,8 @@ class DataCollectionService:
             collection_type=collection_type,
             phase=phase,
             maintenance_id=maintenance_id,
+            source=source,
+            brand=brand,
         )
 
     async def _collect_for_switches(
@@ -102,6 +100,8 @@ class DataCollectionService:
         collection_type: str,
         phase: MaintenancePhase,
         maintenance_id: str | None,
+        source: str | None = None,
+        brand: str | None = None,
     ) -> dict[str, Any]:
         """從 switches 表採集資料。"""
         results = {
@@ -129,6 +129,8 @@ class DataCollectionService:
                         phase=phase,
                         maintenance_id=maintenance_id,
                         typed_repo=typed_repo,
+                        source=source,
+                        brand=brand,
                     )
                     results["success"] += 1
 
@@ -150,6 +152,8 @@ class DataCollectionService:
         collection_type: str,
         phase: MaintenancePhase,
         maintenance_id: str | None,
+        source: str | None = None,
+        brand: str | None = None,
     ) -> dict[str, Any]:
         """
         從 MaintenanceDeviceList 取新設備進行採集。
@@ -190,6 +194,8 @@ class DataCollectionService:
                         phase=phase,
                         maintenance_id=maintenance_id,
                         typed_repo=typed_repo,
+                        source=source,
+                        brand=brand,
                     )
                     results["success"] += 1
 
@@ -213,6 +219,8 @@ class DataCollectionService:
         phase: MaintenancePhase,
         maintenance_id: str,
         typed_repo: TypedRecordRepository,  # type: ignore[type-arg]
+        source: str | None = None,
+        brand: str | None = None,
     ) -> None:
         """
         對單一 MaintenanceDeviceList 設備進行採集。
@@ -223,6 +231,8 @@ class DataCollectionService:
             phase: 階段
             maintenance_id: 歲修 ID
             typed_repo: Typed record 儲存庫
+            source: Data source identifier (FNA/DNA)
+            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
         """
         # 使用新設備的 vendor 決定 parser（處理大小寫）
         vendor = (
@@ -247,18 +257,28 @@ class DataCollectionService:
 
         if parser is None:
             raise ValueError(
-                f"No parser found for {vendor}/{platform}/{collection_type}"
+                f"No parser found for "
+                f"{vendor}/{platform}/{collection_type}"
             )
 
-        # 建立 API function name
-        api_function = f"get_{collection_type}"
-
-        # 使用新設備 IP 呼叫外部 API
-        raw_output = await self.api_client.fetch(
-            site="maintenance",  # 使用特定 site 標識
-            function=api_function,
+        # 透過 Fetcher 取得原始資料
+        fetcher = fetcher_registry.get_or_raise(collection_type)
+        ctx = FetchContext(
             switch_ip=device.new_ip_address,
+            switch_hostname=device.new_hostname,
+            site="maintenance",
+            source=source,
+            brand=brand,
+            vendor=vendor.value,
+            platform=platform.value,
         )
+        result = await fetcher.fetch(ctx)
+        if not result.success:
+            raise RuntimeError(
+                f"Fetch failed for {collection_type} on "
+                f"{device.new_hostname}: {result.error}"
+            )
+        raw_output = result.raw_output
 
         # 解析原始資料
         parsed_items = parser.parse(raw_output)
@@ -290,6 +310,8 @@ class DataCollectionService:
         phase: MaintenancePhase,
         maintenance_id: str | None,
         typed_repo: TypedRecordRepository,  # type: ignore[type-arg]
+        source: str | None = None,
+        brand: str | None = None,
     ) -> None:
         """
         Collect data for a single switch.
@@ -300,6 +322,8 @@ class DataCollectionService:
             phase: Maintenance phase
             maintenance_id: Maintenance job ID
             typed_repo: Typed record repository
+            source: Data source identifier (FNA/DNA)
+            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
         """
         # Get appropriate parser
         parser = parser_registry.get(
@@ -310,19 +334,28 @@ class DataCollectionService:
 
         if parser is None:
             raise ValueError(
-                f"No parser found for {switch.vendor}/{switch.platform}"
-                f"/{collection_type}"
+                f"No parser found for {switch.vendor}/"
+                f"{switch.platform}/{collection_type}"
             )
 
-        # Build API function name from collection type
-        api_function = f"get_{collection_type}"
-
-        # Call external API
-        raw_output = await self.api_client.fetch(
-            site=switch.site.value,
-            function=api_function,
+        # Fetch raw data via Fetcher
+        fetcher = fetcher_registry.get_or_raise(collection_type)
+        ctx = FetchContext(
             switch_ip=switch.ip_address,
+            switch_hostname=switch.hostname,
+            site=switch.site.value,
+            source=source,
+            brand=brand,
+            vendor=switch.vendor.value,
+            platform=switch.platform.value,
         )
+        result = await fetcher.fetch(ctx)
+        if not result.success:
+            raise RuntimeError(
+                f"Fetch failed for {collection_type} on "
+                f"{switch.hostname}: {result.error}"
+            )
+        raw_output = result.raw_output
 
         # Parse raw output
         parsed_items = parser.parse(raw_output)
@@ -408,17 +441,9 @@ class DataCollectionService:
 _collection_service: DataCollectionService | None = None
 
 
-def get_collection_service(use_mock: bool = False) -> DataCollectionService:
-    """
-    Get or create DataCollectionService instance.
-
-    Args:
-        use_mock: Use mock API client
-
-    Returns:
-        DataCollectionService instance
-    """
+def get_collection_service() -> DataCollectionService:
+    """Get or create DataCollectionService instance."""
     global _collection_service
     if _collection_service is None:
-        _collection_service = DataCollectionService(use_mock=use_mock)
+        _collection_service = DataCollectionService()
     return _collection_service

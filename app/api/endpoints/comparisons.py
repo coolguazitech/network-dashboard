@@ -40,9 +40,9 @@ async def get_timepoints(
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
-    获取指定维护 ID 的所有历史时间点。
-    
-    返回所有采集数据的时间点列表，用于时间选择器和图表。
+    獲取指定維護 ID 的所有歷史時間點。
+
+    回傳所有採集資料的時間點列表，用於時間選擇器和圖表。
     """
     timepoints = await comparison_service.get_timepoints(
         maintenance_id=maintenance_id,
@@ -60,14 +60,14 @@ async def get_statistics(
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
-    获取每个时间点的统计数据，用于趋势图表。
-    
-    返回每个时间点的客户端数量统计，包括：
-    - 全部客户端数量
-    - 有异常的客户端数量
-    - 严重问题数量
-    - 警告数量
-    - 不断电机台数量
+    獲取每個時間點的統計資料，用於趨勢圖表。
+
+    回傳每個時間點的客戶端數量統計，包括：
+    - 全部客戶端數量
+    - 有異常的客戶端數量
+    - 嚴重問題數量
+    - 警告數量
+    - 不斷電機台數量
     """
     statistics = await comparison_service.get_statistics(
         maintenance_id=maintenance_id,
@@ -152,7 +152,7 @@ async def get_comparison_summary(
 @router.get("/list/{maintenance_id}")
 async def list_comparisons(
     maintenance_id: str,
-    before_time: str | None = Query(None, description="BEFORE 时间点（ISO格式）"),
+    before_time: str | None = Query(None, description="BEFORE 時間點（ISO 格式）"),
     mac_address: str | None = Query(None, description="按 MAC 地址篩選（已廢棄，請使用 search_text）"),
     search_text: str | None = Query(None, description="搜尋 MAC 地址或 IP 地址"),
     severity: str | None = Query(None, description="按嚴重程度篩選 (critical/warning/info/undetected)"),

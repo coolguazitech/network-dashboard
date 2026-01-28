@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.db.base import close_db, init_db
+from app.fetchers.registry import setup_fetchers
 from app.parsers.registry import auto_discover_parsers
 from app.services.scheduler import get_scheduler_service, setup_scheduled_jobs
 
@@ -75,6 +76,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting application...")
     await init_db()
     auto_discover_parsers()
+    setup_fetchers(use_mock=settings.use_mock_api)
 
     # Load and start scheduled jobs
     scheduler_config = load_scheduler_config()

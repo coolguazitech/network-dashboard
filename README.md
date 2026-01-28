@@ -4,6 +4,38 @@
 
 ---
 
+## 頁面預覽
+
+### Dashboard
+
+![Dashboard](docs/screenshots/dashboard.png)
+![ApmManagement](docs/screenshots/apm_management.png)
+
+主控台首頁，顯示 8 個指標的即時通過率卡片（Error Count、光模塊、Ping、版本、Power、Port Channel、Uplink、Fan），右上角顯示整體通過率。點擊任一指標可展開失敗設備詳細清單，包含設備名稱、介面與失敗原因。
+
+### 設備管理（Devices）
+
+![Devices](docs/screenshots/devices.png)
+![CategoryManagement](docs/screenshots/category_management.png)
+
+管理 MAC 清單與設備清單。MAC 清單支援分類管理（AMHS、示範櫃、不斷電清單 等）、搜尋過濾、CSV 匯入匯出。顯示每筆 MAC 的偵測狀態與所屬分類，支援批次操作。
+
+### 客戶端比較（Compare）
+
+![Comparison](docs/screenshots/comparison.png)
+![ComparisonDetails](docs/screenshots/comparison_details.png)
+
+MAC 前後對比結果。上方依分類統計變化數量，中間以時間軸圖表呈現多輪採集趨勢，下方列出每筆 MAC 的新舊值差異，以嚴重程度（critical / warning / info）標記變化類型。
+
+### 設定（Settings）
+
+![Settings](docs/screenshots/settings.png)
+![AddNewExpectation](docs/screenshots/add_new_expectation.png)
+
+管理指標評估所需的期望設定，包含 Uplink 期望、版本期望、Port Channel 期望、ARP 來源四個分頁。支援 CSV 匯入匯出與新增期望值，設定後 Indicator 評估時會以此為基準比對。
+
+---
+
 ## Quick Start
 
 ### 前置需求
@@ -96,9 +128,9 @@ npm run dev
 | **Mock API Server** | `false` | `http://localhost:8001` | 是（port 8001） |
 | **正式環境** | `false` | `http://real-server:9000` | 是 |
 
-- **純內建 Mock** (`USE_MOCK_API=true`) — `MockApiClient` 在記憶體產生確定性資料，不需任何外部 server。適合 UI 開發。
+- **純內建 Mock** (`USE_MOCK_API=true`) — 13 個 `MockFetcher` 在記憶體產生確定性資料，不需任何外部 server。適合 UI 開發。
 - **Mock API Server** (`USE_MOCK_API=false`) — 打 FastAPI Mock Server，支援 YAML scenario 故障模擬。適合整合測試。
-- **正式環境** (`USE_MOCK_API=false`) — 打真實外部網路管理 API (FNA/DNA)。
+- **正式環境** (`USE_MOCK_API=false`) — 打真實外部網路管理 API (FNA/DNA)，需實作 `app/fetchers/implementations.py` 中的 Real Fetcher。
 
 ### 一鍵重置
 
@@ -136,20 +168,31 @@ uvicorn app.main:app --port 8000  # 重啟 backend
 ```
 Scheduler Jobs (APScheduler)
        │
-       │ 呼叫 External API (or MockApiClient)
        ▼
-Parser (解析 CLI output) ──▶ typed_records (per-type DB tables)
-                                    │
-                                    │ Indicator 讀取
-                                    ▼
-                              Indicator.evaluate()
-                                    │
-                                    ▼
-                              Dashboard API (/summary, /details)
+Service (DataCollectionService / ClientCollectionService)
+       │
+       │ fetcher_registry.get_or_raise(collection_type)
+       ▼
+Fetcher.fetch(ctx: FetchContext) → FetchResult
+       │
+       │ raw_output
+       ▼
+Parser.parse(raw_output) → list[ParsedData]
+       │
+       ▼
+typed_records (per-type DB tables)
+       │
+       │ Indicator 讀取
+       ▼
+Indicator.evaluate()
+       │
+       ▼
+Dashboard API (/summary, /details)
 ```
 
 ### 關鍵設計
 
+- **Fetcher 抽象層**：每種資料類型有獨立的 `BaseFetcher` 子類別，封裝「如何呼叫外部 API」。Mock 模式使用 `MockFetcher`（記憶體產生），正式模式使用 `RealFetcher`（呼叫外部 API）。應用啟動時透過 `setup_fetchers(use_mock)` 註冊。
 - **Scheduler 與 Indicator 獨立**：Scheduler 從外部 API 採集原始資料，Indicator 從 DB 評估
 - **Typed Records**：每種指標有獨立的 record 表（`ping_records`、`transceiver_records` 等）
 - **兩種分母來源**（所有指標對象皆為新設備）：
@@ -175,23 +218,43 @@ Parser (解析 CLI output) ──▶ typed_records (per-type DB tables)
 
 ## 待完成工作 (TODO)
 
-### 1. 客戶端資料 Parser — `app/parsers/client_parsers.py`
+### 1. Real Fetcher 實作 — `app/fetchers/implementations.py`
+
+13 個 real fetcher 的 `fetch()` 目前為 `NotImplementedError`。需根據外部 API 介面實作。每個 stub 皆附有範例程式碼與 docstring。
+
+繼承 `BaseFetcher` 並實作 `fetch(ctx: FetchContext) -> FetchResult`：
+
+| Fetcher | fetch_type | 用途 | 對應 Mock |
+|---------|-----------|------|-----------|
+| `TransceiverFetcher` | `transceiver` | 光模塊 Tx/Rx/溫度 | `MockTransceiverFetcher` |
+| `VersionFetcher` | `version` | 韌體版本 | `MockVersionFetcher` |
+| `UplinkFetcher` | `uplink` | LLDP 鄰居 | `MockUplinkFetcher` |
+| `FanFetcher` | `fan` | 風扇狀態 | `MockFanFetcher` |
+| `PowerFetcher` | `power` | 電源供應 | `MockPowerFetcher` |
+| `ErrorCountFetcher` | `error_count` | 介面錯誤 | `MockErrorCountFetcher` |
+| `PortChannelFetcher` | `port_channel` | LAG 狀態 | `MockPortChannelFetcher` |
+| `PingFetcher` | `ping` | 設備連通性 | `MockPingFetcher` |
+| `MacTableFetcher` | `mac_table` | MAC 表 | `MockMacTableFetcher` |
+| `ArpTableFetcher` | `arp_table` | ARP 表 | `MockArpTableFetcher` |
+| `InterfaceStatusFetcher` | `interface_status` | 介面狀態 | `MockInterfaceStatusFetcher` |
+| `AclFetcher` | `acl` | ACL 規則 | `MockAclFetcher` |
+| `PingManyFetcher` | `ping_many` | 批量 Ping | `MockPingManyFetcher` |
+
+`FetchContext` 提供 switch_ip、switch_hostname、site、source、brand、vendor、platform、params（額外參數如 `target_ips`）。
+
+### 2. 客戶端資料 Parser — `app/parsers/client_parsers.py`
 
 5 個 parser 的 `parse()` 方法目前為 `NotImplementedError`，需根據 Fetcher 實際回傳格式實作：
 
-| Parser | Fetcher | 輸出型別 | 欄位 |
-|--------|---------|----------|------|
-| `MacTableParser` | `get_mac_table` | `list[MacTableData]` | mac_address, interface_name, vlan_id |
-| `ArpParser` | `get_arp_table` | `list[ArpData]` | ip_address, mac_address |
-| `InterfaceStatusParser` | `get_interface_status` | `list[InterfaceStatusData]` | interface_name, link_status, speed, duplex |
-| `AclParser` | `get_acl_number` | `list[AclData]` | interface_name, acl_number |
+| Parser | fetch_type | 輸出型別 | 欄位 |
+|--------|-----------|----------|------|
+| `MacTableParser` | `mac_table` | `list[MacTableData]` | mac_address, interface_name, vlan_id |
+| `ArpParser` | `arp_table` | `list[ArpData]` | ip_address, mac_address |
+| `InterfaceStatusParser` | `interface_status` | `list[InterfaceStatusData]` | interface_name, link_status, speed, duplex |
+| `AclParser` | `acl` | `list[AclData]` | interface_name, acl_number |
 | `PingManyParser` | `ping_many` | `list[PingManyData]` | ip_address, is_reachable |
 
 型別定義：`app/parsers/protocols.py`
-
-### 2. Client Collection — Ping API 整合
-
-`app/services/client_collection_service.py` 的 `_fetch_ping_many()` 目前以標準 `fetch()` 呼叫。需確認真實 API 如何接收目標 IP 清單（POST body / query params）。
 
 ### 3. Checkpoint 摘要
 
@@ -218,6 +281,11 @@ network_dashboard/
 │   ├── db/
 │   │   ├── base.py                       # SQLAlchemy async engine
 │   │   └── models.py                     # ORM 模型
+│   ├── fetchers/
+│   │   ├── base.py                       # BaseFetcher, FetchContext, FetchResult
+│   │   ├── registry.py                   # FetcherRegistry, setup_fetchers()
+│   │   ├── mock.py                       # 13 個 Mock Fetcher
+│   │   └── implementations.py           # 13 個 Real Fetcher stub (TODO)
 │   ├── indicators/                       # 8 種指標評估器
 │   ├── parsers/
 │   │   ├── client_parsers.py             # 客戶端 parser (TODO)
