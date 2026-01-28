@@ -6,10 +6,9 @@ Data access layer for Switch model.
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.core.enums import PlatformType, SiteType, VendorType
-from app.db.models import Interface, Switch
+from app.db.models import Switch
 from app.repositories.base import BaseRepository
 
 
@@ -71,24 +70,6 @@ class SwitchRepository(BaseRepository[Switch]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_with_interfaces(self, switch_id: int) -> Switch | None:
-        """
-        Get switch with its interfaces loaded.
-
-        Args:
-            switch_id: Switch ID
-
-        Returns:
-            Switch with interfaces or None
-        """
-        stmt = (
-            select(Switch)
-            .options(selectinload(Switch.interfaces))
-            .where(Switch.id == switch_id)
-        )
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
-
     async def get_by_vendor_platform(
         self,
         vendor: VendorType,
@@ -112,46 +93,3 @@ class SwitchRepository(BaseRepository[Switch]):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
-
-
-class InterfaceRepository(BaseRepository[Interface]):
-    """Repository for Interface operations."""
-
-    model = Interface
-
-    async def get_by_switch_id(self, switch_id: int) -> list[Interface]:
-        """
-        Get all interfaces for a switch.
-
-        Args:
-            switch_id: Switch ID
-
-        Returns:
-            List of interfaces
-        """
-        stmt = select(Interface).where(Interface.switch_id == switch_id)
-        result = await self.session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def get_by_name(
-        self,
-        switch_id: int,
-        name: str,
-    ) -> Interface | None:
-        """
-        Get interface by switch ID and name.
-
-        Args:
-            switch_id: Switch ID
-            name: Interface name
-
-        Returns:
-            Interface or None
-        """
-        stmt = (
-            select(Interface)
-            .where(Interface.switch_id == switch_id)
-            .where(Interface.name == name)
-        )
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()

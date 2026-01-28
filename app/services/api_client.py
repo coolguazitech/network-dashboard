@@ -190,6 +190,9 @@ class MockApiClient(BaseApiClient):
             return self._generate_version_mock(switch_ip)
         if "uplink" in fn or "neighbor" in fn:
             return self._generate_neighbor_mock(switch_ip)
+        # ping_many must be checked before ping
+        if "ping_many" in fn:
+            return self._generate_ping_many_mock(switch_ip)
         if "ping" in fn:
             return self._generate_ping_mock(switch_ip)
         if "power" in fn:
@@ -200,6 +203,15 @@ class MockApiClient(BaseApiClient):
             return self._generate_error_mock(switch_ip)
         if "port_channel" in fn:
             return self._generate_port_channel_mock(switch_ip)
+        # Client data fetchers
+        if "mac_table" in fn:
+            return self._generate_mac_table_mock(switch_ip)
+        if "arp_table" in fn:
+            return self._generate_arp_table_mock(switch_ip)
+        if "interface_status" in fn:
+            return self._generate_interface_status_mock(switch_ip)
+        if "acl_number" in fn:
+            return self._generate_acl_mock(switch_ip)
         return f"Mock data for {function} on {switch_ip}"
 
     # ── HPE Comware format mock generators ───────────────────────
@@ -458,11 +470,101 @@ class MockApiClient(BaseApiClient):
 
         return "\n".join(lines)
 
+    # ── Client data mock generators ────────────────────────────
+
+    def _generate_mac_table_mock(self, switch_ip: str) -> str:
+        """
+        Generate mock MAC table output.
+
+        Format: CSV with header.
+        Parsers should expect: mac_address, interface_name, vlan_id
+        """
+        lines = ["MAC,Interface,VLAN"]
+        port_count = 12
+        for i in range(1, port_count + 1):
+            h = _ip_hash(switch_ip, f"mac-{i}")
+            mac = f"AA:BB:CC:{h % 256:02X}:{(h >> 8) % 256:02X}:{i:02X}"
+            vlan = 100 + (h % 5) * 10  # 100, 110, 120, 130, 140
+            lines.append(f"{mac},GE1/0/{i},{vlan}")
+        return "\n".join(lines)
+
+    def _generate_arp_table_mock(self, switch_ip: str) -> str:
+        """
+        Generate mock ARP table output.
+
+        Format: CSV with header.
+        Parsers should expect: ip_address, mac_address
+        """
+        lines = ["IP,MAC"]
+        port_count = 12
+        base_ip_parts = switch_ip.rsplit(".", 1)
+        base_prefix = base_ip_parts[0] if len(base_ip_parts) == 2 else "10.0.0"
+        for i in range(1, port_count + 1):
+            h = _ip_hash(switch_ip, f"mac-{i}")
+            mac = f"AA:BB:CC:{h % 256:02X}:{(h >> 8) % 256:02X}:{i:02X}"
+            ip = f"{base_prefix}.{100 + i}"
+            lines.append(f"{ip},{mac}")
+        return "\n".join(lines)
+
+    def _generate_interface_status_mock(self, switch_ip: str) -> str:
+        """
+        Generate mock interface status output.
+
+        Format: CSV with header.
+        Parsers should expect: interface_name, link_status, speed, duplex
+        """
+        lines = ["Interface,Status,Speed,Duplex"]
+        port_count = 20
+        for i in range(1, port_count + 1):
+            h = _ip_hash(switch_ip, f"if-{i}")
+            status = "DOWN" if h % 25 == 0 else "UP"
+            speed = "10G" if i <= 4 else "1000M"
+            duplex = "full"
+            lines.append(f"GE1/0/{i},{status},{speed},{duplex}")
+        return "\n".join(lines)
+
+    def _generate_acl_mock(self, switch_ip: str) -> str:
+        """
+        Generate mock ACL-per-interface output.
+
+        Format: CSV with header.
+        Parsers should expect: interface_name, acl_number (empty = no ACL)
+        """
+        lines = ["Interface,ACL"]
+        port_count = 20
+        for i in range(1, port_count + 1):
+            h = _ip_hash(switch_ip, f"acl-{i}")
+            # ~70% of ports have ACL 3001 applied
+            acl = "3001" if h % 10 < 7 else ""
+            lines.append(f"GE1/0/{i},{acl}")
+        return "\n".join(lines)
+
+    def _generate_ping_many_mock(self, switch_ip: str) -> str:
+        """
+        Generate mock ping_many output.
+
+        Format: CSV with header.
+        Parsers should expect: ip_address, is_reachable
+        """
+        lines = ["IP,Reachable"]
+        base_ip_parts = switch_ip.rsplit(".", 1)
+        base_prefix = base_ip_parts[0] if len(base_ip_parts) == 2 else "10.0.0"
+        for i in range(1, 13):
+            h = _ip_hash(switch_ip, f"cping-{i}")
+            ip = f"{base_prefix}.{100 + i}"
+            reachable = "false" if h % 15 == 0 else "true"
+            lines.append(f"{ip},{reachable}")
+        return "\n".join(lines)
+
 
 # Factory function for getting API client
 def get_api_client(use_mock: bool = False) -> BaseApiClient:
     """
     Get an API client instance.
+
+    Priority:
+    1. use_mock parameter (explicit override from code)
+    2. USE_MOCK_API env var (from .env)
 
     Args:
         use_mock: If True, return MockApiClient
@@ -470,6 +572,6 @@ def get_api_client(use_mock: bool = False) -> BaseApiClient:
     Returns:
         BaseApiClient: API client instance
     """
-    if use_mock or settings.app_env == "testing":
+    if use_mock or settings.use_mock_api:
         return MockApiClient()
     return ExternalApiClient()

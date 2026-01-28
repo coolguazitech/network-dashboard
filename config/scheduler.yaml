@@ -79,3 +79,7 @@ jobs:
     brand:         # HPE/Cisco-IOS/Cisco-NXOS
     interval: 30   # seconds
     description: "Port-Channel 狀態及成員檢查"
+
+  client-collection:
+    interval: 60   # seconds
+    description: "客戶端資料採集 (MAC/ARP/InterfaceStatus/ACL/Ping)"

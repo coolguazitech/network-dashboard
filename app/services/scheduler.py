@@ -12,6 +12,7 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from app.services.client_collection_service import ClientCollectionService
 from app.services.data_collection import DataCollectionService
 
 logger = logging.getLogger(__name__)
@@ -26,8 +27,15 @@ class SchedulerService:
 
     def __init__(self) -> None:
         """Initialize scheduler."""
-        self.scheduler = AsyncIOScheduler()
+        self.scheduler = AsyncIOScheduler(
+            job_defaults={
+                "max_instances": 1,
+                "coalesce": True,
+                "misfire_grace_time": 30,
+            },
+        )
         self.collection_service = DataCollectionService()
+        self.client_collection_service = ClientCollectionService()
         self._jobs: dict[str, str] = {}  # job_name -> job_id
 
     def add_collection_job(
@@ -128,7 +136,7 @@ class SchedulerService:
         Run a collection job.
 
         Args:
-            job_name: Data type name (e.g., "transceiver", "mac-table")
+            job_name: Data type name (e.g., "transceiver", "client-collection")
             maintenance_id: APM maintenance ID
             url: External API endpoint URL
             source: Data source (FNA/DNA)
@@ -136,17 +144,27 @@ class SchedulerService:
         """
         logger.info(f"Running scheduled collection for '{job_name}'")
         try:
-            result = await self.collection_service.collect_indicator_data(
-                collection_type=job_name,
-                maintenance_id=maintenance_id,
-                url=url,
-                source=source,
-                brand=brand,
-            )
-            logger.info(
-                f"Collection complete for '{job_name}': "
-                f"{result['success']}/{result['total']} successful"
-            )
+            if job_name == "client-collection":
+                result = await self.client_collection_service.collect_client_data(
+                    maintenance_id=maintenance_id or "",
+                )
+                logger.info(
+                    f"Client collection complete: "
+                    f"{result['success']}/{result['total']} switches, "
+                    f"{result['client_records_count']} records"
+                )
+            else:
+                result = await self.collection_service.collect_indicator_data(
+                    collection_type=job_name,
+                    maintenance_id=maintenance_id,
+                    url=url,
+                    source=source,
+                    brand=brand,
+                )
+                logger.info(
+                    f"Collection complete for '{job_name}': "
+                    f"{result['success']}/{result['total']} successful"
+                )
         except Exception as e:
             logger.error(f"Collection failed for '{job_name}': {e}")
 
@@ -157,9 +175,9 @@ class SchedulerService:
             logger.info("Scheduler started")
 
     def stop(self) -> None:
-        """Stop the scheduler."""
+        """Stop the scheduler, waiting for running jobs to finish."""
         if self.scheduler.running:
-            self.scheduler.shutdown(wait=False)
+            self.scheduler.shutdown(wait=True)
             logger.info("Scheduler stopped")
 
     def is_running(self) -> bool:

@@ -11,9 +11,8 @@ from app.api.endpoints import (
     categories,
     comparisons,
     dashboard,
-    device_mappings,
     expectations,
-    interface_mappings,
+    indicators,
     mac_list,
     maintenance,
     maintenance_devices,
@@ -54,18 +53,6 @@ api_router.include_router(
 )
 
 api_router.include_router(
-    device_mappings.router,
-    prefix="",
-    tags=["Device Mappings"],
-)
-
-api_router.include_router(
-    interface_mappings.router,
-    prefix="",
-    tags=["Interface Mappings"],
-)
-
-api_router.include_router(
     mac_list.router,
     prefix="",
     tags=["MAC List"],
@@ -81,4 +68,10 @@ api_router.include_router(
     expectations.router,
     prefix="/expectations",
     tags=["Expectations"],
+)
+
+api_router.include_router(
+    indicators.router,
+    prefix="/indicators",
+    tags=["Indicators"],
 )

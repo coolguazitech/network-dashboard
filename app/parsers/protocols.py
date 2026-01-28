@@ -104,6 +104,47 @@ class PingData(ParsedData):
     avg_rtt_ms: float | None = None
 
 
+# ── Client Fetcher 中間資料模型 ──────────────────────────────────
+
+
+class MacTableData(ParsedData):
+    """Fetcher get_mac_table 的解析結果。"""
+
+    mac_address: str       # e.g. "AA:BB:CC:DD:EE:01"
+    interface_name: str    # e.g. "GE1/0/1"
+    vlan_id: int           # e.g. 100
+
+
+class ArpData(ParsedData):
+    """Fetcher get_arp_table 的解析結果。"""
+
+    ip_address: str        # e.g. "192.168.1.10"
+    mac_address: str       # e.g. "AA:BB:CC:DD:EE:01"
+
+
+class InterfaceStatusData(ParsedData):
+    """Fetcher get_interface_status 的解析結果。"""
+
+    interface_name: str    # e.g. "GE1/0/1"
+    link_status: str       # e.g. "UP", "DOWN"
+    speed: str | None = None    # e.g. "1000M", "10G"
+    duplex: str | None = None   # e.g. "full", "half"
+
+
+class AclData(ParsedData):
+    """Fetcher get_acl_number 的解析結果。"""
+
+    interface_name: str          # e.g. "GE1/0/1"
+    acl_number: str | None = None  # e.g. "3001", None = 未套用
+
+
+class PingManyData(ParsedData):
+    """Fetcher ping_many 的解析結果。"""
+
+    ip_address: str        # e.g. "192.168.1.10"
+    is_reachable: bool     # True = 可達
+
+
 class BaseParser(ABC, Generic[TResult]):
     """
     Abstract base class for all parsers.

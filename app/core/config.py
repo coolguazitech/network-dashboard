@@ -40,6 +40,13 @@ class Settings(BaseSettings):
         default=30,
         description="API request timeout in seconds",
     )
+    use_mock_api: bool = Field(
+        default=False,
+        description=(
+            "Use in-memory MockApiClient (no external server needed). "
+            "When False, uses ExternalApiClient pointing at EXTERNAL_API_SERVER."
+        ),
+    )
 
     # Application
     app_name: str = Field(

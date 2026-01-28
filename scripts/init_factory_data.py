@@ -29,7 +29,6 @@ from sqlalchemy import delete, select
 from app.db.base import get_session_context
 from app.db.models import (
     Switch,
-    DeviceMapping,
     MaintenanceDeviceList,
     MaintenanceMacList,
     ClientCategory,
@@ -167,7 +166,6 @@ async def cleanup_database(session):
         VersionExpectation,
         UplinkExpectation,
         ClientCategory,
-        DeviceMapping,
         MaintenanceDeviceList,
         MaintenanceMacList,
     ]
@@ -326,35 +324,6 @@ async def create_switches(session):
 
     await session.commit()
     print(f"✓ Total {len(switches)} switches created (including OLD and NEW)")
-
-
-async def create_device_mappings_db(session):
-    """Create 34 device mappings (OLD → NEW or OLD → OLD)."""
-    print("\n=== Phase 4: Creating Device Mappings ===")
-
-    mappings_data = get_device_mappings()
-    replaced_count = 0
-    same_device_count = 0
-
-    for old_h, old_ip, new_h, new_ip in mappings_data:
-        mapping = DeviceMapping(
-            maintenance_id=MAINTENANCE_ID,
-            old_hostname=old_h,
-            new_hostname=new_h,
-            vendor="HPE",
-            use_same_port=True,
-        )
-        session.add(mapping)
-
-        if old_h == new_h:
-            same_device_count += 1
-        else:
-            replaced_count += 1
-
-    await session.commit()
-    print(f"  ✓ Devices being replaced: {replaced_count}")
-    print(f"  ✓ Devices NOT replaced (same device): {same_device_count}")
-    print(f"✓ Total {len(mappings_data)} device mappings created")
 
 
 async def create_maintenance_device_list(session):
@@ -551,15 +520,15 @@ async def print_summary(session):
     switches = result.scalars().all()
     print(f"\nSwitches: {len(switches)} (including OLD and NEW)")
 
-    # Device Mappings
-    stmt = select(DeviceMapping).where(
-        DeviceMapping.maintenance_id == MAINTENANCE_ID
+    # Maintenance Device List
+    stmt = select(MaintenanceDeviceList).where(
+        MaintenanceDeviceList.maintenance_id == MAINTENANCE_ID
     )
     result = await session.execute(stmt)
-    mappings = result.scalars().all()
-    replaced = sum(1 for m in mappings if m.old_hostname != m.new_hostname)
-    same = sum(1 for m in mappings if m.old_hostname == m.new_hostname)
-    print(f"\nDevice Mappings: {len(mappings)}")
+    devices = result.scalars().all()
+    replaced = sum(1 for d in devices if d.old_hostname != d.new_hostname)
+    same = sum(1 for d in devices if d.old_hostname == d.new_hostname)
+    print(f"\nDevice List: {len(devices)}")
     print(f"  - Being replaced (OLD → NEW): {replaced}")
     print(f"  - NOT replaced (OLD → OLD): {same}")
 
@@ -613,7 +582,6 @@ async def main():
             await cleanup_database(session)
             await create_categories(session)
             await create_switches(session)
-            await create_device_mappings_db(session)
             await create_maintenance_device_list(session)
             await create_mac_list(session)
             await create_uplink_expectations_db(session)

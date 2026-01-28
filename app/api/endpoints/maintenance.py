@@ -18,8 +18,6 @@ from app.db.models import (
     Checkpoint,
     ReferenceClient,
     MaintenanceConfig,
-    DeviceMapping,
-    InterfaceMapping,
     UplinkExpectation,
     CollectionBatch,
     IndicatorResult,
@@ -166,23 +164,7 @@ async def delete_maintenance(
     
     deleted_counts = {}
     
-    # 1. 刪除 DeviceMapping
-    result = await session.execute(
-        delete(DeviceMapping).where(
-            DeviceMapping.maintenance_id == maintenance_id
-        )
-    )
-    deleted_counts["device_mappings"] = result.rowcount
-    
-    # 2. 刪除 InterfaceMapping
-    result = await session.execute(
-        delete(InterfaceMapping).where(
-            InterfaceMapping.maintenance_id == maintenance_id
-        )
-    )
-    deleted_counts["interface_mappings"] = result.rowcount
-    
-    # 3. 刪除 UplinkExpectation
+    # 1. 刪除 UplinkExpectation
     result = await session.execute(
         delete(UplinkExpectation).where(
             UplinkExpectation.maintenance_id == maintenance_id
