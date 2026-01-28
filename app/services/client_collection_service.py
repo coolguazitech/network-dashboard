@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.enums import MaintenancePhase
 from app.db.base import get_session_context
 from app.db.models import ClientRecord, Switch
@@ -94,12 +96,20 @@ class ClientCollectionService:
         self,
         maintenance_id: str,
         phase: MaintenancePhase = MaintenancePhase.NEW,
+        source: str | None = None,
+        brand: str | None = None,
     ) -> dict[str, Any]:
         """
         主入口：對所有 active switch 採集客戶端資料。
 
+        Args:
+            maintenance_id: 歲修 ID
+            phase: 階段
+            source: Data source (FNA/DNA)
+            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
+
         Returns:
-            採集統計 {total, success, failed, errors, client_records_count}
+            採集統計
         """
         results: dict[str, Any] = {
             "collection_type": "client",
@@ -112,31 +122,37 @@ class ClientCollectionService:
             "client_records_count": 0,
         }
 
-        async with get_session_context() as session:
-            switch_repo = SwitchRepository(session)
-            switches = await switch_repo.get_active_switches()
-            results["total"] = len(switches)
+        async with httpx.AsyncClient() as http:
+            async with get_session_context() as session:
+                switch_repo = SwitchRepository(session)
+                switches = await switch_repo.get_active_switches()
+                results["total"] = len(switches)
 
-            for switch in switches:
-                try:
-                    records = await self._collect_for_switch(
-                        switch=switch,
-                        maintenance_id=maintenance_id,
-                        phase=phase,
-                        session=session,
-                    )
-                    results["success"] += 1
-                    results["client_records_count"] += len(records)
-                except Exception as e:
-                    results["failed"] += 1
-                    results["errors"].append({
-                        "switch": switch.hostname,
-                        "error": str(e),
-                    })
-                    logger.error(
-                        "Failed to collect client data from %s: %s",
-                        switch.hostname, e,
-                    )
+                for switch in switches:
+                    try:
+                        records = await self._collect_for_switch(
+                            switch=switch,
+                            maintenance_id=maintenance_id,
+                            phase=phase,
+                            session=session,
+                            source=source,
+                            brand=brand,
+                            http=http,
+                        )
+                        results["success"] += 1
+                        results["client_records_count"] += len(
+                            records,
+                        )
+                    except Exception as e:
+                        results["failed"] += 1
+                        results["errors"].append({
+                            "switch": switch.hostname,
+                            "error": str(e),
+                        })
+                        logger.error(
+                            "Failed client collection %s: %s",
+                            switch.hostname, e,
+                        )
 
         logger.info(
             "Client collection done: %d/%d switches, %d records",
@@ -153,6 +169,9 @@ class ClientCollectionService:
         maintenance_id: str,
         phase: MaintenancePhase,
         session: AsyncSession,
+        source: str | None = None,
+        brand: str | None = None,
+        http: httpx.AsyncClient | None = None,
     ) -> list[ClientRecord]:
         """
         單台 switch 的完整採集流程 (Phase 1 → 2 → 3 → 4)。
@@ -160,14 +179,19 @@ class ClientCollectionService:
         Returns:
             寫入 DB 的 ClientRecord 列表。
         """
-        # ── Phase 1: 並行 Type A Fetchers ────────────────────────
-        raw = await self._phase1_parallel_fetch(switch)
+        # ── Phase 1: 並行 Type A Fetchers ──────────────────
+        raw = await self._phase1_parallel_fetch(
+            switch, source=source, brand=brand, http=http,
+        )
         intermediates = self._phase1_parse(raw)
 
-        # ── Phase 2: 依賴呼叫 ────────────────────────────────────
-        await self._phase2_dependent_fetch(switch, intermediates)
+        # ── Phase 2: 依賴呼叫 ──────────────────────────────
+        await self._phase2_dependent_fetch(
+            switch, intermediates,
+            source=source, brand=brand, http=http,
+        )
 
-        # ── Phase 3: 組裝 ClientRecord ───────────────────────────
+        # ── Phase 3: 組裝 ClientRecord ─────────────────────
         records = self._phase3_assemble(
             switch_hostname=switch.hostname,
             maintenance_id=maintenance_id,
@@ -175,7 +199,7 @@ class ClientCollectionService:
             intermediates=intermediates,
         )
 
-        # ── Phase 4: 寫入 DB ─────────────────────────────────────
+        # ── Phase 4: 寫入 DB ───────────────────────────────
         await self._phase4_save(session, records)
 
         logger.info(
@@ -187,7 +211,11 @@ class ClientCollectionService:
     # ── Phase 1: 並行呼叫 Type A Fetchers ────────────────────────
 
     async def _phase1_parallel_fetch(
-        self, switch: Switch,
+        self,
+        switch: Switch,
+        source: str | None = None,
+        brand: str | None = None,
+        http: httpx.AsyncClient | None = None,
     ) -> _FetcherResults:
         """
         並行呼叫 3 個 Type A Fetchers:
@@ -202,30 +230,40 @@ class ClientCollectionService:
                 switch_ip=switch.ip_address,
                 switch_hostname=switch.hostname,
                 site=switch.site.value,
+                source=source,
+                brand=brand,
                 vendor=switch.vendor.value,
                 platform=switch.platform.value,
+                http=http,
+                base_url=settings.external_api_server,
+                timeout=settings.external_api_timeout,
             )
 
-        mac_fetcher = fetcher_registry.get_or_raise("mac_table")
-        arp_fetcher = fetcher_registry.get_or_raise("arp_table")
-        if_fetcher = fetcher_registry.get_or_raise("interface_status")
+        mac_f = fetcher_registry.get_or_raise("mac_table")
+        arp_f = fetcher_registry.get_or_raise("arp_table")
+        if_f = fetcher_registry.get_or_raise("interface_status")
 
-        mac_result, arp_result, if_result = await asyncio.gather(
-            mac_fetcher.fetch(_ctx()),
-            arp_fetcher.fetch(_ctx()),
-            if_fetcher.fetch(_ctx()),
+        mac_r, arp_r, if_r = await asyncio.gather(
+            mac_f.fetch(_ctx()),
+            arp_f.fetch(_ctx()),
+            if_f.fetch(_ctx()),
         )
 
-        for label, r in [("mac_table", mac_result), ("arp_table", arp_result), ("interface_status", if_result)]:
+        checks = [
+            ("mac_table", mac_r),
+            ("arp_table", arp_r),
+            ("interface_status", if_r),
+        ]
+        for label, r in checks:
             if not r.success:
                 raise RuntimeError(
                     f"Fetch failed for {label} on "
                     f"{switch.hostname}: {r.error}"
                 )
 
-        raw.mac_table_raw = mac_result.raw_output
-        raw.arp_table_raw = arp_result.raw_output
-        raw.interface_status_raw = if_result.raw_output
+        raw.mac_table_raw = mac_r.raw_output
+        raw.arp_table_raw = arp_r.raw_output
+        raw.interface_status_raw = if_r.raw_output
 
         return raw
 
@@ -245,50 +283,61 @@ class ClientCollectionService:
         self,
         switch: Switch,
         intermediates: _ParsedIntermediates,
+        source: str | None = None,
+        brand: str | None = None,
+        http: httpx.AsyncClient | None = None,
     ) -> None:
         """
         Phase 2: 依賴 Phase 1 結果的呼叫。
 
         2a. acl — 需要 interface 清單 (從 mac_table)
-        2b. ping_many — 需要客戶端 IP 清單 (從 mac_table + arp_table)
+        2b. ping_many — 需要客戶端 IP 清單 (從 arp)
 
         兩者互不依賴，可並行。
         """
         # 2a: 取出有 MAC 的 interface 清單
         unique_interfaces = sorted({
-            e.interface_name for e in intermediates.mac_entries
+            e.interface_name
+            for e in intermediates.mac_entries
         })
 
         # 2b: 透過 MAC → IP 對應取出客戶端 IP
-        mac_to_ip = {e.mac_address: e.ip_address for e in intermediates.arp_entries}
+        mac_to_ip = {
+            e.mac_address: e.ip_address
+            for e in intermediates.arp_entries
+        }
         client_ips = [
             mac_to_ip[e.mac_address]
             for e in intermediates.mac_entries
             if e.mac_address in mac_to_ip
         ]
 
-        # 建立 FetchContext（ACL 帶 interfaces，ping_many 帶 target_ips）
+        # 共用 context 欄位
+        base_kwargs = {
+            "switch_ip": switch.ip_address,
+            "switch_hostname": switch.hostname,
+            "site": switch.site.value,
+            "source": source,
+            "brand": brand,
+            "vendor": switch.vendor.value,
+            "platform": switch.platform.value,
+            "http": http,
+            "base_url": settings.external_api_server,
+            "timeout": settings.external_api_timeout,
+        }
+
         acl_ctx = FetchContext(
-            switch_ip=switch.ip_address,
-            switch_hostname=switch.hostname,
-            site=switch.site.value,
-            vendor=switch.vendor.value,
-            platform=switch.platform.value,
+            **base_kwargs,
             params={"interfaces": unique_interfaces},
         )
         ping_ctx = FetchContext(
-            switch_ip=switch.ip_address,
-            switch_hostname=switch.hostname,
-            site=switch.site.value,
-            vendor=switch.vendor.value,
-            platform=switch.platform.value,
+            **base_kwargs,
             params={"target_ips": client_ips},
         )
 
         acl_fetcher = fetcher_registry.get_or_raise("acl")
         ping_fetcher = fetcher_registry.get_or_raise("ping_many")
 
-        # 並行呼叫 ACL + ping_many
         acl_result, ping_result = await asyncio.gather(
             acl_fetcher.fetch(acl_ctx),
             ping_fetcher.fetch(ping_ctx),
@@ -305,9 +354,12 @@ class ClientCollectionService:
                 f"{switch.hostname}: {ping_result.error}"
             )
 
-        # Parse
-        intermediates.acl_entries = self._acl_parser.parse(acl_result.raw_output)
-        intermediates.ping_entries = self._ping_parser.parse(ping_result.raw_output)
+        intermediates.acl_entries = self._acl_parser.parse(
+            acl_result.raw_output,
+        )
+        intermediates.ping_entries = self._ping_parser.parse(
+            ping_result.raw_output,
+        )
 
     # ── Phase 3: 組裝 ClientRecord ───────────────────────────────
 
@@ -327,7 +379,7 @@ class ClientCollectionService:
         - acl: interface → acl_number
         - ping_many: ip → is_reachable
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # 建立 lookup maps
         mac_to_ip: dict[str, str] = {

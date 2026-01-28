@@ -130,7 +130,7 @@ npm run dev
 
 - **純內建 Mock** (`USE_MOCK_API=true`) — 13 個 `MockFetcher` 在記憶體產生確定性資料，不需任何外部 server。適合 UI 開發。
 - **Mock API Server** (`USE_MOCK_API=false`) — 打 FastAPI Mock Server，支援 YAML scenario 故障模擬。適合整合測試。
-- **正式環境** (`USE_MOCK_API=false`) — 打真實外部網路管理 API (FNA/DNA)，需實作 `app/fetchers/implementations.py` 中的 Real Fetcher。
+- **正式環境** (`USE_MOCK_API=false`) — 打真實外部網路管理 API。每個 Fetcher 呼叫對應的 API function（FNA 或 DNA），詳見關鍵設計第 5 節。
 
 ### 一鍵重置
 
@@ -192,12 +192,149 @@ Dashboard API (/summary, /details)
 
 ### 關鍵設計
 
-- **Fetcher 抽象層**：每種資料類型有獨立的 `BaseFetcher` 子類別，封裝「如何呼叫外部 API」。Mock 模式使用 `MockFetcher`（記憶體產生），正式模式使用 `RealFetcher`（呼叫外部 API）。應用啟動時透過 `setup_fetchers(use_mock)` 註冊。
-- **Scheduler 與 Indicator 獨立**：Scheduler 從外部 API 採集原始資料，Indicator 從 DB 評估
-- **Typed Records**：每種指標有獨立的 record 表（`ping_records`、`transceiver_records` 等）
-- **兩種分母來源**（所有指標對象皆為新設備）：
-  - **期望類**（ping、port_channel、uplink）：分母來自使用者定義的期望清單
-  - **採集類**（power、fan、error_count、transceiver、version）：分母來自實際採集到的新設備資料筆數
+#### 1. Fetcher 抽象層 — 一行切換 Mock / Real，Service 零改動
+
+**問題**：舊架構所有 API 呼叫都走同一個 `fetch(site, function, switch_ip)`，無法自訂 HTTP method、URL 格式、request body。`ping_many` 需要傳入目標 IP 清單，但舊介面只接受 3 個字串。
+
+**解法**：每種資料類型有獨立的 `BaseFetcher` 子類別，啟動時透過 `setup_fetchers(use_mock)` 一次註冊。
+
+```
+                       ┌─────────────────────┐
+                       │   FetcherRegistry   │
+                       │                     │
+                       │  "transceiver" ──▶ MockTransceiverFetcher  ← USE_MOCK_API=true
+                       │  "ping_many"   ──▶ MockPingManyFetcher
+                       │  "mac_table"   ──▶ MockMacTableFetcher
+                       │   ...              ...
+                       └─────────┬───────────┘
+                                 │
+          setup_fetchers(use_mock=false) 時自動替換：
+                                 │
+                       ┌─────────▼───────────┐
+                       │   FetcherRegistry   │
+                       │                     │
+                       │  "transceiver" ──▶ TransceiverFetcher      ← 打真實 API
+                       │  "ping_many"   ──▶ PingManyFetcher
+                       │  "mac_table"   ──▶ MacTableFetcher
+                       │   ...              ...
+                       └─────────────────────┘
+```
+
+**好處**：
+- **Service 層完全不知道資料從哪來** — `fetcher_registry.get_or_raise("transceiver")` 拿到的可能是 Mock 也可能是 Real，呼叫端程式碼一模一樣
+- **每個 Fetcher 獨立封裝** — 可以各自決定 HTTP method、URL、request body、error handling，不受其他 Fetcher 影響
+- **`FetchContext.params` 解決傳參問題** — `ping_many` 透過 `params={"target_ips": [...]}` 傳入目標清單，不再受限於固定參數
+- **新增資料類型只需 3 步**：寫 Fetcher → 寫 Parser → 註冊，不動任何 Service 程式碼
+
+#### 2. 採集（Scheduler）與評估（Indicator）分離
+
+```
+  Scheduler 週期觸發                    API 請求觸發
+        │                                    │
+        ▼                                    ▼
+  Fetcher → Parser → DB 寫入          Indicator.evaluate() ← DB 讀取
+        │                                    │
+        │    完全獨立，互不阻塞               │
+        ▼                                    ▼
+  typed_records 表                    pass_rate / fail_list
+```
+
+**好處**：
+- **採集失敗不影響 Dashboard 顯示** — Indicator 永遠從 DB 讀取最近一筆成功資料，即使本輪採集超時也能顯示上一輪結果
+- **可重複評估** — 資料已在 DB，隨時呼叫 `evaluate()` 不需要重新打外部 API
+- **各自獨立調頻率** — 採集可能 30 秒一次，但 Dashboard API 可能每秒被呼叫多次，兩者互不干擾
+
+#### 3. Typed Records — 每種指標獨立表，型別安全
+
+```
+  ┌─────────────────┐  ┌──────────────────┐  ┌─────────────────┐
+  │ ping_records    │  │ transceiver_     │  │ fan_records     │
+  │                 │  │   records        │  │                 │
+  │ switch_ip       │  │ switch_ip        │  │ switch_ip       │
+  │ is_reachable    │  │ interface_name   │  │ fan_id          │
+  │ success_rate    │  │ tx_power         │  │ status          │
+  │ avg_rtt         │  │ rx_power         │  │ speed_rpm       │
+  └─────────────────┘  │ temperature      │  └─────────────────┘
+                       └──────────────────┘
+          每張表只有該指標需要的欄位，不浪費空間也不混淆
+```
+
+**好處**：
+- **欄位語意明確** — `transceiver_records.tx_power` vs 把所有東西塞進 `generic_records.json_data`，查詢和除錯效率差很多
+- **可針對單一指標做 index / 查詢最佳化** — 不會因為一張大表而影響其他指標的讀寫效能
+- **Schema 即文件** — 看表結構就知道這個指標採集了什麼資料
+
+#### 4. 兩種分母來源 — 指標評估不混淆
+
+不同指標的「總數」來源不同，否則通過率計算會失真：
+
+| 分母類型 | 指標 | 來源 | 為什麼 |
+|---------|------|------|--------|
+| **期望類** | ping、port_channel、uplink | 使用者定義的期望清單 | 這些指標需要比對「應該有什麼」，沒有期望就無法判斷 |
+| **採集類** | power、fan、error_count、transceiver、version | 實際採集到的新設備資料筆數 | 這些指標只需要檢查「採到的資料是否正常」，分母 = 採到多少筆 |
+
+**好處**：
+- **通過率語意正確** — `ping` 通過率 = 「期望清單中可達的設備數 / 期望總數」，而非「採到的可達數 / 採到的總數」（後者會漏掉根本沒回應的設備）
+- **不會因為少採到而虛增通過率** — 期望類指標的分母固定，沒採到的設備自動算失敗
+
+#### 5. FNA / DNA API Function Layer — 每種資料綁定一個 API 來源
+
+**背景**：外部有兩套網路管理 API：
+
+| 來源 | 簽名 | 特性 |
+|------|------|------|
+| **FNA** (Factory Network Automation) | `(switch_ip, **kwargs)` | 內部自動偵測廠牌，只需 IP |
+| **DNA** (Device Network Automation) | `(vendor_os, switch_ip, **kwargs)` | 需指定廠牌 + IP |
+
+**設計**：每種資料類型恰好綁定一個 API 來源，封裝為 standalone async function。
+
+```
+  Fetcher.fetch(ctx)
+  ┌─────────────────────────────────────┐
+  │ FanFetcher (DNA):                   │
+  │   raw = await get_fan_from_dna(     │
+  │       ctx.brand, ctx.switch_ip)     │
+  │                                     │
+  │ AclFetcher (FNA):                   │
+  │   raw = await get_acl_from_fna(     │
+  │       ctx.switch_ip,                │
+  │       interfaces=interfaces)        │
+  └─────────────────────────────────────┘
+          │
+          ▼
+  app/fetchers/api_functions.py
+  ┌─────────────────────────────────────┐
+  │ async def get_fan_from_dna(         │
+  │     vendor_os, switch_ip, **kwargs  │
+  │ ) -> str:                           │
+  │     raise NotImplementedError(...)  │
+  │     # TODO: 實作 HTTP 呼叫          │
+  └─────────────────────────────────────┘
+```
+
+**FNA / DNA 對應表**：
+
+| fetch_type | API Source | API Function |
+|-----------|-----------|--------------|
+| `transceiver` | DNA | `get_transceiver_from_dna` |
+| `version` | DNA | `get_version_from_dna` |
+| `uplink` | DNA | `get_uplink_from_dna` |
+| `fan` | DNA | `get_fan_from_dna` |
+| `power` | DNA | `get_power_from_dna` |
+| `error_count` | DNA | `get_error_count_from_dna` |
+| `ping` | DNA | `get_ping_from_dna` |
+| `port_channel` | FNA | `get_port_channel_from_fna` |
+| `mac_table` | DNA | `get_mac_table_from_dna` |
+| `arp_table` | FNA | `get_arp_table_from_fna` |
+| `interface_status` | DNA | `get_interface_status_from_dna` |
+| `acl` | FNA | `get_acl_from_fna` |
+| `ping_many` | DNA | `get_ping_many_from_dna` |
+
+**好處**：
+- **API 呼叫與 Fetcher 解耦** — API function 是純 async function，可獨立測試
+- **每種資料綁定一個來源** — 不是 runtime 決定，語意清晰
+- **特殊參數用 `**kwargs`** — `ping_many` 傳 `target_ips`，`acl` 傳 `interfaces`
+- **漸進實作** — function 目前是 stub，日後逐一實作
 
 ---
 
@@ -218,29 +355,30 @@ Dashboard API (/summary, /details)
 
 ## 待完成工作 (TODO)
 
-### 1. Real Fetcher 實作 — `app/fetchers/implementations.py`
+### 1. API Function 實作 — `app/fetchers/api_functions.py`
 
-13 個 real fetcher 的 `fetch()` 目前為 `NotImplementedError`。需根據外部 API 介面實作。每個 stub 皆附有範例程式碼與 docstring。
+13 個 API function 目前為 stub（`raise NotImplementedError`）。
+每個 function 封裝對一個外部 API source 的 HTTP 呼叫，
+日後依實際 API 規格逐一實作。
 
-繼承 `BaseFetcher` 並實作 `fetch(ctx: FetchContext) -> FetchResult`：
+| API Function | Source | 簽名 |
+|-------------|--------|------|
+| `get_transceiver_from_dna` | DNA | `(vendor_os, switch_ip)` |
+| `get_version_from_dna` | DNA | `(vendor_os, switch_ip)` |
+| `get_uplink_from_dna` | DNA | `(vendor_os, switch_ip)` |
+| `get_fan_from_dna` | DNA | `(vendor_os, switch_ip)` |
+| `get_power_from_dna` | DNA | `(vendor_os, switch_ip)` |
+| `get_error_count_from_dna` | DNA | `(vendor_os, switch_ip)` |
+| `get_ping_from_dna` | DNA | `(vendor_os, switch_ip)` |
+| `get_port_channel_from_fna` | FNA | `(switch_ip)` |
+| `get_mac_table_from_dna` | DNA | `(vendor_os, switch_ip)` |
+| `get_arp_table_from_fna` | FNA | `(switch_ip)` |
+| `get_interface_status_from_dna` | DNA | `(vendor_os, switch_ip)` |
+| `get_acl_from_fna` | FNA | `(switch_ip, **kwargs)` |
+| `get_ping_many_from_dna` | DNA | `(vendor_os, switch_ip, **kwargs)` |
 
-| Fetcher | fetch_type | 用途 | 對應 Mock |
-|---------|-----------|------|-----------|
-| `TransceiverFetcher` | `transceiver` | 光模塊 Tx/Rx/溫度 | `MockTransceiverFetcher` |
-| `VersionFetcher` | `version` | 韌體版本 | `MockVersionFetcher` |
-| `UplinkFetcher` | `uplink` | LLDP 鄰居 | `MockUplinkFetcher` |
-| `FanFetcher` | `fan` | 風扇狀態 | `MockFanFetcher` |
-| `PowerFetcher` | `power` | 電源供應 | `MockPowerFetcher` |
-| `ErrorCountFetcher` | `error_count` | 介面錯誤 | `MockErrorCountFetcher` |
-| `PortChannelFetcher` | `port_channel` | LAG 狀態 | `MockPortChannelFetcher` |
-| `PingFetcher` | `ping` | 設備連通性 | `MockPingFetcher` |
-| `MacTableFetcher` | `mac_table` | MAC 表 | `MockMacTableFetcher` |
-| `ArpTableFetcher` | `arp_table` | ARP 表 | `MockArpTableFetcher` |
-| `InterfaceStatusFetcher` | `interface_status` | 介面狀態 | `MockInterfaceStatusFetcher` |
-| `AclFetcher` | `acl` | ACL 規則 | `MockAclFetcher` |
-| `PingManyFetcher` | `ping_many` | 批量 Ping | `MockPingManyFetcher` |
-
-`FetchContext` 提供 switch_ip、switch_hostname、site、source、brand、vendor、platform、params（額外參數如 `target_ips`）。
+所有 function 均支援 `**kwargs` 保留給未來擴充。
+`acl` 透過 `kwargs` 傳入 `interfaces`，`ping_many` 傳入 `target_ips`。
 
 ### 2. 客戶端資料 Parser — `app/parsers/client_parsers.py`
 
@@ -260,9 +398,9 @@ Dashboard API (/summary, /details)
 
 `app/api/endpoints/maintenance.py` 的 `_generate_checkpoint_summary()` 回傳 placeholder。應查詢該時間點附近的指標結果與客戶端資料產生真實統計。
 
-### 4. 外部 API 設定
+### 4. 外部 API 連線設定
 
-`config/scheduler.yaml` 各 job 的 `url`、`source`、`brand` 欄位為空。正式部署時填入真實外部 API 連線資訊。
+`.env` 的 `EXTERNAL_API_SERVER` 設定外部 API 位址。`app/fetchers/api_functions.py` 中 13 個 API function 目前為 stub，正式部署時需逐一實作（詳見 TODO 第 1 項）。
 
 ---
 
@@ -284,8 +422,9 @@ network_dashboard/
 │   ├── fetchers/
 │   │   ├── base.py                       # BaseFetcher, FetchContext, FetchResult
 │   │   ├── registry.py                   # FetcherRegistry, setup_fetchers()
+│   │   ├── api_functions.py             # 13 個 API function stub (FNA/DNA)
 │   │   ├── mock.py                       # 13 個 Mock Fetcher
-│   │   └── implementations.py           # 13 個 Real Fetcher stub (TODO)
+│   │   └── implementations.py           # 13 個 Real Fetcher (呼叫 api_functions)
 │   ├── indicators/                       # 8 種指標評估器
 │   ├── parsers/
 │   │   ├── client_parsers.py             # 客戶端 parser (TODO)

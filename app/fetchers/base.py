@@ -2,19 +2,21 @@
 Fetcher base classes.
 
 定義 Fetcher 抽象層的核心型別：
-- BaseFetcher: 所有 Fetcher 的基底類別
-- FetchContext: 每次 fetch 的上下文（switch 資訊 + HTTP client + 額外參數）
+- BaseFetcher: 所有 Fetcher 的基底類別（Mock / Real 共用介面）
+- FetchContext: 每次 fetch 的上下文（switch 資訊 + 額外參數）
 - FetchResult: fetch 回傳結果
 
-使用者只需繼承 BaseFetcher 並實作 fetch() 方法即可對接外部 API。
+Mock Fetcher 繼承 BaseFetcher，直接在 fetch() 產生假資料。
+Real Fetcher 繼承 BaseFetcher，在 fetch() 中呼叫 api_functions 的 standalone function。
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import httpx
+if TYPE_CHECKING:
+    import httpx
 
 
 @dataclass

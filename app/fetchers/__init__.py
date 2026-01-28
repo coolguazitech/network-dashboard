@@ -11,7 +11,11 @@ Fetchers package.
     - setup_fetchers(): 應用啟動時初始化
 """
 from app.fetchers.base import BaseFetcher, FetchContext, FetchResult
-from app.fetchers.registry import FetcherRegistry, fetcher_registry, setup_fetchers
+from app.fetchers.registry import (
+    FetcherRegistry,
+    fetcher_registry,
+    setup_fetchers,
+)
 
 __all__ = [
     "BaseFetcher",

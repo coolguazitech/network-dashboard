@@ -5,7 +5,6 @@ Handles scheduled jobs for data collection using APScheduler.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -142,19 +141,25 @@ class SchedulerService:
             source: Data source (FNA/DNA)
             brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
         """
-        logger.info(f"Running scheduled collection for '{job_name}'")
+        logger.info("Running scheduled collection for '%s'", job_name)
         try:
             if job_name == "client-collection":
-                result = await self.client_collection_service.collect_client_data(
+                svc = self.client_collection_service
+                result = await svc.collect_client_data(
                     maintenance_id=maintenance_id or "",
+                    source=source,
+                    brand=brand,
                 )
                 logger.info(
-                    f"Client collection complete: "
-                    f"{result['success']}/{result['total']} switches, "
-                    f"{result['client_records_count']} records"
+                    "Client collection complete: "
+                    "%d/%d switches, %d records",
+                    result["success"],
+                    result["total"],
+                    result["client_records_count"],
                 )
             else:
-                result = await self.collection_service.collect_indicator_data(
+                svc = self.collection_service
+                result = await svc.collect_indicator_data(
                     collection_type=job_name,
                     maintenance_id=maintenance_id,
                     url=url,
@@ -162,11 +167,17 @@ class SchedulerService:
                     brand=brand,
                 )
                 logger.info(
-                    f"Collection complete for '{job_name}': "
-                    f"{result['success']}/{result['total']} successful"
+                    "Collection complete for '%s': "
+                    "%d/%d successful",
+                    job_name,
+                    result["success"],
+                    result["total"],
                 )
         except Exception as e:
-            logger.error(f"Collection failed for '{job_name}': {e}")
+            logger.error(
+                "Collection failed for '%s': %s",
+                job_name, e,
+            )
 
     def start(self) -> None:
         """Start the scheduler."""
