@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.enums import MaintenancePhase
 from app.db.base import get_session_context
-from app.db.models import ClientRecord, Switch
+from app.db.models import ClientRecord, Switch, MaintenanceMacList
 from app.parsers.client_parsers import (
     AclParser,
     ArpParser,
@@ -90,6 +90,43 @@ class ClientCollectionService:
         self._acl_parser = AclParser()
         self._ping_parser = PingManyParser()
 
+    # ── MAC 白名單載入 ─────────────────────────────────────────
+
+    async def _load_mac_whitelist(
+        self,
+        maintenance_id: str,
+        session: AsyncSession,
+    ) -> set[str]:
+        """
+        從 MaintenanceMacList 載入該歲修的 MAC 白名單。
+
+        只有在白名單中的 MAC 才會被採集和寫入 ClientRecord。
+        這確保資料流與歲修設定一致。
+
+        Args:
+            maintenance_id: 歲修 ID
+            session: DB session
+
+        Returns:
+            MAC 地址集合（大寫，用於快速查找）
+        """
+        from sqlalchemy import select
+
+        stmt = select(MaintenanceMacList.mac_address).where(
+            MaintenanceMacList.maintenance_id == maintenance_id
+        )
+        result = await session.execute(stmt)
+        macs = result.scalars().all()
+
+        # 統一轉大寫以便比對
+        whitelist = {mac.upper() for mac in macs}
+
+        logger.info(
+            "Loaded MAC whitelist for %s: %d MACs",
+            maintenance_id, len(whitelist),
+        )
+        return whitelist
+
     # ── public entry point ───────────────────────────────────────
 
     async def collect_client_data(
@@ -124,6 +161,19 @@ class ClientCollectionService:
 
         async with httpx.AsyncClient() as http:
             async with get_session_context() as session:
+                # 載入 MAC 白名單 - 只採集在白名單中的 MAC
+                mac_whitelist = await self._load_mac_whitelist(
+                    maintenance_id, session,
+                )
+
+                if not mac_whitelist:
+                    logger.warning(
+                        "No MAC whitelist found for %s, "
+                        "skipping client collection",
+                        maintenance_id,
+                    )
+                    return results
+
                 switch_repo = SwitchRepository(session)
                 switches = await switch_repo.get_active_switches()
                 results["total"] = len(switches)
@@ -135,6 +185,7 @@ class ClientCollectionService:
                             maintenance_id=maintenance_id,
                             phase=phase,
                             session=session,
+                            mac_whitelist=mac_whitelist,
                             source=source,
                             brand=brand,
                             http=http,
@@ -154,12 +205,60 @@ class ClientCollectionService:
                             switch.hostname, e,
                         )
 
+        # 清理超過 30 天的舊資料
+        async with get_session_context() as session:
+            deleted = await self._cleanup_old_records(
+                session=session,
+                maintenance_id=maintenance_id,
+                retention_days=30,
+            )
+            if deleted > 0:
+                results["deleted_old_records"] = deleted
+                logger.info(
+                    "Cleaned up %d old client records (>30 days)",
+                    deleted,
+                )
+
         logger.info(
             "Client collection done: %d/%d switches, %d records",
             results["success"], results["total"],
             results["client_records_count"],
         )
         return results
+
+    async def _cleanup_old_records(
+        self,
+        session: AsyncSession,
+        maintenance_id: str,
+        retention_days: int = 30,
+    ) -> int:
+        """
+        清理超過保留期限的舊 ClientRecord。
+
+        Args:
+            session: DB session
+            maintenance_id: 歲修 ID
+            retention_days: 保留天數（預設 30 天）
+
+        Returns:
+            刪除的記錄數
+        """
+        from sqlalchemy import delete
+
+        cutoff_time = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+        stmt = (
+            delete(ClientRecord)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.collected_at < cutoff_time,
+            )
+        )
+
+        result = await session.execute(stmt)
+        await session.commit()
+
+        return result.rowcount or 0
 
     # ── per-switch orchestration ─────────────────────────────────
 
@@ -169,12 +268,20 @@ class ClientCollectionService:
         maintenance_id: str,
         phase: MaintenancePhase,
         session: AsyncSession,
+        mac_whitelist: set[str],
         source: str | None = None,
         brand: str | None = None,
         http: httpx.AsyncClient | None = None,
     ) -> list[ClientRecord]:
         """
         單台 switch 的完整採集流程 (Phase 1 → 2 → 3 → 4)。
+
+        Args:
+            switch: 目標設備
+            maintenance_id: 歲修 ID
+            phase: 階段
+            session: DB session
+            mac_whitelist: MAC 白名單，只採集在此清單中的 MAC
 
         Returns:
             寫入 DB 的 ClientRecord 列表。
@@ -191,12 +298,13 @@ class ClientCollectionService:
             source=source, brand=brand, http=http,
         )
 
-        # ── Phase 3: 組裝 ClientRecord ─────────────────────
+        # ── Phase 3: 組裝 ClientRecord（過濾白名單）─────────
         records = self._phase3_assemble(
             switch_hostname=switch.hostname,
             maintenance_id=maintenance_id,
             phase=phase,
             intermediates=intermediates,
+            mac_whitelist=mac_whitelist,
         )
 
         # ── Phase 4: 寫入 DB ───────────────────────────────
@@ -369,15 +477,25 @@ class ClientCollectionService:
         maintenance_id: str,
         phase: MaintenancePhase,
         intermediates: _ParsedIntermediates,
+        mac_whitelist: set[str],
     ) -> list[ClientRecord]:
         """
         將各 Fetcher 的中間資料拼裝為 ClientRecord。
+
+        只處理在 mac_whitelist 中的 MAC，確保資料與歲修設定一致。
 
         以 MAC 為主鍵遍歷 mac_table，關聯其他資料：
         - arp_table: mac → ip
         - interface_status: interface → speed / duplex / link_status
         - acl: interface → acl_number
         - ping_many: ip → is_reachable
+
+        Args:
+            switch_hostname: 交換機主機名
+            maintenance_id: 歲修 ID
+            phase: 階段
+            intermediates: Fetcher 解析後的中間資料
+            mac_whitelist: MAC 白名單（大寫），只處理在此清單中的 MAC
         """
         now = datetime.now(timezone.utc)
 
@@ -396,8 +514,15 @@ class ClientCollectionService:
         }
 
         records: list[ClientRecord] = []
+        filtered_count = 0
 
         for mac_entry in intermediates.mac_entries:
+            # 只處理在白名單中的 MAC
+            mac_upper = mac_entry.mac_address.upper()
+            if mac_upper not in mac_whitelist:
+                filtered_count += 1
+                continue
+
             ip = mac_to_ip.get(mac_entry.mac_address)
             if_data = if_status_map.get(mac_entry.interface_name)
             acl_number = acl_map.get(mac_entry.interface_name)
@@ -423,9 +548,17 @@ class ClientCollectionService:
                 ),
                 # ACL
                 acl_rules_applied=acl_number,
-                acl_passes=(acl_number is not None) if acl_number is not None else None,
+                acl_passes=(
+                    (acl_number is not None) if acl_number is not None else None
+                ),
             )
             records.append(record)
+
+        if filtered_count > 0:
+            logger.debug(
+                "Filtered %d MACs not in whitelist from %s",
+                filtered_count, switch_hostname,
+            )
 
         return records
 

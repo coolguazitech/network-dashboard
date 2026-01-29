@@ -80,10 +80,28 @@ class ClientComparisonService:
     ) -> list[ClientComparison]:
         """
         生成客戶端比較結果。
-        
-        查詢同一個 MAC 地址在 OLD(舊設備) 和 NEW(新設備) 階段的記錄，比較差異。
+
+        基於 MaintenanceMacList 中的 MAC 清單進行比較，確保：
+        1. 只比較歲修設定中的 MAC
+        2. 清單中的 MAC 若在 NEW 階段未找到，標記為 undetected (critical)
+        3. 資料數量與歲修設定一致
         """
-        # 查詢 OLD 階段的記錄，按 MAC 地址分組，只保留最新的
+        from app.db.models import MaintenanceDeviceList, MaintenanceMacList
+
+        # 1. 從 MaintenanceMacList 載入 MAC 清單作為基準
+        mac_stmt = select(MaintenanceMacList.mac_address).where(
+            MaintenanceMacList.maintenance_id == maintenance_id
+        )
+        mac_result = await session.execute(mac_stmt)
+        mac_list = [m.upper() for m in mac_result.scalars().all()]
+
+        if not mac_list:
+            # 如果沒有 MAC 清單，回退到原有邏輯（從 ClientRecord 取）
+            return await self._generate_comparisons_legacy(
+                maintenance_id, session,
+            )
+
+        # 2. 查詢 OLD 階段的記錄，按 MAC 地址分組，只保留最新的
         old_stmt = (
             select(ClientRecord)
             .where(
@@ -94,14 +112,15 @@ class ClientComparisonService:
         )
         old_result = await session.execute(old_stmt)
         old_records = old_result.scalars().all()
-        
-        # 按 MAC 地址分組，只保留最新記錄
-        old_by_mac = {}
+
+        # 按 MAC 地址分組（大寫），只保留最新記錄
+        old_by_mac: dict[str, ClientRecord] = {}
         for record in old_records:
-            if record.mac_address not in old_by_mac:
-                old_by_mac[record.mac_address] = record
-        
-        # 查詢 NEW 階段的記錄，按 MAC 地址分組，只保留最新的
+            mac_upper = record.mac_address.upper()
+            if mac_upper not in old_by_mac:
+                old_by_mac[mac_upper] = record
+
+        # 3. 查詢 NEW 階段的記錄，按 MAC 地址分組，只保留最新的
         new_stmt = (
             select(ClientRecord)
             .where(
@@ -112,15 +131,15 @@ class ClientComparisonService:
         )
         new_result = await session.execute(new_stmt)
         new_records = new_result.scalars().all()
-        
-        # 按 MAC 地址分組，只保留最新記錄
-        new_by_mac = {}
+
+        # 按 MAC 地址分組（大寫），只保留最新記錄
+        new_by_mac: dict[str, ClientRecord] = {}
         for record in new_records:
-            if record.mac_address not in new_by_mac:
-                new_by_mac[record.mac_address] = record
-        
-        # 載入設備對應（用於 severity 計算）
-        from app.db.models import MaintenanceDeviceList
+            mac_upper = record.mac_address.upper()
+            if mac_upper not in new_by_mac:
+                new_by_mac[mac_upper] = record
+
+        # 4. 載入設備對應（用於 severity 計算）
         dev_stmt = select(MaintenanceDeviceList).where(
             MaintenanceDeviceList.maintenance_id == maintenance_id
         )
@@ -130,11 +149,10 @@ class ClientComparisonService:
         for dm in device_mappings_list:
             device_mappings[dm.old_hostname.lower()] = dm.new_hostname
 
-        # 生成比較結果
+        # 5. 基於 MAC 清單生成比較結果（確保數量一致）
         comparisons = []
-        all_macs = set(old_by_mac.keys()) | set(new_by_mac.keys())
 
-        for mac in all_macs:
+        for mac in mac_list:
             old_record = old_by_mac.get(mac)
             new_record = new_by_mac.get(mac)
 
@@ -174,7 +192,113 @@ class ClientComparisonService:
             comparisons.append(comparison)
 
         return comparisons
-    
+
+    async def _generate_comparisons_legacy(
+        self,
+        maintenance_id: str,
+        session: AsyncSession,
+    ) -> list[ClientComparison]:
+        """
+        Legacy 比較生成方法（無 MaintenanceMacList 時使用）。
+
+        從 ClientRecord 動態獲取所有 MAC 來生成比較。
+        這是為了向後兼容沒有設定 MAC 清單的歲修。
+        """
+        from app.db.models import MaintenanceDeviceList
+
+        # 查詢 OLD 階段的記錄
+        old_stmt = (
+            select(ClientRecord)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.phase == MaintenancePhase.OLD,
+            )
+            .order_by(
+                ClientRecord.mac_address,
+                ClientRecord.collected_at.desc(),
+            )
+        )
+        old_result = await session.execute(old_stmt)
+        old_records = old_result.scalars().all()
+
+        old_by_mac: dict[str, ClientRecord] = {}
+        for record in old_records:
+            mac_upper = record.mac_address.upper()
+            if mac_upper not in old_by_mac:
+                old_by_mac[mac_upper] = record
+
+        # 查詢 NEW 階段的記錄
+        new_stmt = (
+            select(ClientRecord)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.phase == MaintenancePhase.NEW,
+            )
+            .order_by(
+                ClientRecord.mac_address,
+                ClientRecord.collected_at.desc(),
+            )
+        )
+        new_result = await session.execute(new_stmt)
+        new_records = new_result.scalars().all()
+
+        new_by_mac: dict[str, ClientRecord] = {}
+        for record in new_records:
+            mac_upper = record.mac_address.upper()
+            if mac_upper not in new_by_mac:
+                new_by_mac[mac_upper] = record
+
+        # 載入設備對應
+        dev_stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+        dev_result = await session.execute(dev_stmt)
+        device_mappings_list = dev_result.scalars().all()
+        device_mappings: dict[str, str] = {}
+        for dm in device_mappings_list:
+            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
+
+        # 生成比較結果
+        comparisons = []
+        all_macs = set(old_by_mac.keys()) | set(new_by_mac.keys())
+
+        for mac in all_macs:
+            old_record = old_by_mac.get(mac)
+            new_record = new_by_mac.get(mac)
+
+            comparison = ClientComparison(
+                maintenance_id=maintenance_id,
+                collected_at=datetime.utcnow(),
+                mac_address=mac,
+            )
+
+            if old_record:
+                comparison.old_ip_address = old_record.ip_address
+                comparison.old_switch_hostname = old_record.switch_hostname
+                comparison.old_interface_name = old_record.interface_name
+                comparison.old_vlan_id = old_record.vlan_id
+                comparison.old_speed = old_record.speed
+                comparison.old_duplex = old_record.duplex
+                comparison.old_link_status = old_record.link_status
+                comparison.old_ping_reachable = old_record.ping_reachable
+                comparison.old_acl_passes = old_record.acl_passes
+
+            if new_record:
+                comparison.new_ip_address = new_record.ip_address
+                comparison.new_switch_hostname = new_record.switch_hostname
+                comparison.new_interface_name = new_record.interface_name
+                comparison.new_vlan_id = new_record.vlan_id
+                comparison.new_speed = new_record.speed
+                comparison.new_duplex = new_record.duplex
+                comparison.new_link_status = new_record.link_status
+                comparison.new_ping_reachable = new_record.ping_reachable
+                comparison.new_acl_passes = new_record.acl_passes
+
+            comparison = self._compare_records(comparison, device_mappings)
+            comparisons.append(comparison)
+
+        return comparisons
+
     def _find_differences(self, comparison: ClientComparison) -> dict[str, Any]:
         """找出比較記錄中的差異。"""
         differences: dict[str, Any] = {}
@@ -468,15 +592,23 @@ class ClientComparisonService:
         self,
         maintenance_id: str,
         session: AsyncSession,
+        max_timepoints: int = 10,
     ) -> list[dict[str, Any]]:
         """獲取每個時間點的統計資料。
 
         用於時間軸圖表顯示趨勢。按使用者自訂分類統計異常數。
         如果沒有 ClientRecord，則使用 ClientComparison 生成靜態統計。
+
+        已優化：預先載入所有資料，避免 N+1 查詢問題。
+
+        Args:
+            maintenance_id: 歲修 ID
+            session: DB session
+            max_timepoints: 最大時間點數量（預設 10，避免過多時間點造成效能問題）
         """
         from sqlalchemy import func
-        from app.db.models import ClientCategory, ClientCategoryMember
-        
+        from app.db.models import ClientCategory, ClientCategoryMember, MaintenanceDeviceList
+
         # 檢查是否有 ClientRecord 資料
         record_count_stmt = (
             select(func.count())
@@ -485,29 +617,88 @@ class ClientComparisonService:
         )
         record_count_result = await session.execute(record_count_stmt)
         record_count = record_count_result.scalar() or 0
-        
+
         # 如果沒有 ClientRecord，使用 ClientComparison 生成靜態統計
         if record_count == 0:
             return await self._get_static_statistics(maintenance_id, session)
-        
-        # 獲取所有時間點（從 ClientRecord）
-        timepoints_data = await self.get_timepoints(maintenance_id, session)
-        
-        # 獲取使用者自訂分類和成員（只取活躍分類）
+
+        # === 預先載入所有資料（一次性查詢，避免 N+1） ===
+
+        # 1. 載入設備對應
+        dev_stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+        dev_result = await session.execute(dev_stmt)
+        device_mappings_list = dev_result.scalars().all()
+        device_mappings: dict[str, str] = {}
+        for dm in device_mappings_list:
+            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
+
+        # 2. 載入所有 OLD 階段記錄（按 MAC 分組，只保留最新）
+        old_stmt = (
+            select(ClientRecord)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.phase == MaintenancePhase.OLD,
+            )
+            .order_by(ClientRecord.mac_address, ClientRecord.collected_at.desc())
+        )
+        old_result = await session.execute(old_stmt)
+        old_records = old_result.scalars().all()
+
+        old_by_mac: dict[str, ClientRecord] = {}
+        for record in old_records:
+            mac_upper = record.mac_address.upper() if record.mac_address else ""
+            if mac_upper and mac_upper not in old_by_mac:
+                old_by_mac[mac_upper] = record
+
+        # 3. 載入所有 NEW 階段記錄（按 MAC+時間排序）
+        new_stmt = (
+            select(ClientRecord)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.phase == MaintenancePhase.NEW,
+            )
+            .order_by(ClientRecord.collected_at, ClientRecord.mac_address)
+        )
+        new_result = await session.execute(new_stmt)
+        all_new_records = new_result.scalars().all()
+
+        # 4. 獲取所有時間點（從已載入的 NEW 記錄）
+        timepoints_set: set[datetime] = set()
+        for record in all_new_records:
+            if record.collected_at:
+                timepoints_set.add(record.collected_at)
+        all_timepoints_dt = sorted(timepoints_set)
+
+        if not all_timepoints_dt:
+            return await self._get_static_statistics(maintenance_id, session)
+
+        # 如果時間點過多，進行採樣
+        if len(all_timepoints_dt) > max_timepoints:
+            step = (len(all_timepoints_dt) - 1) / (max_timepoints - 1)
+            indices = [int(i * step) for i in range(max_timepoints)]
+            sampled_timepoints = [all_timepoints_dt[i] for i in indices]
+        else:
+            sampled_timepoints = all_timepoints_dt
+
+        # 5. 獲取使用者自訂分類和成員
         cat_stmt = select(ClientCategory).where(ClientCategory.is_active == True)
         cat_result = await session.execute(cat_stmt)
         categories = cat_result.scalars().all()
-        
-        # 只查詢活躍分類的成員
+
         active_cat_ids = [c.id for c in categories]
-        member_stmt = (
-            select(ClientCategoryMember)
-            .where(ClientCategoryMember.category_id.in_(active_cat_ids))
-        )
-        member_result = await session.execute(member_stmt)
-        members = member_result.scalars().all()
-        
-        # 建立 MAC -> category_ids 對照（一對多：一個 MAC 可屬於多個分類）
+        if active_cat_ids:
+            member_stmt = (
+                select(ClientCategoryMember)
+                .where(ClientCategoryMember.category_id.in_(active_cat_ids))
+            )
+            member_result = await session.execute(member_stmt)
+            members = member_result.scalars().all()
+        else:
+            members = []
+
+        # 建立 MAC -> category_ids 對照
         mac_to_categories: dict[str, list[int]] = {}
         for m in members:
             normalized_mac = m.mac_address.upper() if m.mac_address else ""
@@ -515,45 +706,72 @@ class ClientComparisonService:
                 if normalized_mac not in mac_to_categories:
                     mac_to_categories[normalized_mac] = []
                 mac_to_categories[normalized_mac].append(m.category_id)
-        
+
         # 分類資訊
         category_info = {cat.id: {"name": cat.name, "color": cat.color} for cat in categories}
-        
+
+        # === 為每個時間點計算統計（使用預載入的資料） ===
         statistics = []
 
-        def summarize(comps):
-            total = len(comps)
-            has_issues = sum(1 for c in comps if c.is_changed)
-            critical = sum(1 for c in comps if c.severity == "critical")
-            warning = sum(1 for c in comps if c.severity == "warning")
-            return {
-                "total": total,
-                "has_issues": has_issues,
-                "critical": critical,
-                "warning": warning,
-            }
-        
-        for tp_data in timepoints_data:
-            from datetime import datetime
-            tp = datetime.fromisoformat(tp_data["timestamp"])
+        for tp in sampled_timepoints:
+            # 篩選該時間點的 NEW 記錄（collected_at <= tp）
+            # 按 MAC 分組，只保留最新的
+            new_by_mac: dict[str, ClientRecord] = {}
+            for record in all_new_records:
+                if record.collected_at and record.collected_at <= tp:
+                    mac_upper = record.mac_address.upper() if record.mac_address else ""
+                    if mac_upper:
+                        # 因為已按時間排序，後面的會覆蓋前面的（保留最新）
+                        new_by_mac[mac_upper] = record
 
-            # 生成該時間點的比較結果（不保存）
-            # after_time=tp：只取到該時間點為止的 NEW 記錄，
-            # 這樣每個時間點反映的是當時的偵測狀態
-            comparisons = await self._generate_comparisons_at_time(
-                maintenance_id=maintenance_id,
-                before_time=tp,
-                after_time=tp,
-                session=session,
-            )
-            
-            # 總計統計
-            all_summary = summarize(comparisons)
-            
+            # 生成比較結果（在記憶體中處理）
+            all_macs = set(old_by_mac.keys()) | set(new_by_mac.keys())
+            comparisons = []
+
+            for mac in all_macs:
+                old_record = old_by_mac.get(mac)
+                new_record = new_by_mac.get(mac)
+
+                comparison = ClientComparison(
+                    maintenance_id=maintenance_id,
+                    collected_at=tp,
+                    mac_address=mac,
+                )
+
+                if old_record:
+                    comparison.old_ip_address = old_record.ip_address
+                    comparison.old_switch_hostname = old_record.switch_hostname
+                    comparison.old_interface_name = old_record.interface_name
+                    comparison.old_vlan_id = old_record.vlan_id
+                    comparison.old_speed = old_record.speed
+                    comparison.old_duplex = old_record.duplex
+                    comparison.old_link_status = old_record.link_status
+                    comparison.old_ping_reachable = old_record.ping_reachable
+                    comparison.old_acl_passes = old_record.acl_passes
+
+                if new_record:
+                    comparison.new_ip_address = new_record.ip_address
+                    comparison.new_switch_hostname = new_record.switch_hostname
+                    comparison.new_interface_name = new_record.interface_name
+                    comparison.new_vlan_id = new_record.vlan_id
+                    comparison.new_speed = new_record.speed
+                    comparison.new_duplex = new_record.duplex
+                    comparison.new_link_status = new_record.link_status
+                    comparison.new_ping_reachable = new_record.ping_reachable
+                    comparison.new_acl_passes = new_record.acl_passes
+
+                comparison = self._compare_records(comparison, device_mappings)
+                comparisons.append(comparison)
+
+            # 計算統計
+            total = len(comparisons)
+            has_issues = sum(1 for c in comparisons if c.is_changed)
+            critical = sum(1 for c in comparisons if c.severity == "critical")
+            warning = sum(1 for c in comparisons if c.severity == "warning")
+
             # 按使用者分類統計
             by_user_category: dict[str, dict[str, Any]] = {}
-            
-            # 初始化分類統計
+
             for cat_id, cat_data in category_info.items():
                 by_user_category[str(cat_id)] = {
                     "name": cat_data["name"],
@@ -569,22 +787,14 @@ class ClientComparisonService:
                 "has_issues": 0,
                 "undetected": 0,
             }
-            
-            # 建立已偵測到的 MAC 集合
-            detected_macs = {
-                c.mac_address.upper() for c in comparisons if c.mac_address
-            }
-            
-            # 統計每個分類的異常數
+
+            detected_macs = {c.mac_address.upper() for c in comparisons if c.mac_address}
+
             for comp in comparisons:
                 normalized_mac = comp.mac_address.upper() if comp.mac_address else ""
                 cat_ids = mac_to_categories.get(normalized_mac, [])
-                
-                # 如果沒有分類，歸入未分類
                 if not cat_ids:
                     cat_ids = [None]
-                
-                # 統計到每個所屬分類
                 for cat_id in cat_ids:
                     cat_key = str(cat_id) if cat_id else "null"
                     if cat_key not in by_user_category:
@@ -592,8 +802,7 @@ class ClientComparisonService:
                     by_user_category[cat_key]["total"] += 1
                     if comp.is_changed:
                         by_user_category[cat_key]["has_issues"] += 1
-            
-            # 統計分類成員中未偵測到的 MAC（未偵測也算異常！）
+
             for mac, cat_ids in mac_to_categories.items():
                 if mac not in detected_macs:
                     for cat_id in cat_ids:
@@ -602,22 +811,21 @@ class ClientComparisonService:
                             by_user_category[cat_key]["total"] += 1
                             by_user_category[cat_key]["undetected"] += 1
                             by_user_category[cat_key]["has_issues"] += 1
-            
-            # 計算 normal（正常數 = 總數 - 異常數）
+
             for cat_key in by_user_category:
                 cat_data = by_user_category[cat_key]
                 cat_data["normal"] = cat_data["total"] - cat_data["has_issues"]
-            
+
             statistics.append({
-                "timestamp": tp_data["timestamp"],
-                "label": tp_data["label"],
-                "total": all_summary["total"],
-                "has_issues": all_summary["has_issues"],
-                "critical": all_summary["critical"],
-                "warning": all_summary["warning"],
+                "timestamp": tp.isoformat(),
+                "label": tp.strftime("%Y-%m-%d %H:%M:%S"),
+                "total": total,
+                "has_issues": has_issues,
+                "critical": critical,
+                "warning": warning,
                 "by_user_category": by_user_category,
             })
-        
+
         return statistics
     
     async def _generate_comparisons_at_time(

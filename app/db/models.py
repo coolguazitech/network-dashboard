@@ -55,8 +55,54 @@ class Switch(Base):
         onupdate=func.now(),
     )
 
+    # Relationships
+    interfaces: Mapped[list["Interface"]] = relationship(
+        "Interface",
+        back_populates="switch",
+        cascade="all, delete-orphan",
+    )
+
     def __repr__(self) -> str:
         return f"<Switch {self.hostname}>"
+
+
+class Interface(Base):
+    """Network interface model."""
+
+    __tablename__ = "interfaces"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    switch_id: Mapped[int] = mapped_column(
+        ForeignKey("switches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(100), index=True)
+    interface_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    admin_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    oper_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    speed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    has_transceiver: Mapped[bool] = mapped_column(default=False)
+    transceiver_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    # Relationships
+    switch: Mapped["Switch"] = relationship("Switch", back_populates="interfaces")
+
+    __table_args__ = (
+        UniqueConstraint("switch_id", "name", name="uq_interface_switch_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Interface {self.name}>"
 
 
 class UplinkExpectation(Base):

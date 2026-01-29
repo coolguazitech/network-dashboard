@@ -57,6 +57,12 @@ async def get_timepoints(
 @router.get("/statistics/{maintenance_id}")
 async def get_statistics(
     maintenance_id: str,
+    max_timepoints: int = Query(
+        default=10,
+        ge=1,
+        le=100,
+        description="最大時間點數量（預設 10，最多 100）",
+    ),
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
@@ -68,10 +74,14 @@ async def get_statistics(
     - 嚴重問題數量
     - 警告數量
     - 不斷電機台數量
+
+    使用 max_timepoints 參數控制回傳的時間點數量，
+    過多時間點會影響效能。
     """
     statistics = await comparison_service.get_statistics(
         maintenance_id=maintenance_id,
         session=session,
+        max_timepoints=max_timepoints,
     )
     return {
         "maintenance_id": maintenance_id,

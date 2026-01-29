@@ -8,13 +8,15 @@ Client data parsers.
     parser = MacTableParser()
     entries = parser.parse(raw_output)
 
-填寫說明：
-    每個 parser 的 parse() 方法目前是 TODO placeholder。
-    當 Fetcher 實作完成後，根據 Fetcher 的實際回傳格式填入解析邏輯。
+格式說明：
+    所有 Mock Fetcher 都回傳 CSV 格式，第一行為 header。
+    各 parser 負責解析對應格式並轉換為 Pydantic 模型。
 """
 from __future__ import annotations
 
+import csv
 from abc import ABC, abstractmethod
+from io import StringIO
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -46,17 +48,38 @@ class MacTableParser(BaseFetcherParser):
     """
     解析 Fetcher `get_mac_table` 的回傳。
 
-    Fetcher 回傳: 該 switch 上所有 MAC 地址及其所在 port / VLAN。
+    Fetcher 回傳格式 (CSV):
+        MAC,Interface,VLAN
+        AA:BB:CC:XX:XX:XX,GE1/0/1,100
+
     產出: list[MacTableData]
     用途: 建立 MAC → (interface, vlan) 對應，作為 ClientRecord 的基礎。
     """
 
     def parse(self, raw_output: str) -> list[MacTableData]:
-        # TODO: 根據 Fetcher 實際回傳格式實作解析邏輯
-        # 預期每筆包含: mac_address, interface_name, vlan_id
-        raise NotImplementedError(
-            "MacTableParser.parse() 需等 Fetcher 完成後實作"
-        )
+        if not raw_output or not raw_output.strip():
+            return []
+
+        entries: list[MacTableData] = []
+        reader = csv.DictReader(StringIO(raw_output))
+
+        for row in reader:
+            mac = row.get("MAC", "").strip()
+            interface = row.get("Interface", "").strip()
+            vlan_str = row.get("VLAN", "").strip()
+
+            if not mac or not interface:
+                continue
+
+            vlan_id = int(vlan_str) if vlan_str.isdigit() else None
+
+            entries.append(MacTableData(
+                mac_address=mac,
+                interface_name=interface,
+                vlan_id=vlan_id,
+            ))
+
+        return entries
 
 
 # ── ARP Table ────────────────────────────────────────────────────
@@ -66,17 +89,34 @@ class ArpParser(BaseFetcherParser):
     """
     解析 Fetcher `get_arp_table` 的回傳。
 
-    Fetcher 回傳: 該 switch 上的 ARP 表（MAC ↔ IP 對應）。
+    Fetcher 回傳格式 (CSV):
+        IP,MAC
+        10.0.1.101,AA:BB:CC:XX:XX:XX
+
     產出: list[ArpData]
     用途: 為 MAC 地址關聯 IP 地址。
     """
 
     def parse(self, raw_output: str) -> list[ArpData]:
-        # TODO: 根據 Fetcher 實際回傳格式實作解析邏輯
-        # 預期每筆包含: ip_address, mac_address
-        raise NotImplementedError(
-            "ArpParser.parse() 需等 Fetcher 完成後實作"
-        )
+        if not raw_output or not raw_output.strip():
+            return []
+
+        entries: list[ArpData] = []
+        reader = csv.DictReader(StringIO(raw_output))
+
+        for row in reader:
+            ip = row.get("IP", "").strip()
+            mac = row.get("MAC", "").strip()
+
+            if not ip or not mac:
+                continue
+
+            entries.append(ArpData(
+                ip_address=ip,
+                mac_address=mac,
+            ))
+
+        return entries
 
 
 # ── Interface Status ─────────────────────────────────────────────
@@ -86,17 +126,38 @@ class InterfaceStatusParser(BaseFetcherParser):
     """
     解析 Fetcher `get_interface_status` 的回傳。
 
-    Fetcher 回傳: 該 switch 上所有介面的狀態 / 速率 / 雙工。
+    Fetcher 回傳格式 (CSV):
+        Interface,Status,Speed,Duplex
+        GE1/0/1,UP,10G,full
+
     產出: list[InterfaceStatusData]
     用途: 填入 ClientRecord 的 speed, duplex, link_status。
     """
 
     def parse(self, raw_output: str) -> list[InterfaceStatusData]:
-        # TODO: 根據 Fetcher 實際回傳格式實作解析邏輯
-        # 預期每筆包含: interface_name, link_status, speed, duplex
-        raise NotImplementedError(
-            "InterfaceStatusParser.parse() 需等 Fetcher 完成後實作"
-        )
+        if not raw_output or not raw_output.strip():
+            return []
+
+        entries: list[InterfaceStatusData] = []
+        reader = csv.DictReader(StringIO(raw_output))
+
+        for row in reader:
+            interface = row.get("Interface", "").strip()
+            status = row.get("Status", "").strip()
+            speed = row.get("Speed", "").strip()
+            duplex = row.get("Duplex", "").strip()
+
+            if not interface:
+                continue
+
+            entries.append(InterfaceStatusData(
+                interface_name=interface,
+                link_status=status or None,
+                speed=speed or None,
+                duplex=duplex or None,
+            ))
+
+        return entries
 
 
 # ── ACL Number ───────────────────────────────────────────────────
@@ -106,18 +167,35 @@ class AclParser(BaseFetcherParser):
     """
     解析 Fetcher `get_acl_number` 的回傳。
 
-    Fetcher 回傳: 該 switch 上每個 port 套用的 ACL 編號。
-    （Fetcher 內部已處理 per-interface 迴圈，回傳聚合結果）
+    Fetcher 回傳格式 (CSV):
+        Interface,ACL
+        GE1/0/1,3001
+        GE1/0/2,
+
     產出: list[AclData]
     用途: 填入 ClientRecord 的 acl_rules_applied, acl_passes。
     """
 
     def parse(self, raw_output: str) -> list[AclData]:
-        # TODO: 根據 Fetcher 實際回傳格式實作解析邏輯
-        # 預期每筆包含: interface_name, acl_number (None = 未套用)
-        raise NotImplementedError(
-            "AclParser.parse() 需等 Fetcher 完成後實作"
-        )
+        if not raw_output or not raw_output.strip():
+            return []
+
+        entries: list[AclData] = []
+        reader = csv.DictReader(StringIO(raw_output))
+
+        for row in reader:
+            interface = row.get("Interface", "").strip()
+            acl = row.get("ACL", "").strip()
+
+            if not interface:
+                continue
+
+            entries.append(AclData(
+                interface_name=interface,
+                acl_number=acl if acl else None,
+            ))
+
+        return entries
 
 
 # ── Ping Many ────────────────────────────────────────────────────
@@ -127,14 +205,34 @@ class PingManyParser(BaseFetcherParser):
     """
     解析 Fetcher `ping_many` 的回傳。
 
-    Fetcher 回傳: 批量 ping 多個客戶端 IP 的結果。
+    Fetcher 回傳格式 (CSV):
+        IP,Reachable
+        10.0.1.101,true
+        10.0.1.102,false
+
     產出: list[PingManyData]
     用途: 填入 ClientRecord 的 ping_reachable。
     """
 
     def parse(self, raw_output: str) -> list[PingManyData]:
-        # TODO: 根據 Fetcher 實際回傳格式實作解析邏輯
-        # 預期每筆包含: ip_address, is_reachable
-        raise NotImplementedError(
-            "PingManyParser.parse() 需等 Fetcher 完成後實作"
-        )
+        if not raw_output or not raw_output.strip():
+            return []
+
+        entries: list[PingManyData] = []
+        reader = csv.DictReader(StringIO(raw_output))
+
+        for row in reader:
+            ip = row.get("IP", "").strip()
+            reachable_str = row.get("Reachable", "").strip().lower()
+
+            if not ip:
+                continue
+
+            is_reachable = reachable_str in ("true", "1", "yes")
+
+            entries.append(PingManyData(
+                ip_address=ip,
+                is_reachable=is_reachable,
+            ))
+
+        return entries
