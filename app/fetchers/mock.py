@@ -708,6 +708,51 @@ class MockPingManyFetcher(BaseFetcher):
         return FetchResult(raw_output="\n".join(lines))
 
 
+class MockGNMSPingFetcher(BaseFetcher):
+    """
+    Mock: GNMS Ping API - 批次 ping switches by tenant group.
+
+    從 ctx.params 取得：
+    - switch_ips: list[str] - 要 ping 的 switch IP 清單
+    - tenant_group: TenantGroup - 租戶群組
+
+    回傳 CSV 格式: IP,Reachable,Latency_ms
+    """
+
+    fetch_type = "gnms_ping"
+
+    INITIAL_FAILURE_RATE = 0.40  # 初始 40% 不可達
+    TARGET_FAILURE_RATE = 0.05   # 目標 5% 不可達
+
+    async def fetch(self, ctx: FetchContext) -> FetchResult:
+        tracker = MockTimeTracker()
+        elapsed = tracker.elapsed_seconds
+        converge_time = tracker.config.ping_converge_time
+
+        # 從 params 取得參數
+        switch_ips: list[str] = []
+        if ctx.params:
+            switch_ips = ctx.params.get("switch_ips", [])
+
+        lines = ["IP,Reachable,Latency_ms"]
+        for ip in switch_ips:
+            unreachable = should_fail(
+                elapsed=elapsed,
+                converge_time=converge_time,
+                initial_failure_rate=self.INITIAL_FAILURE_RATE,
+                target_failure_rate=self.TARGET_FAILURE_RATE,
+            )
+            if unreachable:
+                lines.append(f"{ip},false,")
+            else:
+                latency = round(random.uniform(1.0, 10.0), 2)
+                lines.append(f"{ip},true,{latency}")
+
+        return FetchResult(
+            raw_output="\n".join(lines),
+        )
+
+
 # ══════════════════════════════════════════════════════════════════
 # Registration
 # ══════════════════════════════════════════════════════════════════
@@ -722,12 +767,13 @@ _ALL_MOCK_FETCHERS: list[type[BaseFetcher]] = [
     MockErrorCountFetcher,
     MockPortChannelFetcher,
     MockPingFetcher,
-    # Client (5)
+    # Client (6)
     MockMacTableFetcher,
     MockArpTableFetcher,
     MockInterfaceStatusFetcher,
     MockAclFetcher,
     MockPingManyFetcher,
+    MockGNMSPingFetcher,
 ]
 
 

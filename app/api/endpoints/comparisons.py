@@ -37,19 +37,27 @@ comparison_service = ClientComparisonService()
 @router.get("/timepoints/{maintenance_id}")
 async def get_timepoints(
     maintenance_id: str,
+    max_days: int = Query(
+        default=7,
+        ge=1,
+        le=30,
+        description="時間範圍（天），預設 7 天",
+    ),
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
-    獲取指定維護 ID 的所有歷史時間點。
+    獲取指定維護 ID 的歷史時間點（限制在 max_days 天內）。
 
-    回傳所有採集資料的時間點列表，用於時間選擇器和圖表。
+    回傳採集資料的時間點列表，用於時間選擇器和圖表。
     """
     timepoints = await comparison_service.get_timepoints(
         maintenance_id=maintenance_id,
         session=session,
+        max_days=max_days,
     )
     return {
         "maintenance_id": maintenance_id,
+        "max_days": max_days,
         "timepoints": timepoints,
     }
 
@@ -57,11 +65,15 @@ async def get_timepoints(
 @router.get("/statistics/{maintenance_id}")
 async def get_statistics(
     maintenance_id: str,
-    max_timepoints: int = Query(
-        default=10,
+    max_days: int = Query(
+        default=7,
         ge=1,
-        le=100,
-        description="最大時間點數量（預設 10，最多 100）",
+        le=30,
+        description="時間範圍（天），預設 7 天",
+    ),
+    hourly_sampling: bool = Query(
+        default=True,
+        description="是否每小時採樣（預設 True，最多 7×24=168 個時間點）",
     ),
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
@@ -73,18 +85,20 @@ async def get_statistics(
     - 有異常的客戶端數量
     - 嚴重問題數量
     - 警告數量
-    - 不斷電機台數量
 
-    使用 max_timepoints 參數控制回傳的時間點數量，
-    過多時間點會影響效能。
+    使用 max_days 參數控制時間範圍（預設 7 天）。
+    使用 hourly_sampling=True 時，每小時只保留最後一筆資料點。
     """
     statistics = await comparison_service.get_statistics(
         maintenance_id=maintenance_id,
         session=session,
-        max_timepoints=max_timepoints,
+        max_days=max_days,
+        hourly_sampling=hourly_sampling,
     )
     return {
         "maintenance_id": maintenance_id,
+        "max_days": max_days,
+        "hourly_sampling": hourly_sampling,
         "statistics": statistics,
     }
 

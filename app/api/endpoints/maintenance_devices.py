@@ -19,6 +19,7 @@ import io
 
 from app.db.base import get_async_session
 from app.db.models import MaintenanceDeviceList, DEVICE_VENDOR_OPTIONS
+from app.core.enums import TenantGroup
 import ipaddress
 
 
@@ -40,6 +41,8 @@ class DeviceCreate(BaseModel):
     new_vendor: str  # HPE, Cisco-IOS, Cisco-NXOS
     # 對應設定
     use_same_port: bool = True
+    # GNMS Ping tenant group
+    tenant_group: TenantGroup = TenantGroup.F18
     # 備註（選填）
     description: str | None = None
 
@@ -53,6 +56,7 @@ class DeviceUpdate(BaseModel):
     new_ip_address: str | None = None
     new_vendor: str | None = None
     use_same_port: bool | None = None
+    tenant_group: TenantGroup | None = None
     is_reachable: bool | None = None
     description: str | None = None
 
@@ -68,6 +72,7 @@ def serialize_device(d: MaintenanceDeviceList) -> dict:
         "new_ip_address": d.new_ip_address,
         "new_vendor": d.new_vendor,
         "use_same_port": d.use_same_port,
+        "tenant_group": d.tenant_group.value if d.tenant_group else TenantGroup.F18.value,
         "is_reachable": d.is_reachable,
         "last_check_at": (
             d.last_check_at.isoformat() if d.last_check_at else None
@@ -242,6 +247,15 @@ async def get_vendor_options() -> dict[str, Any]:
     }
 
 
+@router.get("/tenant-group-options")
+async def get_tenant_group_options() -> dict[str, Any]:
+    """取得 Tenant Group 選項列表。"""
+    return {
+        "success": True,
+        "options": [tg.value for tg in TenantGroup],
+    }
+
+
 @router.get("/{maintenance_id}")
 async def list_devices(
     maintenance_id: str,
@@ -409,6 +423,7 @@ async def create_device(
         new_ip_address=new_ip_address,
         new_vendor=new_vendor,
         use_same_port=data.use_same_port,
+        tenant_group=data.tenant_group,
         description=data.description.strip() if data.description else None,
     )
     session.add(device)
@@ -518,6 +533,8 @@ async def update_device(
         device.new_vendor = data.new_vendor.strip()
     if data.use_same_port is not None:
         device.use_same_port = data.use_same_port
+    if data.tenant_group is not None:
+        device.tenant_group = data.tenant_group
     if data.is_reachable is not None:
         device.is_reachable = data.is_reachable
         device.last_check_at = datetime.utcnow()
@@ -572,10 +589,11 @@ async def import_csv(
     從 CSV 匯入設備對應。
 
     CSV 格式：
-    old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,use_same_port,description
+    old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,use_same_port,tenant_group,description
 
     - vendor: HPE / Cisco-IOS / Cisco-NXOS（必填）
     - use_same_port: true/false（預設 true）
+    - tenant_group: F18/F6/AP/F14/F12（預設 F18）
     - description: 選填
     - 若設備不更換，新舊設備填同一台
 
@@ -718,6 +736,13 @@ async def import_csv(
         use_same_port_str = row.get('use_same_port', 'true').strip().lower()
         use_same_port = use_same_port_str in ('true', '1', 'yes', 't', '')
 
+        # 解析 tenant_group
+        tenant_group_str = row.get('tenant_group', 'F18').strip().upper()
+        try:
+            tenant_group = TenantGroup(tenant_group_str) if tenant_group_str else TenantGroup.F18
+        except ValueError:
+            tenant_group = TenantGroup.F18
+
         rows_to_process.append({
             'row_num': row_num,
             'old_hostname': old_hostname,
@@ -727,6 +752,7 @@ async def import_csv(
             'new_ip': new_ip,
             'new_vendor': new_vendor,
             'use_same_port': use_same_port,
+            'tenant_group': tenant_group,
             'description': row.get('description', '').strip() or None,
             'existing': existing,
         })
@@ -762,6 +788,7 @@ async def import_csv(
             existing.new_ip_address = item['new_ip']  # type: ignore[assignment]
             existing.new_vendor = item['new_vendor']  # type: ignore[assignment]
             existing.use_same_port = item['use_same_port']  # type: ignore[assignment]
+            existing.tenant_group = item['tenant_group']  # type: ignore[assignment]
             existing.description = item['description']  # type: ignore[assignment]
             updated += 1
         else:
@@ -775,6 +802,7 @@ async def import_csv(
                 new_ip_address=item['new_ip'],
                 new_vendor=item['new_vendor'],
                 use_same_port=item['use_same_port'],
+                tenant_group=item['tenant_group'],
                 description=item['description'],
             )
             session.add(device)
@@ -905,6 +933,7 @@ async def export_devices_csv(
         "new_ip_address",
         "new_vendor",
         "use_same_port",
+        "tenant_group",
         "is_reachable",
         "description",
     ])
@@ -919,6 +948,7 @@ async def export_devices_csv(
             d.new_ip_address,
             d.new_vendor,
             str(d.use_same_port).lower(),
+            d.tenant_group.value if d.tenant_group else TenantGroup.F18.value,
             str(d.is_reachable) if d.is_reachable is not None else "",
             d.description or "",
         ])

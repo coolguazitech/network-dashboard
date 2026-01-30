@@ -25,11 +25,14 @@
 
     <!-- Tab 內容 -->
     <div class="bg-slate-800/80 rounded border border-slate-600 p-4">
-      <!-- MAC 清單 Tab (歲修特定) -->
+      <!-- Client 清單 Tab (歲修特定) -->
       <div v-if="activeTab === 'maclist'" class="space-y-4">
         <div class="flex justify-between items-center">
-          <h3 class="text-white font-semibold">MAC 清單</h3>
+          <h3 class="text-white font-semibold">Client 清單</h3>
           <div class="flex gap-2">
+            <button @click="detectClients" :disabled="detecting" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-sm rounded transition disabled:opacity-50">
+              {{ detecting ? '🔄 偵測中...' : '🔍 偵測 Client' }}
+            </button>
             <button @click="showCategoryModal = true" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-sm rounded transition">
               🏷️ 管理分類
             </button>
@@ -41,7 +44,7 @@
               <input type="file" accept=".csv" class="hidden" @change="importMacList" />
             </label>
             <button @click="showAddMacModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
-              ➕ 新增 MAC
+              ➕ 新增 Client
             </button>
           </div>
         </div>
@@ -52,17 +55,33 @@
 
         <div v-else>
           <!-- 統計卡片 -->
-          <div class="grid grid-cols-3 gap-3 mb-4">
-            <div class="bg-slate-900/60 rounded p-3 text-center">
-              <div class="text-2xl font-bold text-slate-200">{{ macListStats.total }}</div>
+          <div class="grid grid-cols-7 gap-2 mb-4">
+            <div class="bg-slate-900/60 rounded p-2 text-center">
+              <div class="text-xl font-bold text-slate-200">{{ macListStats.total }}</div>
               <div class="text-xs text-slate-400">總數</div>
             </div>
-            <div class="bg-slate-900/60 rounded p-3 text-center">
-              <div class="text-2xl font-bold text-cyan-400">{{ macListStats.categorized }}</div>
+            <div class="bg-slate-900/60 rounded p-2 text-center">
+              <div class="text-xl font-bold text-green-400">{{ macListStats.detected || 0 }}</div>
+              <div class="text-xs text-slate-400">已偵測</div>
+            </div>
+            <div class="bg-slate-900/60 rounded p-2 text-center">
+              <div class="text-xl font-bold text-red-400">{{ macListStats.mismatch || 0 }}</div>
+              <div class="text-xs text-slate-400">不匹配</div>
+            </div>
+            <div class="bg-slate-900/60 rounded p-2 text-center">
+              <div class="text-xl font-bold text-slate-500">{{ macListStats.not_detected || 0 }}</div>
+              <div class="text-xs text-slate-400">未偵測</div>
+            </div>
+            <div class="bg-slate-900/60 rounded p-2 text-center">
+              <div class="text-xl font-bold text-slate-600">{{ macListStats.not_checked || 0 }}</div>
+              <div class="text-xs text-slate-400">未檢查</div>
+            </div>
+            <div class="bg-slate-900/60 rounded p-2 text-center">
+              <div class="text-xl font-bold text-cyan-400">{{ macListStats.categorized }}</div>
               <div class="text-xs text-slate-400">已分類</div>
             </div>
-            <div class="bg-slate-900/60 rounded p-3 text-center">
-              <div class="text-2xl font-bold text-amber-400">{{ macListStats.uncategorized }}</div>
+            <div class="bg-slate-900/60 rounded p-2 text-center">
+              <div class="text-xl font-bold text-amber-400">{{ macListStats.uncategorized }}</div>
               <div class="text-xs text-slate-400">未分類</div>
             </div>
           </div>
@@ -72,7 +91,7 @@
             <input
               v-model="macSearch"
               type="text"
-              placeholder="搜尋 MAC 或備註..."
+              placeholder="搜尋 MAC、IP 或備註..."
               class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
               @input="debouncedLoadMacList"
             />
@@ -83,8 +102,10 @@
             <div class="flex gap-3">
               <select v-model="macFilterStatus" @change="loadMacList" class="px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
                 <option value="all">全部狀態</option>
-                <option value="detected">🟢 可偵測</option>
-                <option value="undetected">⚪ 未偵測</option>
+                <option value="detected">🟢 已偵測</option>
+                <option value="mismatch">🔴 不匹配</option>
+                <option value="not_detected">⚪ 未偵測</option>
+                <option value="not_checked">⚙️ 未檢查</option>
               </select>
               <select v-model="macFilterCategory" @change="loadMacList" class="px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
                 <option value="all">全部分類</option>
@@ -110,7 +131,7 @@
             </div>
           </div>
 
-          <!-- MAC 列表 -->
+          <!-- Client 列表 -->
           <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
             <table class="min-w-full text-sm">
               <thead class="bg-slate-900/60 sticky top-0">
@@ -119,7 +140,9 @@
                     <input type="checkbox" v-model="selectAll" @change="toggleSelectAll" class="rounded border-slate-500" />
                   </th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">MAC 地址</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">偵測</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">IP 地址</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">Tenant</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">偵測狀態</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">分類</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">備註</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
@@ -131,9 +154,15 @@
                     <input type="checkbox" :value="mac.mac_address" v-model="selectedMacs" class="rounded border-slate-500" />
                   </td>
                   <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ mac.mac_address }}</td>
+                  <td class="px-3 py-2 font-mono text-slate-300 text-xs">{{ mac.ip_address }}</td>
                   <td class="px-3 py-2">
-                    <span v-if="mac.is_detected" class="text-green-400 text-xs">🟢</span>
-                    <span v-else class="text-slate-500 text-xs">⚪</span>
+                    <span class="px-1.5 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs">{{ mac.tenant_group || 'F18' }}</span>
+                  </td>
+                  <td class="px-3 py-2">
+                    <span v-if="mac.detection_status === 'detected'" class="text-green-400 text-xs">🟢 已偵測</span>
+                    <span v-else-if="mac.detection_status === 'mismatch'" class="text-red-400 text-xs">🔴 不匹配</span>
+                    <span v-else-if="mac.detection_status === 'not_detected'" class="text-slate-400 text-xs">⚪ 未偵測</span>
+                    <span v-else class="text-slate-500 text-xs">⚙️ 未檢查</span>
                   </td>
                   <td class="px-3 py-2">
                     <span v-if="mac.category_name" class="px-2 py-0.5 bg-cyan-600/30 text-cyan-300 rounded text-xs">{{ mac.category_name }}</span>
@@ -146,8 +175,8 @@
                   </td>
                 </tr>
                 <tr v-if="macList.length === 0">
-                  <td colspan="6" class="px-4 py-8 text-center text-slate-500">
-                    尚無 MAC 資料，請匯入 CSV 或手動新增
+                  <td colspan="8" class="px-4 py-8 text-center text-slate-500">
+                    尚無 Client 資料，請匯入 CSV 或手動新增
                   </td>
                 </tr>
               </tbody>
@@ -156,7 +185,7 @@
 
           <!-- 提示 -->
           <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：mac_address,description,category（description 和 category 選填，category 會自動建立）
+            💡 CSV 格式：mac_address,ip_address,tenant_group,description,category（tenant_group: F18/F6/AP/F14/F12，description 和 category 選填）
           </p>
         </div>
       </div>
@@ -251,6 +280,7 @@
                   </th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="3">舊設備</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="3">新設備</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">Tenant</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">同埠</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">可達</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
@@ -263,6 +293,7 @@
                   <th class="px-2 py-1 text-left text-xs text-slate-500">Hostname</th>
                   <th class="px-2 py-1 text-left text-xs text-slate-500">IP</th>
                   <th class="px-2 py-1 text-left text-xs text-slate-500">廠商</th>
+                  <th class="px-2 py-1"></th>
                   <th class="px-2 py-1"></th>
                   <th class="px-2 py-1"></th>
                   <th class="px-2 py-1"></th>
@@ -280,6 +311,9 @@
                   <td class="px-2 py-2 font-mono text-slate-400 text-xs">{{ device.new_ip_address }}</td>
                   <td class="px-2 py-2 text-slate-400 text-xs">{{ device.new_vendor }}</td>
                   <td class="px-2 py-2">
+                    <span class="px-1.5 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs">{{ device.tenant_group || 'F18' }}</span>
+                  </td>
+                  <td class="px-2 py-2">
                     <span :class="device.use_same_port ? 'text-green-400' : 'text-slate-500'" class="text-xs">
                       {{ device.use_same_port ? '✓' : '✗' }}
                     </span>
@@ -295,7 +329,7 @@
                   </td>
                 </tr>
                 <tr v-if="deviceList.length === 0">
-                  <td colspan="10" class="px-4 py-8 text-center text-slate-500">
+                  <td colspan="11" class="px-4 py-8 text-center text-slate-500">
                     尚無設備資料，請匯入 CSV 或手動新增
                   </td>
                 </tr>
@@ -305,7 +339,7 @@
 
           <!-- 提示 -->
           <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,use_same_port,description（若不更換，新舊填同一台）
+            💡 CSV 格式：old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,use_same_port,tenant_group,description（若不更換，新舊填同一台；tenant_group: F18/F6/AP/F14/F12）
           </p>
         </div>
       </div>
@@ -339,20 +373,40 @@
       </div>
     </div>
 
-    <!-- 新增 MAC Modal -->
+    <!-- 新增 Client Modal -->
     <div v-if="showAddMacModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="showAddMacModal = false">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-96">
-        <h3 class="text-lg font-semibold text-white mb-4">新增 MAC</h3>
+      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[450px]">
+        <h3 class="text-lg font-semibold text-white mb-4">新增 Client</h3>
         <div class="space-y-4">
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm text-slate-400 mb-1">MAC 地址 <span class="text-red-400">*</span></label>
+              <input
+                v-model="newMac.mac_address"
+                type="text"
+                placeholder="AA:BB:CC:DD:EE:FF"
+                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 font-mono uppercase text-sm"
+              />
+            </div>
+            <div>
+              <label class="block text-sm text-slate-400 mb-1">IP 地址 <span class="text-red-400">*</span></label>
+              <input
+                v-model="newMac.ip_address"
+                type="text"
+                placeholder="192.168.1.100"
+                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 font-mono text-sm"
+              />
+            </div>
+          </div>
           <div>
-            <label class="block text-sm text-slate-400 mb-1">MAC 地址 <span class="text-red-400">*</span></label>
-            <input
-              v-model="newMac.mac_address"
-              type="text"
-              placeholder="AA:BB:CC:DD:EE:FF"
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 font-mono uppercase"
-            />
-            <p class="text-xs text-slate-500 mt-1">格式：XX:XX:XX:XX:XX:XX</p>
+            <label class="block text-sm text-slate-400 mb-1">Tenant Group <span class="text-red-400">*</span></label>
+            <select
+              v-model="newMac.tenant_group"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm"
+            >
+              <option v-for="tg in tenantGroupOptions" :key="tg" :value="tg">{{ tg }}</option>
+            </select>
+            <p class="text-xs text-slate-500 mt-1">用於 GNMS Ping 偵測 Client 可達性</p>
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">備註（選填）</label>
@@ -360,24 +414,23 @@
               v-model="newMac.description"
               type="text"
               placeholder="例如：1號機台"
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
             />
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">分類（選填）</label>
             <select
               v-model="newMac.category"
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm"
             >
               <option value="">無分類</option>
               <option v-for="cat in categories" :key="cat.id" :value="cat.name">{{ cat.name }}</option>
             </select>
-            <p class="text-xs text-slate-500 mt-1">可選擇現有分類，或輸入新分類名稱自動建立</p>
             <input
               v-model="newMac.category"
               type="text"
               placeholder="或輸入新分類名稱"
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 mt-2"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 mt-2 text-sm"
             />
           </div>
         </div>
@@ -385,7 +438,7 @@
           <button @click="showAddMacModal = false" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">
             取消
           </button>
-          <button @click="addMac" :disabled="!newMac.mac_address" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
+          <button @click="addMac" :disabled="!newMac.mac_address || !newMac.ip_address" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
             新增
           </button>
         </div>
@@ -478,9 +531,18 @@
               <span class="text-slate-300 text-sm">使用相同 Port 對應</span>
             </label>
           </div>
-          <div>
-            <label class="block text-xs text-slate-400 mb-1">備註（選填）</label>
-            <input v-model="newDevice.description" type="text" placeholder="例如：1F 機房" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Tenant Group <span class="text-red-400">*</span></label>
+              <select v-model="newDevice.tenant_group" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
+                <option v-for="tg in tenantGroupOptions" :key="tg" :value="tg">{{ tg }}</option>
+              </select>
+              <p class="text-xs text-slate-500 mt-1">用於 GNMS Ping API</p>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">備註（選填）</label>
+              <input v-model="newDevice.description" type="text" placeholder="例如：1F 機房" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            </div>
           </div>
         </div>
 
@@ -555,6 +617,7 @@
 
 <script>
 import CategoryModal from '../components/CategoryModal.vue';
+import { apiFetch, formatErrorMessage, ErrorType } from '../utils/api.js';
 
 export default {
   name: 'Devices',
@@ -563,9 +626,11 @@ export default {
   data() {
     return {
       loading: false,
+      macLoading: false,
+      deviceLoading: false,
       activeTab: 'maclist',
       tabs: [
-        { id: 'maclist', name: 'MAC 清單', icon: '📋', scope: 'maintenance' },
+        { id: 'maclist', name: 'Client 清單', icon: '📋', scope: 'maintenance' },
         { id: 'devices', name: '設備清單', icon: '🖥️', scope: 'maintenance' },
       ],
 
@@ -580,14 +645,21 @@ export default {
       selectedDevices: [],
       deviceSelectAll: false,
 
-      // MAC 清單
+      // Client 清單 (原 MAC 清單)
       macList: [],
-      macListStats: { total: 0, categorized: 0, uncategorized: 0 },
+      macListStats: {
+        total: 0, categorized: 0, uncategorized: 0,
+        detected: 0, mismatch: 0, not_detected: 0, not_checked: 0,
+      },
       macSearch: '',
       macFilterStatus: 'all',
       macFilterCategory: 'all',
       showAddMacModal: false,
-      newMac: { mac_address: '', description: '', category: '' },
+      newMac: {
+        mac_address: '', ip_address: '', tenant_group: 'F18',
+        description: '', category: '',
+      },
+      detecting: false,  // 偵測中狀態
       macSearchTimeout: null,
       categories: [],
       showSetCategoryModal: false,
@@ -604,11 +676,12 @@ export default {
       // Modal 控制
       showAddDeviceModal: false,
       editingDevice: false,  // 區分新增/編輯模式
+      tenantGroupOptions: ['F18', 'F6', 'AP', 'F14', 'F12'],  // Tenant Group 選項
       newDevice: {
         id: null,
         old_hostname: '', old_ip_address: '', old_vendor: 'HPE',
         new_hostname: '', new_ip_address: '', new_vendor: 'HPE',
-        use_same_port: true, description: ''
+        use_same_port: true, tenant_group: 'F18', description: ''
       },
 
       // 通用訊息 Modal
@@ -677,6 +750,7 @@ export default {
     async loadMacList() {
       if (!this.selectedMaintenanceId) return;
 
+      this.macLoading = true;
       try {
         // 使用 detailed 端點獲取完整資訊
         const params = new URLSearchParams();
@@ -693,6 +767,8 @@ export default {
         }
       } catch (e) {
         console.error('載入 MAC 清單失敗:', e);
+      } finally {
+        this.macLoading = false;
       }
     },
 
@@ -778,32 +854,86 @@ export default {
       }
     },
 
+    // 搜尋輸入驗證與清理
+    sanitizeSearchInput(input) {
+      if (!input) return '';
+      // 移除潛在危險字元，只保留安全的搜尋字元
+      // 允許：字母、數字、空格、點、冒號、橫線、底線
+      let sanitized = input.trim();
+      // 限制長度（最多 100 字元）
+      if (sanitized.length > 100) {
+        sanitized = sanitized.substring(0, 100);
+      }
+      // 移除控制字元和特殊字元
+      sanitized = sanitized.replaceAll(/[<>'"\\]/g, '');
+      return sanitized;
+    },
+
     debouncedLoadMacList() {
       if (this.macSearchTimeout) {
         clearTimeout(this.macSearchTimeout);
       }
+      // 清理搜尋輸入
+      this.macSearch = this.sanitizeSearchInput(this.macSearch);
       this.macSearchTimeout = setTimeout(() => {
         this.loadMacList();
       }, 300);
     },
 
+    // CSV 檔案驗證
+    validateCsvFile(file) {
+      if (!file) return { valid: false, error: '請選擇檔案' };
+
+      // 檢查副檔名
+      const fileName = file.name.toLowerCase();
+      if (!fileName.endsWith('.csv')) {
+        return { valid: false, error: '請上傳 CSV 格式的檔案（.csv）' };
+      }
+
+      // 檢查 MIME 類型（某些瀏覽器可能不準確，所以也接受空的）
+      const validTypes = ['text/csv', 'application/vnd.ms-excel', 'text/plain', ''];
+      if (!validTypes.includes(file.type)) {
+        return { valid: false, error: `不支援的檔案類型: ${file.type}` };
+      }
+
+      // 檢查檔案大小（最大 10MB）
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) {
+        return { valid: false, error: '檔案大小超過限制（最大 10MB）' };
+      }
+
+      return { valid: true };
+    },
+
     downloadMacTemplate() {
-      const csv = `mac_address,description,category
-AA:BB:CC:DD:EE:01,機台1號,Demo
-AA:BB:CC:DD:EE:02,機台2號,Demo
-AA:BB:CC:DD:EE:03,不斷電機台A,不斷電機台
-AA:BB:CC:DD:EE:04,,AMHS`;
+      const csv = `mac_address,ip_address,tenant_group,description,category
+AA:BB:CC:DD:EE:01,192.168.1.100,F18,機台1號,Demo
+AA:BB:CC:DD:EE:02,192.168.1.101,F6,機台2號,Demo
+AA:BB:CC:DD:EE:03,192.168.1.102,AP,不斷電機台A,不斷電機台
+AA:BB:CC:DD:EE:04,192.168.1.103,F14,,AMHS`;
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = 'mac_list_template.csv';
+      link.download = 'client_list_template.csv';
       link.click();
     },
 
     async importMacList(event) {
       const file = event.target.files[0];
-      if (!file || !this.selectedMaintenanceId) return;
+      if (!file || !this.selectedMaintenanceId) {
+        event.target.value = '';
+        return;
+      }
 
+      // 驗證 CSV 檔案
+      const validation = this.validateCsvFile(file);
+      if (!validation.valid) {
+        this.showMessage(validation.error, 'error');
+        event.target.value = '';
+        return;
+      }
+
+      this.macLoading = true;
       const formData = new FormData();
       formData.append('file', file);
 
@@ -824,7 +954,9 @@ AA:BB:CC:DD:EE:04,,AMHS`;
         }
       } catch (e) {
         console.error('MAC 匯入失敗:', e);
-        this.showMessage('匯入失敗', 'error');
+        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+      } finally {
+        this.macLoading = false;
       }
 
       event.target.value = '';
@@ -849,10 +981,11 @@ AA:BB:CC:DD:EE:04,,AMHS`;
     },
 
     async addMac() {
-      if (!this.newMac.mac_address || !this.selectedMaintenanceId) return;
+      if (!this.newMac.mac_address || !this.newMac.ip_address || !this.selectedMaintenanceId) return;
 
       // 標準化 MAC 格式並去除空白
       const mac = this.newMac.mac_address.trim().toUpperCase().replace(/-/g, ':');
+      const ip = this.newMac.ip_address.trim();
 
       // MAC format validation
       const macPattern = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
@@ -861,8 +994,16 @@ AA:BB:CC:DD:EE:04,,AMHS`;
         return;
       }
 
+      // IP format validation
+      const ipPattern = /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+      if (!ipPattern.test(ip)) {
+        this.showMessage('IP 地址格式錯誤，正確格式：例如 192.168.1.100', 'error');
+        return;
+      }
+
       const description = this.newMac.description?.trim() || null;
       const category = this.newMac.category?.trim() || null;
+      const tenantGroup = this.newMac.tenant_group || 'F18';
 
       try {
         const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}`, {
@@ -870,6 +1011,8 @@ AA:BB:CC:DD:EE:04,,AMHS`;
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             mac_address: mac,
+            ip_address: ip,
+            tenant_group: tenantGroup,
             description: description,
             category: category,
           }),
@@ -877,7 +1020,7 @@ AA:BB:CC:DD:EE:04,,AMHS`;
 
         if (res.ok) {
           this.showAddMacModal = false;
-          this.newMac = { mac_address: '', description: '', category: '' };
+          this.newMac = { mac_address: '', ip_address: '', tenant_group: 'F18', description: '', category: '' };
           await this.loadCategories();  // 重新載入分類（可能有新建的）
           await this.loadMacList();
           await this.loadMacStats();
@@ -886,7 +1029,7 @@ AA:BB:CC:DD:EE:04,,AMHS`;
           this.showMessage(err.detail || '新增失敗', 'error');
         }
       } catch (e) {
-        console.error('新增 MAC 失敗:', e);
+        console.error('新增 Client 失敗:', e);
         this.showMessage('新增失敗', 'error');
       }
     },
@@ -1008,17 +1151,58 @@ AA:BB:CC:DD:EE:04,,AMHS`;
       }
     },
 
-    // 分類更新後的回調（同時刷新 MAC 清單）
+    // 分類更新後的回調（同時刷新 Client 清單）
     async onCategoryRefresh() {
       await this.loadCategories();
       await this.loadMacList();
       await this.loadMacStats();
     },
 
+    // 偵測 Client 狀態
+    async detectClients() {
+      if (!this.selectedMaintenanceId || this.detecting) return;
+
+      this.detecting = true;
+      try {
+        const result = await apiFetch(
+          `/api/v1/mac-list/${this.selectedMaintenanceId}/detect`,
+          { method: 'POST' },
+          60000  // 偵測可能需要較長時間
+        );
+
+        if (result.ok) {
+          const data = result.data;
+          await this.loadMacList();
+          await this.loadMacStats();
+          this.showMessage(
+            `偵測完成\n已偵測: ${data.detected}\n不匹配: ${data.mismatch}\n未偵測: ${data.not_detected}`,
+            'success',
+            'Client 偵測結果'
+          );
+        } else {
+          const errorMsg = formatErrorMessage(result.error);
+          // 根據錯誤類型提供更具體的訊息
+          if (result.error?.type === ErrorType.TIMEOUT) {
+            this.showMessage('偵測請求超時，請稍後再試', 'error');
+          } else if (result.error?.type === ErrorType.NETWORK) {
+            this.showMessage('網路連線失敗，請檢查連線狀態', 'error');
+          } else {
+            this.showMessage(errorMsg, 'error');
+          }
+        }
+      } catch (e) {
+        console.error('Client 偵測失敗:', e);
+        this.showMessage('偵測過程發生錯誤', 'error');
+      } finally {
+        this.detecting = false;
+      }
+    },
+
     // ========== 設備清單方法 ==========
     async loadDeviceList() {
       if (!this.selectedMaintenanceId) return;
 
+      this.deviceLoading = true;
       try {
         const params = new URLSearchParams();
         if (this.deviceSearch) params.append('search', this.deviceSearch);
@@ -1040,6 +1224,8 @@ AA:BB:CC:DD:EE:04,,AMHS`;
         }
       } catch (e) {
         console.error('載入設備清單失敗:', e);
+      } finally {
+        this.deviceLoading = false;
       }
     },
 
@@ -1058,14 +1244,16 @@ AA:BB:CC:DD:EE:04,,AMHS`;
 
     debouncedLoadDeviceList() {
       if (this.deviceSearchTimeout) clearTimeout(this.deviceSearchTimeout);
+      // 清理搜尋輸入
+      this.deviceSearch = this.sanitizeSearchInput(this.deviceSearch);
       this.deviceSearchTimeout = setTimeout(() => this.loadDeviceList(), 300);
     },
 
     downloadDeviceTemplate() {
-      const csv = `old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,use_same_port,description
-OLD-SW-001,10.1.1.1,HPE,NEW-SW-001,10.1.1.101,HPE,TRUE,1F機房更換
-OLD-SW-002,10.1.1.2,Cisco-IOS,NEW-SW-002,10.1.1.102,Cisco-IOS,TRUE,2F機房更換
-SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,不更換設備`;
+      const csv = `old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,use_same_port,tenant_group,description
+OLD-SW-001,10.1.1.1,HPE,NEW-SW-001,10.1.1.101,HPE,TRUE,F18,1F機房更換
+OLD-SW-002,10.1.1.2,Cisco-IOS,NEW-SW-002,10.1.1.102,Cisco-IOS,TRUE,F6,2F機房更換
+SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,不更換設備`;
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
@@ -1075,8 +1263,20 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,不�
 
     async importDeviceList(event) {
       const file = event.target.files[0];
-      if (!file || !this.selectedMaintenanceId) return;
+      if (!file || !this.selectedMaintenanceId) {
+        event.target.value = '';
+        return;
+      }
 
+      // 驗證 CSV 檔案
+      const validation = this.validateCsvFile(file);
+      if (!validation.valid) {
+        this.showMessage(validation.error, 'error');
+        event.target.value = '';
+        return;
+      }
+
+      this.deviceLoading = true;
       const formData = new FormData();
       formData.append('file', file);
 
@@ -1096,7 +1296,9 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,不�
         }
       } catch (e) {
         console.error('設備匯入失敗:', e);
-        this.showMessage('匯入失敗', 'error');
+        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+      } finally {
+        this.deviceLoading = false;
       }
       event.target.value = '';
     },
@@ -1109,7 +1311,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,不�
         id: null,
         old_hostname: '', old_ip_address: '', old_vendor: 'HPE',
         new_hostname: '', new_ip_address: '', new_vendor: 'HPE',
-        use_same_port: true, description: ''
+        use_same_port: true, tenant_group: 'F18', description: ''
       };
     },
 
@@ -1132,55 +1334,45 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,不�
         return;
       }
 
-      try {
-        let res;
-        if (this.editingDevice && this.newDevice.id) {
-          // 編輯模式 - 使用 PUT
-          res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/${this.newDevice.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              old_hostname: this.newDevice.old_hostname.trim(),
-              old_ip_address: oldIp,
-              old_vendor: this.newDevice.old_vendor,
-              new_hostname: this.newDevice.new_hostname.trim(),
-              new_ip_address: newIp,
-              new_vendor: this.newDevice.new_vendor,
-              use_same_port: this.newDevice.use_same_port,
-              description: this.newDevice.description?.trim() || null,
-            }),
-          });
-        } else {
-          // 新增模式 - 使用 POST
-          res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              old_hostname: this.newDevice.old_hostname.trim(),
-              old_ip_address: oldIp,
-              old_vendor: this.newDevice.old_vendor,
-              new_hostname: this.newDevice.new_hostname.trim(),
-              new_ip_address: newIp,
-              new_vendor: this.newDevice.new_vendor,
-              use_same_port: this.newDevice.use_same_port,
-              description: this.newDevice.description?.trim() || null,
-            }),
-          });
-        }
+      const payload = {
+        old_hostname: this.newDevice.old_hostname.trim(),
+        old_ip_address: oldIp,
+        old_vendor: this.newDevice.old_vendor,
+        new_hostname: this.newDevice.new_hostname.trim(),
+        new_ip_address: newIp,
+        new_vendor: this.newDevice.new_vendor,
+        use_same_port: this.newDevice.use_same_port,
+        tenant_group: this.newDevice.tenant_group,
+        description: this.newDevice.description?.trim() || null,
+      };
 
-        if (res.ok) {
-          const msg = this.editingDevice ? '設備對應更新成功' : '設備對應新增成功';
-          this.closeDeviceModal();
-          await this.loadDeviceList();
-          await this.loadDeviceStats();
-          this.showMessage(msg, 'success');
+      const isEdit = this.editingDevice && this.newDevice.id;
+      const url = isEdit
+        ? `/api/v1/maintenance-devices/${this.selectedMaintenanceId}/${this.newDevice.id}`
+        : `/api/v1/maintenance-devices/${this.selectedMaintenanceId}`;
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const result = await apiFetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (result.ok) {
+        const msg = isEdit ? '設備對應更新成功' : '設備對應新增成功';
+        this.closeDeviceModal();
+        await this.loadDeviceList();
+        await this.loadDeviceStats();
+        this.showMessage(msg, 'success');
+      } else {
+        const errorMsg = formatErrorMessage(result.error);
+        if (result.error?.type === ErrorType.VALIDATION) {
+          this.showMessage(`資料驗證失敗：${errorMsg}`, 'error');
+        } else if (result.error?.type === ErrorType.NETWORK) {
+          this.showMessage('網路連線失敗，請檢查連線狀態', 'error');
         } else {
-          const err = await res.json();
-          this.showMessage(err.detail || (this.editingDevice ? '更新失敗' : '新增失敗'), 'error');
+          this.showMessage(errorMsg || (this.editingDevice ? '更新失敗' : '新增失敗'), 'error');
         }
-      } catch (e) {
-        console.error('儲存設備失敗:', e);
-        this.showMessage('儲存失敗', 'error');
       }
     },
 
@@ -1195,6 +1387,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,不�
         new_ip_address: device.new_ip_address || '',
         new_vendor: device.new_vendor || 'HPE',
         use_same_port: device.use_same_port ?? true,
+        tenant_group: device.tenant_group || 'F18',
         description: device.description || '',
       };
       this.editingDevice = true;

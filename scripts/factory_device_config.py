@@ -128,30 +128,63 @@ def get_active_device_list() -> list[dict[str, str]]:
     return devices
 
 
-def generate_mac_addresses() -> dict[str, list[tuple[str, str]]]:
-    """Generate 100 MAC addresses with descriptions.
+def generate_mac_addresses() -> dict[str, list[tuple[str, str, str, str]]]:
+    """Generate 100 MAC addresses with IP, tenant_group, and descriptions.
 
     Uses valid hex octets for category identification:
-      EQP    → E0
-      AMHS   → A0
-      SNR    → B0
-      OTHERS → C0
+      EQP    → E0, IP: 192.168.10.x, tenant_group: F18
+      AMHS   → A0, IP: 192.168.20.x, tenant_group: F6
+      SNR    → B0, IP: 192.168.30.x, tenant_group: AP
+      OTHERS → C0, IP: 192.168.40.x, tenant_group: F14/F12
+
+    Returns:
+        {category_name: [(mac, ip, tenant_group, description), ...]}
     """
-    macs: dict[str, list[tuple[str, str]]] = {}
+    macs: dict[str, list[tuple[str, str, str, str]]] = {}
+
+    # EQP: 50 MACs, IP range 192.168.10.x, tenant_group: F18
     macs["EQP"] = [
-        (f"00:11:22:E0:{i:02X}:{i:02X}", f"EQP Equipment {i:02d}")
+        (
+            f"00:11:22:E0:{i:02X}:{i:02X}",
+            f"192.168.10.{i}",
+            "F18",
+            f"EQP Equipment {i:02d}",
+        )
         for i in range(1, 51)
     ]
+
+    # AMHS: 25 MACs, IP range 192.168.20.x, tenant_group: F6
     macs["AMHS"] = [
-        (f"00:11:22:A0:{i:02X}:{i:02X}", f"AMHS Robot {i:02d}")
+        (
+            f"00:11:22:A0:{i:02X}:{i:02X}",
+            f"192.168.20.{i}",
+            "F6",
+            f"AMHS Robot {i:02d}",
+        )
         for i in range(1, 26)
     ]
+
+    # SNR: 15 MACs, IP range 192.168.30.x, tenant_group: AP
     macs["SNR"] = [
-        (f"00:11:22:B0:{i:02X}:{i:02X}", f"SNR Storage {i:02d}")
+        (
+            f"00:11:22:B0:{i:02X}:{i:02X}",
+            f"192.168.30.{i}",
+            "AP",
+            f"SNR Storage {i:02d}",
+        )
         for i in range(1, 16)
     ]
+
+    # OTHERS: 10 MACs, IP range 192.168.40.x, tenant_group: F14/F12 alternating
+    tenant_others = ["F14", "F12"]
     macs["OTHERS"] = [
-        (f"00:11:22:C0:{i:02X}:{i:02X}", f"Other Device {i:02d}")
+        (
+            f"00:11:22:C0:{i:02X}:{i:02X}",
+            f"192.168.40.{i}",
+            tenant_others[i % 2],
+            f"Other Device {i:02d}",
+        )
         for i in range(1, 11)
     ]
+
     return macs

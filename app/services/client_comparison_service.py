@@ -299,10 +299,56 @@ class ClientComparisonService:
 
         return comparisons
 
+    def _normalize_speed(self, speed: str | None) -> int | None:
+        """將速度值標準化為 Mbps 數值，用於比較。
+
+        支援的格式：
+        - "10M", "100M", "1000M" → 對應的 Mbps 數值
+        - "1G", "10G", "25G", "40G", "100G" → 轉換為 Mbps
+        - "auto" → 特殊處理（不轉換）
+
+        這樣 "1G" 和 "1000M" 會被視為相同的值。
+        """
+        if speed is None:
+            return None
+
+        speed_str = str(speed).strip().upper()
+
+        if not speed_str:
+            return None
+
+        # 處理 "auto" 或其他非數值格式
+        if speed_str == "AUTO":
+            return -1  # 特殊值表示 auto
+
+        # 嘗試解析 G（Gbps）格式
+        if speed_str.endswith("G"):
+            try:
+                num = int(speed_str[:-1])
+                return num * 1000  # 轉換為 Mbps
+            except ValueError:
+                pass
+
+        # 嘗試解析 M（Mbps）格式
+        if speed_str.endswith("M"):
+            try:
+                return int(speed_str[:-1])
+            except ValueError:
+                pass
+
+        # 嘗試直接解析為數字（假設為 Mbps）
+        try:
+            return int(speed_str)
+        except ValueError:
+            pass
+
+        # 無法解析，返回 None
+        return None
+
     def _find_differences(self, comparison: ClientComparison) -> dict[str, Any]:
         """找出比較記錄中的差異。"""
         differences: dict[str, Any] = {}
-        
+
         # 定義要比較的欄位對（old vs new）
         fields_to_compare = [
             ("old_switch_hostname", "new_switch_hostname", "switch_hostname"),
@@ -315,11 +361,25 @@ class ClientComparisonService:
             ("old_acl_passes", "new_acl_passes", "acl_passes"),
             ("old_ip_address", "new_ip_address", "ip_address"),
         ]
-        
+
         for old_field, new_field, field_name in fields_to_compare:
             old_value = getattr(comparison, old_field, None)
             new_value = getattr(comparison, new_field, None)
-            
+
+            # 對於 speed 欄位，使用標準化比較（1G == 1000M）
+            if field_name == "speed":
+                old_normalized = self._normalize_speed(old_value)
+                new_normalized = self._normalize_speed(new_value)
+
+                # 只有都有值且標準化後不同才算變化
+                if old_normalized is not None and new_normalized is not None:
+                    if old_normalized != new_normalized:
+                        differences[field_name] = {
+                            "old": old_value,
+                            "new": new_value,
+                        }
+                continue
+
             # 檢查是否有實際變化（忽略 None 值的比較）
             if old_value != new_value:
                 # 對於布林值，只有都不為 None 時才比較
@@ -335,7 +395,7 @@ class ClientComparisonService:
                         "old": old_value,
                         "new": new_value,
                     }
-        
+
         return differences
     
     def _calculate_severity(
@@ -557,13 +617,23 @@ class ClientComparisonService:
         self,
         maintenance_id: str,
         session: AsyncSession,
+        max_days: int = 7,
     ) -> list[dict[str, Any]]:
-        """獲取 NEW 階段的歷史時間點。
+        """獲取 NEW 階段的歷史時間點（限制在 max_days 天內）。
 
         只返回 NEW phase 的時間點，確保統計圖表只顯示
         有歲修後資料可比較的時間點。
+
+        Args:
+            maintenance_id: 歲修 ID
+            session: DB session
+            max_days: 最大天數限制（預設 7 天）
         """
         from sqlalchemy import func
+        from datetime import timedelta, timezone
+
+        # 計算截止時間（max_days 天前）
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
 
         stmt = (
             select(
@@ -573,13 +643,14 @@ class ClientComparisonService:
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
                 ClientRecord.phase == MaintenancePhase.NEW,
+                ClientRecord.collected_at >= cutoff,  # 限制在 max_days 天內
             )
             .order_by('timepoint')
         )
-        
+
         result = await session.execute(stmt)
         timepoints = result.scalars().all()
-        
+
         return [
             {
                 "timestamp": tp.isoformat(),
@@ -592,7 +663,8 @@ class ClientComparisonService:
         self,
         maintenance_id: str,
         session: AsyncSession,
-        max_timepoints: int = 10,
+        max_days: int = 7,
+        hourly_sampling: bool = True,
     ) -> list[dict[str, Any]]:
         """獲取每個時間點的統計資料。
 
@@ -604,16 +676,24 @@ class ClientComparisonService:
         Args:
             maintenance_id: 歲修 ID
             session: DB session
-            max_timepoints: 最大時間點數量（預設 10，避免過多時間點造成效能問題）
+            max_days: 最大天數限制（預設 7 天，最多 168 個小時點）
+            hourly_sampling: 是否每小時採樣（預設 True，每小時取最後一筆）
         """
         from sqlalchemy import func
+        from datetime import timedelta, timezone
         from app.db.models import ClientCategory, ClientCategoryMember, MaintenanceDeviceList
 
-        # 檢查是否有 ClientRecord 資料
+        # 計算截止時間（max_days 天前）
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
+
+        # 檢查是否有 ClientRecord 資料（在時間範圍內）
         record_count_stmt = (
             select(func.count())
             .select_from(ClientRecord)
-            .where(ClientRecord.maintenance_id == maintenance_id)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.collected_at >= cutoff,
+            )
         )
         record_count_result = await session.execute(record_count_stmt)
         record_count = record_count_result.scalar() or 0
@@ -652,12 +732,13 @@ class ClientComparisonService:
             if mac_upper and mac_upper not in old_by_mac:
                 old_by_mac[mac_upper] = record
 
-        # 3. 載入所有 NEW 階段記錄（按 MAC+時間排序）
+        # 3. 載入所有 NEW 階段記錄（按 MAC+時間排序，限制在 cutoff 之後）
         new_stmt = (
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
                 ClientRecord.phase == MaintenancePhase.NEW,
+                ClientRecord.collected_at >= cutoff,  # 限制在 max_days 天內
             )
             .order_by(ClientRecord.collected_at, ClientRecord.mac_address)
         )
@@ -674,16 +755,24 @@ class ClientComparisonService:
         if not all_timepoints_dt:
             return await self._get_static_statistics(maintenance_id, session)
 
-        # 如果時間點過多，進行採樣
-        if len(all_timepoints_dt) > max_timepoints:
-            step = (len(all_timepoints_dt) - 1) / (max_timepoints - 1)
-            indices = [int(i * step) for i in range(max_timepoints)]
-            sampled_timepoints = [all_timepoints_dt[i] for i in indices]
+        # 採樣策略
+        if hourly_sampling:
+            # 每小時取最後一筆（最多 7*24=168 個時間點）
+            hourly_buckets: dict[str, datetime] = {}
+            for tp in all_timepoints_dt:
+                bucket_key = tp.strftime("%Y-%m-%d-%H")  # 年-月-日-時
+                hourly_buckets[bucket_key] = tp  # 保留該小時最後一筆
+            sampled_timepoints = sorted(hourly_buckets.values())
         else:
+            # 不採樣，使用所有時間點
             sampled_timepoints = all_timepoints_dt
 
-        # 5. 獲取使用者自訂分類和成員
-        cat_stmt = select(ClientCategory).where(ClientCategory.is_active == True)
+        # 5. 獲取使用者自訂分類和成員（只取該歲修的分類或全域分類）
+        cat_stmt = select(ClientCategory).where(
+            ClientCategory.is_active == True,  # noqa: E712
+            (ClientCategory.maintenance_id == maintenance_id)
+            | (ClientCategory.maintenance_id.is_(None))
+        )
         cat_result = await session.execute(cat_stmt)
         categories = cat_result.scalars().all()
 
@@ -1073,11 +1162,15 @@ class ClientComparisonService:
             default=datetime.utcnow()
         )
         
-        # 獲取使用者自訂分類和成員
-        cat_stmt = select(ClientCategory).where(ClientCategory.is_active == True)
+        # 獲取使用者自訂分類和成員（只取該歲修的分類或全域分類）
+        cat_stmt = select(ClientCategory).where(
+            ClientCategory.is_active == True,  # noqa: E712
+            (ClientCategory.maintenance_id == maintenance_id)
+            | (ClientCategory.maintenance_id.is_(None))
+        )
         cat_result = await session.execute(cat_stmt)
         categories = cat_result.scalars().all()
-        
+
         active_cat_ids = [c.id for c in categories]
         member_stmt = (
             select(ClientCategoryMember)
@@ -1175,3 +1268,34 @@ class ClientComparisonService:
                 "by_user_category": by_user_category,
             },
         ]
+
+
+async def cleanup_old_client_records(
+    maintenance_id: str,
+    retention_days: int,
+    session: AsyncSession,
+) -> int:
+    """
+    清理超過保留期限的 ClientRecord。
+
+    Args:
+        maintenance_id: 歲修 ID
+        retention_days: 保留天數
+        session: DB session
+
+    Returns:
+        刪除的記錄數量
+    """
+    from datetime import timedelta, timezone
+    from sqlalchemy import delete
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+    stmt = delete(ClientRecord).where(
+        ClientRecord.maintenance_id == maintenance_id,
+        ClientRecord.collected_at < cutoff,
+    )
+    result = await session.execute(stmt)
+    await session.commit()
+
+    return result.rowcount or 0

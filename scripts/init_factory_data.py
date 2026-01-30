@@ -42,7 +42,9 @@ from app.db.models import (
     ClientRecord,
     ClientComparison,
 )
-from app.core.enums import VendorType, PlatformType, SiteType
+from app.core.enums import (
+    ClientDetectionStatus, VendorType, PlatformType, SiteType, TenantGroup,
+)
 
 # Import shared device configuration
 from factory_device_config import (
@@ -332,7 +334,20 @@ async def create_maintenance_device_list(session):
 
     mappings_data = get_device_mappings()
 
-    for old_h, old_ip, new_h, new_ip in mappings_data:
+    # Tenant group options for round-robin assignment
+    tenant_groups = [TenantGroup.F18, TenantGroup.F6, TenantGroup.AP, TenantGroup.F14, TenantGroup.F12]
+
+    for idx, (old_h, old_ip, new_h, new_ip) in enumerate(mappings_data):
+        # Assign tenant_group based on device type or round-robin
+        device_type = old_h.split("-")[-1]
+        if device_type == "CORE":
+            tg = TenantGroup.F18
+        elif device_type == "AGG":
+            tg = TenantGroup.F6
+        else:
+            # Round-robin for edge devices
+            tg = tenant_groups[idx % len(tenant_groups)]
+
         device = MaintenanceDeviceList(
             maintenance_id=MAINTENANCE_ID,
             old_hostname=old_h,
@@ -342,18 +357,19 @@ async def create_maintenance_device_list(session):
             new_ip_address=new_ip,
             new_vendor="HPE",
             use_same_port=True,
+            tenant_group=tg,
             is_reachable=None,  # Will be set by data collection
             description=None,
         )
         session.add(device)
 
     await session.commit()
-    print(f"✓ Created {len(mappings_data)} entries in MaintenanceDeviceList")
+    print(f"✓ Created {len(mappings_data)} entries in MaintenanceDeviceList (with tenant_group)")
 
 
 async def create_mac_list(session):
-    """Create 100 MAC addresses and assign to categories."""
-    print("\n=== Phase 5: Creating MAC List ===")
+    """Create 100 Client entries (IP + MAC + tenant_group) and assign to categories."""
+    print("\n=== Phase 5: Creating Client List ===")
 
     stmt = select(ClientCategory).where(
         ClientCategory.maintenance_id == MAINTENANCE_ID
@@ -363,18 +379,24 @@ async def create_mac_list(session):
 
     all_macs = generate_mac_addresses()
 
-    total_macs = 0
-    for category_name, mac_list in all_macs.items():
-        for mac_address, description in mac_list:
+    total_clients = 0
+    for category_name, client_list in all_macs.items():
+        for mac_address, ip_address, tenant_group, description in client_list:
+            # Map tenant_group string to enum
+            tg_enum = TenantGroup(tenant_group)
+
             mac_entry = MaintenanceMacList(
                 maintenance_id=MAINTENANCE_ID,
                 mac_address=mac_address,
+                ip_address=ip_address,
+                tenant_group=tg_enum,
+                detection_status=ClientDetectionStatus.NOT_CHECKED,
                 description=description,
             )
             session.add(mac_entry)
 
         category = categories[category_name]
-        for mac_address, description in mac_list:
+        for mac_address, ip_address, tenant_group, description in client_list:
             member = ClientCategoryMember(
                 category_id=category.id,
                 mac_address=mac_address,
@@ -382,12 +404,12 @@ async def create_mac_list(session):
             )
             session.add(member)
 
-        total_macs += len(mac_list)
-        print(f"  ✓ Created {len(mac_list)} MACs for category "
+        total_clients += len(client_list)
+        print(f"  ✓ Created {len(client_list)} clients for category "
               f"{category_name}")
 
     await session.commit()
-    print(f"✓ Total {total_macs} MACs created and assigned to categories")
+    print(f"✓ Total {total_clients} clients created (IP + MAC + tenant_group)")
 
 
 async def create_uplink_expectations_db(session):
@@ -503,13 +525,13 @@ async def print_summary(session):
     for cat in categories:
         print(f"  - {cat.name}: {cat.description}")
 
-    # MACs
+    # Clients (MAC + IP + tenant_group)
     stmt = select(MaintenanceMacList).where(
         MaintenanceMacList.maintenance_id == MAINTENANCE_ID
     )
     result = await session.execute(stmt)
-    macs = result.scalars().all()
-    print(f"\nMAC Addresses: {len(macs)}")
+    clients = result.scalars().all()
+    print(f"\nClients (IP+MAC): {len(clients)}")
 
     # Switches
     stmt = select(Switch).where(

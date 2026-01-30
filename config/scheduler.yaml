@@ -1,87 +1,104 @@
 # =============================================================================
-# 排程設定檔
+# 排程設定檔（通用設定）
 # =============================================================================
-# 此檔案定義所有資料收集的排程任務
-# 每個 job 的 name 即為採集的資料類型
-# source: FNA (Factory Network Automation) / DNA (Device Network Automation)
-# brand: HPE / Cisco-IOS / Cisco-NXOS
+# 此檔案定義所有資料收集的排程任務，適用於「所有活躍歲修」
+# 每個 job 的 name 即為採集的資料類型 (fetch_type)
+#
+# source: 資料來源 API
+#   - DNA: Device Network Automation（設備層級資料）
+#   - FNA: Factory Network Automation（工廠層級資料）
+#   - GNMSPing: GNMS Ping 服務（批次 ping 檢查）
+#
+# brand: HPE / Cisco-IOS / Cisco-NXOS (選填)
+#
+# 注意：此設定檔不指定 maintenance_id，系統會自動對所有活躍歲修執行採集
 # =============================================================================
-
-maintenance_id: "TEST-100"    # APM ID
 
 jobs:
-  mac-table:
-    url:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 30   # seconds
+  # ---------------------------------------------------------------------------
+  # DNA/FNA 資料收集（設備層級）
+  # ---------------------------------------------------------------------------
+  mac_table:
+    source: DNA
+    interval: 30
     description: "MAC Table 採集"
 
-  arp-table:
-    url:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 30   # seconds
+  arp_table:
+    source: FNA
+    interval: 30
     description: "ARP Table 採集"
 
   transceiver:
-    url:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 30   # seconds
+    source: FNA
+    interval: 30
     description: "光模組 Tx/Rx 功率資料收集"
 
   version:
-    url:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 30   # seconds
+    source: DNA
+    interval: 30
     description: "韌體版本資訊收集"
 
   uplink:
-    url:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 30   # seconds
+    source: DNA
+    interval: 30
     description: "Uplink 鄰居拓撲收集"
 
   fan:
-    url:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 30   # seconds
+    source: DNA
+    interval: 30
     description: "設備風扇狀態收集"
 
   error_count:
-    url:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 30   # seconds
+    source: DNA
+    interval: 30
     description: "Interface 錯誤計數收集"
 
   power:
-    url:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 30   # seconds
+    source: DNA
+    interval: 30
     description: "設備電源供應器狀態收集"
 
-  ping:
-    url:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 30   # seconds
-    description: "新設備 Ping 連通性檢查"
-
   port_channel:
-    url:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 30   # seconds
+    source: FNA
+    interval: 30
     description: "Port-Channel 狀態及成員檢查"
 
+  # ---------------------------------------------------------------------------
+  # 設備 Ping（Switch 可達性檢查）
+  # ---------------------------------------------------------------------------
+  ping:
+    source: DNA
+    interval: 30
+    description: "設備可達性檢查（Switch Ping）"
+
+  # ---------------------------------------------------------------------------
+  # GNMSPing 資料收集（批次 ping）
+  # ---------------------------------------------------------------------------
+  gnms_ping:
+    source: GNMSPing
+    interval: 30
+    description: "GNMS Ping 連通性檢查（Client IP Ping by TenantGroup）"
+
+  # ---------------------------------------------------------------------------
+  # 客戶端資料收集（整合多種 Fetcher）
+  # ---------------------------------------------------------------------------
   client-collection:
-    source:        # FNA/DNA
-    brand:         # HPE/Cisco-IOS/Cisco-NXOS
-    interval: 60   # seconds
+    source: DNA
+    interval: 60
     description: "客戶端資料採集 (MAC/ARP/InterfaceStatus/ACL/Ping)"
+
+  # =============================================================================
+  # Mock 資料生成（測試用）
+  # =============================================================================
+  mock-client-generation:
+    interval: 60
+    enabled: true
+    description: "Mock 客戶端資料生成，模擬真實資料流（僅供測試）"
+
+  # =============================================================================
+  # 資料清理（刪除超過 7 天的舊資料）
+  # =============================================================================
+  cleanup-old-records:
+    interval: 3600
+    enabled: true
+    description: "清理超過 7 天的 ClientRecord 舊資料"

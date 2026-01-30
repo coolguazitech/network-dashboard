@@ -573,12 +573,18 @@
 </template>
 
 <script>
+import { apiFetch, formatErrorMessage, ErrorType } from '../utils/api.js';
+
 export default {
   name: 'Settings',
   inject: ['maintenanceId', 'refreshMaintenanceList'],
   data() {
     return {
       loading: false,
+      uplinkLoading: false,
+      versionLoading: false,
+      portChannelLoading: false,
+      arpLoading: false,
       activeTab: 'uplink',
       tabs: [
         { id: 'uplink', name: 'Uplink 期望', icon: '🔗', scope: 'maintenance' },
@@ -687,6 +693,45 @@ export default {
     }
   },
   methods: {
+    // CSV 檔案驗證
+    validateCsvFile(file) {
+      if (!file) return { valid: false, error: '請選擇檔案' };
+
+      const fileName = file.name.toLowerCase();
+      if (!fileName.endsWith('.csv')) {
+        return { valid: false, error: '請上傳 CSV 格式的檔案（.csv）' };
+      }
+
+      const validTypes = ['text/csv', 'application/vnd.ms-excel', 'text/plain', ''];
+      if (!validTypes.includes(file.type)) {
+        return { valid: false, error: `不支援的檔案類型: ${file.type}` };
+      }
+
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) {
+        return { valid: false, error: '檔案大小超過限制（最大 10MB）' };
+      }
+
+      return { valid: true };
+    },
+
+    // 主機名稱驗證
+    validateHostname(hostname) {
+      if (!hostname || !hostname.trim()) {
+        return { valid: false, error: '主機名稱不可為空' };
+      }
+      const value = hostname.trim();
+      // 允許：字母、數字、橫線、底線、點，長度 1-255
+      if (value.length > 255) {
+        return { valid: false, error: '主機名稱過長（最多 255 字元）' };
+      }
+      const hostnamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+      if (!hostnamePattern.test(value)) {
+        return { valid: false, error: '主機名稱格式錯誤：只允許字母、數字、點、底線和橫線，且須以字母或數字開頭' };
+      }
+      return { valid: true };
+    },
+
     // 歲修管理
     async loadMaintenanceList() {
       try {
@@ -701,12 +746,27 @@ export default {
     
     async createMaintenance() {
       if (!this.newMaintenance.id) return;
-      
+
+      // 歲修 ID 格式驗證（允許字母、數字、橫線，長度 2-50）
+      const idValue = this.newMaintenance.id.trim();
+      const idPattern = /^[A-Za-z0-9][\w-]{1,49}$/;
+      if (!idPattern.test(idValue)) {
+        this.showMessage('歲修 ID 格式錯誤：只允許字母、數字、底線和橫線，長度 2-50 字元，且須以字母或數字開頭', 'error');
+        return;
+      }
+
+      // 名稱長度驗證
+      const nameValue = this.newMaintenance.name?.trim() || '';
+      if (nameValue.length > 100) {
+        this.showMessage('歲修名稱過長，最多 100 字元', 'error');
+        return;
+      }
+
       try {
         const res = await fetch('/api/v1/maintenance', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.newMaintenance),
+          body: JSON.stringify({ id: idValue, name: nameValue }),
         });
         
         if (res.ok) {
@@ -894,18 +954,29 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
     
     async importUplinkList(event) {
       const file = event.target.files[0];
-      if (!file || !this.selectedMaintenanceId) return;
-      
+      if (!file || !this.selectedMaintenanceId) {
+        event.target.value = '';
+        return;
+      }
+
+      const validation = this.validateCsvFile(file);
+      if (!validation.valid) {
+        this.showMessage(validation.error, 'error');
+        event.target.value = '';
+        return;
+      }
+
+      this.uplinkLoading = true;
       const formData = new FormData();
       formData.append('file', file);
-      
+
       try {
         const res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/import-csv`, {
           method: 'POST',
           body: formData,
         });
         const data = await res.json();
-        
+
         if (res.ok) {
           await this.loadUplinkList();
           this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
@@ -914,7 +985,9 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
         }
       } catch (e) {
         console.error('Uplink 匯入失敗:', e);
-        this.showMessage('匯入失敗', 'error');
+        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+      } finally {
+        this.uplinkLoading = false;
       }
       event.target.value = '';
     },
@@ -946,16 +1019,31 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
     
     async saveUplink() {
       if (!this.newUplink.hostname || !this.newUplink.local_interface || !this.newUplink.expected_neighbor || !this.selectedMaintenanceId) return;
-      
+
+      // 驗證主機名稱
+      const hostnameCheck = this.validateHostname(this.newUplink.hostname);
+      if (!hostnameCheck.valid) {
+        this.showMessage(hostnameCheck.error, 'error');
+        return;
+      }
+
+      // 驗證鄰居主機名稱
+      const neighborCheck = this.validateHostname(this.newUplink.expected_neighbor);
+      if (!neighborCheck.valid) {
+        this.showMessage(`鄰居${neighborCheck.error}`, 'error');
+        return;
+      }
+
+      const payload = {
+        hostname: this.newUplink.hostname.trim(),
+        local_interface: this.newUplink.local_interface.trim(),
+        expected_neighbor: this.newUplink.expected_neighbor.trim(),
+        expected_interface: this.newUplink.expected_interface?.trim() || null,
+        description: this.newUplink.description?.trim() || null,
+      };
+
       try {
         let res;
-        const payload = {
-          hostname: this.newUplink.hostname.trim(),
-          local_interface: this.newUplink.local_interface.trim(),
-          expected_neighbor: this.newUplink.expected_neighbor.trim(),
-          expected_interface: this.newUplink.expected_interface?.trim() || null,
-          description: this.newUplink.description?.trim() || null,
-        };
         
         if (this.editingUplink && this.newUplink.id) {
           res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/${this.newUplink.id}`, {
@@ -1095,18 +1183,29 @@ CORE-SW-01,9.4(1),NX-OS版本`;
     
     async importVersionList(event) {
       const file = event.target.files[0];
-      if (!file || !this.selectedMaintenanceId) return;
-      
+      if (!file || !this.selectedMaintenanceId) {
+        event.target.value = '';
+        return;
+      }
+
+      const validation = this.validateCsvFile(file);
+      if (!validation.valid) {
+        this.showMessage(validation.error, 'error');
+        event.target.value = '';
+        return;
+      }
+
+      this.versionLoading = true;
       const formData = new FormData();
       formData.append('file', file);
-      
+
       try {
         const res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}/import-csv`, {
           method: 'POST',
           body: formData,
         });
         const data = await res.json();
-        
+
         if (res.ok) {
           await this.loadVersionList();
           this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
@@ -1115,7 +1214,9 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         }
       } catch (e) {
         console.error('版本期望匯入失敗:', e);
-        this.showMessage('匯入失敗', 'error');
+        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+      } finally {
+        this.versionLoading = false;
       }
       event.target.value = '';
     },
@@ -1288,18 +1389,29 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
     
     async importPortChannelList(event) {
       const file = event.target.files[0];
-      if (!file || !this.selectedMaintenanceId) return;
-      
+      if (!file || !this.selectedMaintenanceId) {
+        event.target.value = '';
+        return;
+      }
+
+      const validation = this.validateCsvFile(file);
+      if (!validation.valid) {
+        this.showMessage(validation.error, 'error');
+        event.target.value = '';
+        return;
+      }
+
+      this.portChannelLoading = true;
       const formData = new FormData();
       formData.append('file', file);
-      
+
       try {
         const res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/import-csv`, {
           method: 'POST',
           body: formData,
         });
         const data = await res.json();
-        
+
         if (res.ok) {
           await this.loadPortChannelList();
           this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
@@ -1308,7 +1420,9 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
         }
       } catch (e) {
         console.error('Port-Channel 匯入失敗:', e);
-        this.showMessage('匯入失敗', 'error');
+        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+      } finally {
+        this.portChannelLoading = false;
       }
       event.target.value = '';
     },
@@ -1483,18 +1597,29 @@ DISTRO-SW-01,10.1.2.1,100,分發層交換機`;
     
     async importArpList(event) {
       const file = event.target.files[0];
-      if (!file || !this.selectedMaintenanceId) return;
-      
+      if (!file || !this.selectedMaintenanceId) {
+        event.target.value = '';
+        return;
+      }
+
+      const validation = this.validateCsvFile(file);
+      if (!validation.valid) {
+        this.showMessage(validation.error, 'error');
+        event.target.value = '';
+        return;
+      }
+
+      this.arpLoading = true;
       const formData = new FormData();
       formData.append('file', file);
-      
+
       try {
         const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/import-csv`, {
           method: 'POST',
           body: formData,
         });
         const data = await res.json();
-        
+
         if (res.ok) {
           await this.loadArpList();
           this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
@@ -1503,7 +1628,9 @@ DISTRO-SW-01,10.1.2.1,100,分發層交換機`;
         }
       } catch (e) {
         console.error('ARP 來源匯入失敗:', e);
-        this.showMessage('匯入失敗', 'error');
+        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+      } finally {
+        this.arpLoading = false;
       }
       event.target.value = '';
     },
@@ -1534,6 +1661,13 @@ DISTRO-SW-01,10.1.2.1,100,分發層交換機`;
     
     async saveArp() {
       if (!this.newArp.hostname || !this.newArp.ip_address || !this.selectedMaintenanceId) return;
+
+      // 驗證主機名稱
+      const hostnameCheck = this.validateHostname(this.newArp.hostname);
+      if (!hostnameCheck.valid) {
+        this.showMessage(hostnameCheck.error, 'error');
+        return;
+      }
 
       // IP 地址格式驗證
       const ipPattern = /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;

@@ -104,3 +104,29 @@ class MaintenancePhase(str, Enum):
 
     OLD = "old"
     NEW = "new"
+
+
+class TenantGroup(str, Enum):
+    """Tenant group for GNMS Ping API."""
+
+    F18 = "F18"
+    F6 = "F6"
+    AP = "AP"
+    F14 = "F14"
+    F12 = "F12"
+
+
+class ClientDetectionStatus(str, Enum):
+    """
+    Detection status for clients in maintenance.
+
+    - NOT_CHECKED: Initial state, not yet checked
+    - DETECTED: Client IP is reachable via GNMS Ping
+    - MISMATCH: ARP data shows different IP-MAC mapping than user provided
+    - NOT_DETECTED: Client IP is not reachable
+    """
+
+    NOT_CHECKED = "not_checked"  # 未檢查
+    DETECTED = "detected"  # 已偵測
+    MISMATCH = "mismatch"  # 不匹配
+    NOT_DETECTED = "not_detected"  # 未偵測

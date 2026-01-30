@@ -18,9 +18,11 @@ from sqlalchemy import (
 )
 
 from app.core.enums import (
+    ClientDetectionStatus,
     MaintenancePhase,
     PlatformType,
     SiteType,
+    TenantGroup,
     VendorType,
 )
 from app.db.base import Base
@@ -722,6 +724,7 @@ class MaintenanceConfig(Base):
     start_date = Column(DateTime, nullable=True)
     end_date = Column(DateTime, nullable=True)
     anchor_time = Column(DateTime, nullable=True, index=True)  # 歲修開始錨點時間
+    is_active = Column(Boolean, default=True, nullable=False)  # 是否為活躍歲修
     config_data = Column(JSON, nullable=True)  # 其他配置數據
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -796,11 +799,18 @@ class ClientCategoryMember(Base):
 
 class MaintenanceMacList(Base):
     """
-    歲修 MAC 清單。
-    
-    存放該歲修涉及的全部設備 MAC 地址。
-    負責人先匯入全部 MAC，之後可選擇性地分到特定分類關注。
-    「未分類」= 在此清單但不屬於任何 ClientCategoryMember 的 MAC。
+    歲修 Client 清單（原 MAC 清單）。
+
+    存放該歲修涉及的全部 Client，每個 Client 需指定 IP + MAC。
+    用於：
+    1. ARP 檢查：比對 fetcher 取得的 ARP 資料是否與用戶輸入的 IP-MAC 對應
+    2. GNMS Ping：使用用戶給定的 IP + tenant_group ping client
+
+    偵測狀態說明：
+    - NOT_CHECKED: 初始狀態，尚未檢查
+    - DETECTED: Client IP 可透過 GNMS Ping 到達
+    - MISMATCH: ARP 資料顯示的 IP-MAC 對應與用戶輸入不符
+    - NOT_DETECTED: Client IP 無法到達
     """
 
     __tablename__ = "maintenance_mac_list"
@@ -808,6 +818,17 @@ class MaintenanceMacList(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     maintenance_id: Mapped[str] = mapped_column(String(50), index=True)
     mac_address: Mapped[str] = mapped_column(String(17))
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    tenant_group = Column(
+        Enum(TenantGroup),
+        nullable=False,
+        default=TenantGroup.F18,
+    )
+    detection_status = Column(
+        Enum(ClientDetectionStatus),
+        nullable=False,
+        default=ClientDetectionStatus.NOT_CHECKED,
+    )
     description: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         default=datetime.utcnow,
@@ -861,7 +882,14 @@ class MaintenanceDeviceList(Base):
     
     # 備註（選填）
     description = Column(String(500), nullable=True)
-    
+
+    # GNMS Ping 所需的 tenant group
+    tenant_group = Column(
+        Enum(TenantGroup),
+        nullable=False,
+        default=TenantGroup.F18,
+    )
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

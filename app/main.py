@@ -30,27 +30,34 @@ def load_scheduler_config() -> dict[str, Any]:
     """
     Load scheduler configuration from YAML file.
 
+    此設定檔是通用的，不包含特定的 maintenance_id。
+    採集時會自動查詢所有活躍的歲修 ID。
+
     Returns:
-        dict with 'maintenance_id' and 'jobs' list.
+        dict with 'jobs' list.
         Each job has: name, url, source, brand, interval, description.
     """
     config_path = Path("config/scheduler.yaml")
     if not config_path.exists():
         logger.warning("scheduler.yaml not found, no jobs will be scheduled")
-        return {"maintenance_id": None, "jobs": []}
+        return {"jobs": []}
 
     with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     if not config or "jobs" not in config:
-        return {"maintenance_id": None, "jobs": []}
-
-    maintenance_id = config.get("maintenance_id")
+        return {"jobs": []}
 
     jobs = []
     for job_name, job_config in config["jobs"].items():
         if not job_config:
             job_config = {}
+
+        # 檢查 enabled 標誌（預設為 True）
+        if not job_config.get("enabled", True):
+            logger.info(f"Skipping disabled job: {job_name}")
+            continue
+
         jobs.append({
             "name": job_name,
             "url": job_config.get("url"),
@@ -58,10 +65,9 @@ def load_scheduler_config() -> dict[str, Any]:
             "brand": job_config.get("brand"),
             "interval": job_config.get("interval", 30),
             "description": job_config.get("description", ""),
-            "maintenance_id": maintenance_id,
         })
 
-    return {"maintenance_id": maintenance_id, "jobs": jobs}
+    return {"jobs": jobs}
 
 
 @asynccontextmanager
