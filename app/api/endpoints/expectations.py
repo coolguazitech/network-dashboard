@@ -21,9 +21,127 @@ from app.db.models import (
     VersionExpectation,
     ArpSource,
     PortChannelExpectation,
+    MaintenanceDeviceList,
 )
 
 router = APIRouter(tags=["expectations"])
+
+
+# ========== Helper Functions ==========
+
+async def validate_hostname_in_device_list(
+    maintenance_id: str,
+    hostname: str,
+    session: AsyncSession,
+    field_name: str = "hostname",
+) -> None:
+    """
+    驗證 hostname 是否存在於設備清單的「新設備」中。
+
+    Args:
+        maintenance_id: 歲修 ID
+        hostname: 要驗證的主機名稱
+        session: 資料庫 session
+        field_name: 欄位名稱（用於錯誤訊息）
+
+    Raises:
+        HTTPException: 如果 hostname 不在設備清單中
+    """
+    stmt = select(MaintenanceDeviceList).where(
+        MaintenanceDeviceList.maintenance_id == maintenance_id,
+        MaintenanceDeviceList.new_hostname == hostname,
+    )
+    result = await session.execute(stmt)
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} '{hostname}' 不在設備清單的新設備中，"
+                   f"請先在設備清單中新增此設備"
+        )
+
+
+async def validate_hostname_in_device_list_any(
+    maintenance_id: str,
+    hostname: str,
+    session: AsyncSession,
+    field_name: str = "hostname",
+) -> None:
+    """
+    驗證 hostname 是否存在於設備清單的「新設備」或「舊設備」中。
+
+    用於 Uplink 期望和 ARP 來源，這些可以參照新設備或舊設備。
+
+    Args:
+        maintenance_id: 歲修 ID
+        hostname: 要驗證的主機名稱
+        session: 資料庫 session
+        field_name: 欄位名稱（用於錯誤訊息）
+
+    Raises:
+        HTTPException: 如果 hostname 不在設備清單中
+    """
+    from sqlalchemy import or_
+    stmt = select(MaintenanceDeviceList).where(
+        MaintenanceDeviceList.maintenance_id == maintenance_id,
+        or_(
+            MaintenanceDeviceList.new_hostname == hostname,
+            MaintenanceDeviceList.old_hostname == hostname,
+        ),
+    )
+    result = await session.execute(stmt)
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} '{hostname}' 不在設備清單中，"
+                   f"請先在設備清單中新增此設備"
+        )
+
+
+async def get_valid_new_hostnames(
+    maintenance_id: str,
+    session: AsyncSession,
+) -> set[str]:
+    """
+    取得設備清單中所有新設備的 hostname。
+
+    用於批量匯入時的驗證。
+
+    Returns:
+        新設備 hostname 的集合
+    """
+    stmt = select(MaintenanceDeviceList.new_hostname).where(
+        MaintenanceDeviceList.maintenance_id == maintenance_id
+    )
+    result = await session.execute(stmt)
+    return {row[0] for row in result.fetchall()}
+
+
+async def get_valid_all_hostnames(
+    maintenance_id: str,
+    session: AsyncSession,
+) -> set[str]:
+    """
+    取得設備清單中所有設備的 hostname（新設備 + 舊設備）。
+
+    用於 Uplink 期望和 ARP 來源的批量匯入驗證。
+
+    Returns:
+        所有設備 hostname 的集合
+    """
+    stmt = select(
+        MaintenanceDeviceList.new_hostname,
+        MaintenanceDeviceList.old_hostname,
+    ).where(
+        MaintenanceDeviceList.maintenance_id == maintenance_id
+    )
+    result = await session.execute(stmt)
+    hostnames = set()
+    for row in result.fetchall():
+        if row[0]:
+            hostnames.add(row[0])
+        if row[1]:
+            hostnames.add(row[1])
+    return hostnames
 
 
 # ========== Pydantic Models ==========
@@ -97,12 +215,12 @@ async def list_uplink_expectations(
         from sqlalchemy import and_, or_
         keywords = search.strip().split()
 
+        # 只匹配 hostname, expected_neighbor, description（不跨欄匹配）
         field_conditions = []
         for field in [
             UplinkExpectation.hostname,
             UplinkExpectation.expected_neighbor,
-            UplinkExpectation.local_interface,
-            UplinkExpectation.expected_interface,
+            UplinkExpectation.description,
         ]:
             field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
             field_conditions.append(field_match)
@@ -138,7 +256,25 @@ async def create_uplink_expectation(
     """新增 Uplink 期望。"""
     hostname = data.hostname.strip()
     local_interface = data.local_interface.strip()
-    
+    expected_neighbor = data.expected_neighbor.strip()
+    expected_interface = data.expected_interface.strip() if data.expected_interface else None
+
+    # 驗證 hostname 和 expected_neighbor 都存在於設備清單（新設備或舊設備皆可）
+    await validate_hostname_in_device_list_any(
+        maintenance_id, hostname, session, "本地設備"
+    )
+    await validate_hostname_in_device_list_any(
+        maintenance_id, expected_neighbor, session, "鄰居設備"
+    )
+
+    # 當鄰居是自己時，本地介面與鄰居介面必須不同
+    if hostname == expected_neighbor:
+        if expected_interface and local_interface == expected_interface:
+            raise HTTPException(
+                status_code=400,
+                detail=f"自連接時介面必須不同：{hostname} 的本地介面與鄰居介面都是 {local_interface}"
+            )
+
     # 檢查 hostname + local_interface 是否已存在
     dup_stmt = select(UplinkExpectation).where(
         UplinkExpectation.maintenance_id == maintenance_id,
@@ -151,11 +287,8 @@ async def create_uplink_expectation(
             status_code=400,
             detail=f"本地介面重複：{hostname}:{local_interface} 已存在"
         )
-    
+
     # 嚴格拓樸檢查：確保介面未被其他記錄使用（無論作為本地或遠端）
-    expected_neighbor = data.expected_neighbor.strip()
-    expected_interface = data.expected_interface.strip() if data.expected_interface else None
-    
     # 1. 檢查本地介面是否被用作其他記錄的遠端
     stmt1 = select(UplinkExpectation).where(
         UplinkExpectation.maintenance_id == maintenance_id,
@@ -247,7 +380,37 @@ async def update_uplink_expectation(
         if data.local_interface is not None
         else item.local_interface
     )
-    
+    new_neighbor = (
+        data.expected_neighbor.strip()
+        if data.expected_neighbor is not None
+        else item.expected_neighbor
+    )
+
+    # 驗證變更的 hostname 和 expected_neighbor 存在於設備清單（新設備或舊設備皆可）
+    if data.hostname is not None and new_hostname != item.hostname:
+        await validate_hostname_in_device_list_any(
+            maintenance_id, new_hostname, session, "本地設備"
+        )
+    if data.expected_neighbor is not None and new_neighbor != item.expected_neighbor:
+        await validate_hostname_in_device_list_any(
+            maintenance_id, new_neighbor, session, "鄰居設備"
+        )
+
+    # 計算更新後的鄰居介面
+    new_neighbor_int_for_self_check = (
+        data.expected_interface.strip()
+        if data.expected_interface is not None and data.expected_interface
+        else item.expected_interface
+    )
+
+    # 當鄰居是自己時，本地介面與鄰居介面必須不同
+    if new_hostname == new_neighbor:
+        if new_neighbor_int_for_self_check and new_local_interface == new_neighbor_int_for_self_check:
+            raise HTTPException(
+                status_code=400,
+                detail=f"自連接時介面必須不同：{new_hostname} 的本地介面與鄰居介面都是 {new_local_interface}"
+            )
+
     # 檢查更新後是否會與其他記錄重複
     if data.hostname is not None or data.local_interface is not None:
         dup_stmt = select(UplinkExpectation).where(
@@ -264,11 +427,6 @@ async def update_uplink_expectation(
             )
             
     # 嚴格拓樸檢查（排除自己）
-    new_neighbor = (
-        data.expected_neighbor.strip()
-        if data.expected_neighbor is not None
-        else item.expected_neighbor
-    )
     new_neighbor_int = (
         data.expected_interface.strip()
         if data.expected_interface is not None
@@ -410,12 +568,12 @@ async def export_uplink_csv(
         from sqlalchemy import and_, or_
         keywords = search.strip().split()
 
+        # 只匹配 hostname, expected_neighbor, description（不跨欄匹配）
         field_conditions = []
         for field in [
             UplinkExpectation.hostname,
             UplinkExpectation.expected_neighbor,
-            UplinkExpectation.local_interface,
-            UplinkExpectation.expected_interface,
+            UplinkExpectation.description,
         ]:
             field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
             field_conditions.append(field_match)
@@ -468,11 +626,14 @@ async def import_uplink_csv(
     content = await file.read()
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
-    
+
+    # 預先載入有效的設備 hostname（新設備 + 舊設備）
+    valid_hostnames = await get_valid_all_hostnames(maintenance_id, session)
+
     imported = 0
     updated = 0
     errors = []
-    
+
     for row_num, row in enumerate(reader, start=2):
         try:
             hostname = row.get("hostname", "").strip()
@@ -480,11 +641,23 @@ async def import_uplink_csv(
             expected_neighbor = row.get("expected_neighbor", "").strip()
             expected_interface = row.get("expected_interface", "").strip() or None
             description = row.get("description", "").strip() or None
-            
+
             if not hostname or not local_interface or not expected_neighbor:
                 errors.append(f"Row {row_num}: 必填欄位不完整")
                 continue
-            
+
+            # 驗證 hostname 和 expected_neighbor 存在於設備清單（新設備或舊設備）
+            if hostname not in valid_hostnames:
+                errors.append(
+                    f"Row {row_num}: 本地設備 '{hostname}' 不在設備清單中"
+                )
+                continue
+            if expected_neighbor not in valid_hostnames:
+                errors.append(
+                    f"Row {row_num}: 鄰居設備 '{expected_neighbor}' 不在設備清單中"
+                )
+                continue
+
             # 檢查是否已存在
             stmt = select(UplinkExpectation).where(
                 UplinkExpectation.maintenance_id == maintenance_id,
@@ -540,16 +713,18 @@ async def list_version_expectations(
         from sqlalchemy import and_, or_
         keywords = search.strip().split()
 
+        # 只匹配 hostname, expected_versions, description（不跨欄匹配）
         field_conditions = []
         for field in [
             VersionExpectation.hostname,
             VersionExpectation.expected_versions,
+            VersionExpectation.description,
         ]:
             field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
             field_conditions.append(field_match)
 
         stmt = stmt.where(or_(*field_conditions))
-    
+
     stmt = stmt.order_by(VersionExpectation.hostname)
     result = await session.execute(stmt)
     items = result.scalars().all()
@@ -577,7 +752,10 @@ async def create_version_expectation(
 ) -> dict[str, Any]:
     """新增版本期望。"""
     hostname = data.hostname.strip()
-    
+
+    # 驗證 hostname 存在於設備清單的新設備中
+    await validate_hostname_in_device_list(maintenance_id, hostname, session, "設備")
+
     # 檢查 hostname 是否已存在（一台設備只能有一筆版本期望）
     dup_stmt = select(VersionExpectation).where(
         VersionExpectation.maintenance_id == maintenance_id,
@@ -636,6 +814,11 @@ async def update_version_expectation(
     if data.hostname is not None:
         new_hostname = data.hostname.strip()
         if new_hostname != item.hostname:
+            # 驗證新 hostname 存在於設備清單的新設備中
+            await validate_hostname_in_device_list(
+                maintenance_id, new_hostname, session, "設備"
+            )
+
             dup_stmt = select(VersionExpectation).where(
                 VersionExpectation.maintenance_id == maintenance_id,
                 VersionExpectation.hostname == new_hostname,
@@ -647,7 +830,7 @@ async def update_version_expectation(
                     status_code=400,
                     detail=f"版本期望設備 {new_hostname} 已存在"
                 )
-    
+
     if data.hostname is not None:
         item.hostname = data.hostname.strip()
     if data.expected_versions is not None:
@@ -734,10 +917,12 @@ async def export_version_csv(
         from sqlalchemy import and_, or_
         keywords = search.strip().split()
 
+        # 只匹配 hostname, expected_versions, description（不跨欄匹配）
         field_conditions = []
         for field in [
             VersionExpectation.hostname,
             VersionExpectation.expected_versions,
+            VersionExpectation.description,
         ]:
             field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
             field_conditions.append(field_match)
@@ -782,21 +967,31 @@ async def import_version_csv(
     content = await file.read()
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
-    
+
+    # 預先載入有效的新設備 hostname
+    valid_hostnames = await get_valid_new_hostnames(maintenance_id, session)
+
     imported = 0
     updated = 0
     errors = []
-    
+
     for row_num, row in enumerate(reader, start=2):
         try:
             hostname = row.get("hostname", "").strip()
             expected_versions = row.get("expected_versions", "").strip()
             description = row.get("description", "").strip() or None
-            
+
             if not hostname or not expected_versions:
                 errors.append(f"Row {row_num}: 必填欄位不完整")
                 continue
-            
+
+            # 驗證 hostname 存在於設備清單的新設備中
+            if hostname not in valid_hostnames:
+                errors.append(
+                    f"Row {row_num}: 設備 '{hostname}' 不在設備清單的新設備中"
+                )
+                continue
+
             # 標準化版本格式
             versions = ";".join(v.strip() for v in expected_versions.split(";") if v.strip())
             
@@ -838,14 +1033,12 @@ async def import_version_csv(
 
 class ArpSourceCreate(BaseModel):
     hostname: str
-    ip_address: str
     priority: int = 100
     description: str | None = None
 
 
 class ArpSourceUpdate(BaseModel):
     hostname: str | None = None
-    ip_address: str | None = None
     priority: int | None = None
     description: str | None = None
 
@@ -868,7 +1061,7 @@ async def list_arp_sources(
         keywords = search.strip().split()
 
         field_conditions = []
-        for field in [ArpSource.hostname, ArpSource.ip_address]:
+        for field in [ArpSource.hostname, ArpSource.description]:
             field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
             field_conditions.append(field_match)
 
@@ -884,7 +1077,6 @@ async def list_arp_sources(
             {
                 "id": item.id,
                 "hostname": item.hostname,
-                "ip_address": item.ip_address,
                 "priority": item.priority,
                 "description": item.description,
             }
@@ -901,7 +1093,10 @@ async def create_arp_source(
 ) -> dict[str, Any]:
     """新增 ARP 來源設備。"""
     hostname = data.hostname.strip()
-    
+
+    # 驗證 hostname 存在於設備清單（新設備或舊設備皆可）
+    await validate_hostname_in_device_list_any(maintenance_id, hostname, session, "設備")
+
     # 檢查 hostname 是否已存在
     dup_stmt = select(ArpSource).where(
         ArpSource.maintenance_id == maintenance_id,
@@ -913,11 +1108,22 @@ async def create_arp_source(
             status_code=400,
             detail=f"ARP 來源設備 {hostname} 已存在"
         )
-    
+
+    # 檢查 priority 是否已存在
+    priority_stmt = select(ArpSource).where(
+        ArpSource.maintenance_id == maintenance_id,
+        ArpSource.priority == data.priority,
+    )
+    priority_result = await session.execute(priority_stmt)
+    if priority_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail=f"優先級 {data.priority} 已被使用，請選擇其他優先級"
+        )
+
     item = ArpSource(
         maintenance_id=maintenance_id,
         hostname=hostname,
-        ip_address=data.ip_address.strip(),
         priority=data.priority,
         description=data.description.strip() if data.description else None,
     )
@@ -928,7 +1134,6 @@ async def create_arp_source(
     return {
         "id": item.id,
         "hostname": item.hostname,
-        "ip_address": item.ip_address,
         "priority": item.priority,
         "description": item.description,
     }
@@ -956,6 +1161,11 @@ async def update_arp_source(
     if data.hostname is not None:
         new_hostname = data.hostname.strip()
         if new_hostname != item.hostname:
+            # 驗證新 hostname 存在於設備清單（新設備或舊設備皆可）
+            await validate_hostname_in_device_list_any(
+                maintenance_id, new_hostname, session, "設備"
+            )
+
             dup_stmt = select(ArpSource).where(
                 ArpSource.maintenance_id == maintenance_id,
                 ArpSource.hostname == new_hostname,
@@ -968,10 +1178,22 @@ async def update_arp_source(
                     detail=f"ARP 來源設備 {new_hostname} 已存在"
                 )
 
+    # 檢查更新後的 priority 是否會與其他記錄重複
+    if data.priority is not None and data.priority != item.priority:
+        priority_stmt = select(ArpSource).where(
+            ArpSource.maintenance_id == maintenance_id,
+            ArpSource.priority == data.priority,
+            ArpSource.id != item_id,
+        )
+        priority_result = await session.execute(priority_stmt)
+        if priority_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail=f"優先級 {data.priority} 已被使用，請選擇其他優先級"
+            )
+
     if data.hostname is not None:
         item.hostname = data.hostname.strip()
-    if data.ip_address is not None:
-        item.ip_address = data.ip_address.strip()
     if data.priority is not None:
         item.priority = data.priority
     if data.description is not None:
@@ -983,7 +1205,6 @@ async def update_arp_source(
     return {
         "id": item.id,
         "hostname": item.hostname,
-        "ip_address": item.ip_address,
         "priority": item.priority,
         "description": item.description,
     }
@@ -1056,7 +1277,7 @@ async def export_arp_csv(
         keywords = search.strip().split()
 
         field_conditions = []
-        for field in [ArpSource.hostname, ArpSource.ip_address]:
+        for field in [ArpSource.hostname, ArpSource.description]:
             field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
             field_conditions.append(field_match)
 
@@ -1069,12 +1290,11 @@ async def export_arp_csv(
     output = io.StringIO()
     writer = csv.writer(output)
 
-    writer.writerow(["hostname", "ip_address", "priority", "description"])
+    writer.writerow(["hostname", "priority", "description"])
 
     for item in items:
         writer.writerow([
             item.hostname,
-            item.ip_address,
             str(item.priority),
             item.description or "",
         ])
@@ -1102,6 +1322,9 @@ async def import_arp_csv(
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
 
+    # 預先載入有效的設備 hostname（新設備 + 舊設備）
+    valid_hostnames = await get_valid_all_hostnames(maintenance_id, session)
+
     imported = 0
     updated = 0
     errors = []
@@ -1109,12 +1332,18 @@ async def import_arp_csv(
     for row_num, row in enumerate(reader, start=2):
         try:
             hostname = row.get("hostname", "").strip()
-            ip_address = row.get("ip_address", "").strip()
             priority_str = row.get("priority", "100").strip()
             description = row.get("description", "").strip() or None
 
-            if not hostname or not ip_address:
-                errors.append(f"Row {row_num}: 必填欄位不完整")
+            if not hostname:
+                errors.append(f"Row {row_num}: hostname 為必填欄位")
+                continue
+
+            # 驗證 hostname 存在於設備清單（新設備或舊設備）
+            if hostname not in valid_hostnames:
+                errors.append(
+                    f"Row {row_num}: 設備 '{hostname}' 不在設備清單中"
+                )
                 continue
 
             try:
@@ -1131,15 +1360,39 @@ async def import_arp_csv(
             existing = result.scalar_one_or_none()
 
             if existing:
-                existing.ip_address = ip_address
+                # 更新時檢查 priority 是否與其他記錄重複
+                if priority != existing.priority:
+                    priority_stmt = select(ArpSource).where(
+                        ArpSource.maintenance_id == maintenance_id,
+                        ArpSource.priority == priority,
+                        ArpSource.id != existing.id,
+                    )
+                    priority_result = await session.execute(priority_stmt)
+                    if priority_result.scalar_one_or_none():
+                        errors.append(
+                            f"Row {row_num}: 優先級 {priority} 已被其他設備使用"
+                        )
+                        continue
+
                 existing.priority = priority
                 existing.description = description
                 updated += 1
             else:
+                # 新增時檢查 priority 是否已存在
+                priority_stmt = select(ArpSource).where(
+                    ArpSource.maintenance_id == maintenance_id,
+                    ArpSource.priority == priority,
+                )
+                priority_result = await session.execute(priority_stmt)
+                if priority_result.scalar_one_or_none():
+                    errors.append(
+                        f"Row {row_num}: 優先級 {priority} 已被其他設備使用"
+                    )
+                    continue
+
                 item = ArpSource(
                     maintenance_id=maintenance_id,
                     hostname=hostname,
-                    ip_address=ip_address,
                     priority=priority,
                     description=description,
                 )
@@ -1191,11 +1444,12 @@ async def list_port_channel_expectations(
         from sqlalchemy import and_, or_
         keywords = search.strip().split()
 
+        # 只匹配 hostname, port_channel, description（不跨欄匹配）
         field_conditions = []
         for field in [
             PortChannelExpectation.hostname,
             PortChannelExpectation.port_channel,
-            PortChannelExpectation.member_interfaces,
+            PortChannelExpectation.description,
         ]:
             field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
             field_conditions.append(field_match)
@@ -1238,7 +1492,10 @@ async def create_port_channel_expectation(
     """新增 Port-Channel 期望。"""
     hostname = data.hostname.strip()
     port_channel = data.port_channel.strip()
-    
+
+    # 驗證 hostname 存在於設備清單的新設備中
+    await validate_hostname_in_device_list(maintenance_id, hostname, session, "設備")
+
     # 檢查是否已存在相同的 hostname + port_channel
     stmt = select(PortChannelExpectation).where(
         PortChannelExpectation.maintenance_id == maintenance_id,
@@ -1247,7 +1504,7 @@ async def create_port_channel_expectation(
     )
     result = await session.execute(stmt)
     existing = result.scalar_one_or_none()
-    
+
     if existing:
         raise HTTPException(
             status_code=400,
@@ -1309,6 +1566,12 @@ async def update_port_channel_expectation(
         if data.port_channel is not None
         else item.port_channel
     )
+
+    # 驗證變更的 hostname 存在於設備清單的新設備中
+    if data.hostname is not None and new_hostname != item.hostname:
+        await validate_hostname_in_device_list(
+            maintenance_id, new_hostname, session, "設備"
+        )
 
     # 檢查更新後是否會與其他記錄重複（排除自己）
     if data.hostname is not None or data.port_channel is not None:
@@ -1419,11 +1682,12 @@ async def export_port_channel_csv(
         from sqlalchemy import and_, or_
         keywords = search.strip().split()
 
+        # 只匹配 hostname, port_channel, description（不跨欄匹配）
         field_conditions = []
         for field in [
             PortChannelExpectation.hostname,
             PortChannelExpectation.port_channel,
-            PortChannelExpectation.member_interfaces,
+            PortChannelExpectation.description,
         ]:
             field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
             field_conditions.append(field_match)
@@ -1473,6 +1737,9 @@ async def import_port_channel_csv(
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
 
+    # 預先載入有效的新設備 hostname
+    valid_hostnames = await get_valid_new_hostnames(maintenance_id, session)
+
     imported = 0
     updated = 0
     errors = []
@@ -1486,6 +1753,13 @@ async def import_port_channel_csv(
 
             if not hostname or not port_channel or not member_interfaces:
                 errors.append(f"Row {row_num}: 必填欄位不完整")
+                continue
+
+            # 驗證 hostname 存在於設備清單的新設備中
+            if hostname not in valid_hostnames:
+                errors.append(
+                    f"Row {row_num}: 設備 '{hostname}' 不在設備清單的新設備中"
+                )
                 continue
 
             # 標準化成員介面格式

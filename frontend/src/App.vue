@@ -37,7 +37,7 @@
                 class="nav-link"
                 :class="{ active: $route.path === '/settings' }"
               >
-                Settings
+                Configuration
               </router-link>
             </div>
           </div>
@@ -48,15 +48,15 @@
               <select
                 v-model="selectedMaintenanceId"
                 @change="onMaintenanceIdChange"
-                class="px-3 py-1 text-sm bg-slate-700 border border-slate-600 text-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                class="px-3 py-1 text-sm bg-slate-700 border border-slate-600 text-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-cyan-500 max-w-[200px] truncate"
               >
                 <option value="">-- 請選擇 --</option>
-                <option 
-                  v-for="m in maintenanceList" 
-                  :key="m.id" 
+                <option
+                  v-for="m in maintenanceList"
+                  :key="m.id"
                   :value="m.id"
                 >
-                  {{ m.id }}{{ m.name ? ` (${m.name})` : '' }}
+                  {{ m.name && m.name !== m.id ? m.name : m.id }}
                 </option>
               </select>
               <button 
@@ -206,6 +206,9 @@
 <script setup>
 import { ref, onMounted, provide } from 'vue'
 import dayjs from 'dayjs'
+import utc from 'dayjs/plugin/utc'
+
+dayjs.extend(utc)
 
 const lastUpdate = ref('--')
 const selectedMaintenanceId = ref('')
@@ -226,7 +229,8 @@ const updateTime = () => {
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
-  return dayjs(dateStr).format('YYYY-MM-DD HH:mm')
+  // 後端回傳 UTC 時間，需轉換為本地時間
+  return dayjs.utc(dateStr).local().format('YYYY-MM-DD HH:mm')
 }
 
 const loadMaintenanceList = async () => {

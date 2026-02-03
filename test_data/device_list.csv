@@ -1,0 +1,6 @@
+old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,use_same_port,tenant_group,description
+SW-OLD-001-EDGE,10.1.1.11,HPE,SW-NEW-001-EDGE,10.1.1.21,HPE,true,F6,F6一樓交換機
+SW-OLD-002-EDGE,10.1.1.12,HPE,SW-NEW-002-EDGE,10.1.1.22,HPE,true,F6,F6二樓交換機
+SW-OLD-003-EDGE,10.1.1.13,HPE,SW-NEW-003-EDGE,10.1.1.23,HPE,true,AP,AP一樓交換機
+SW-OLD-004-EDGE,10.1.1.14,HPE,SW-NEW-004-EDGE,10.1.1.24,HPE,true,AP,AP二樓交換機
+ROUTER-F6-CORE,10.1.1.1,HPE,ROUTER-F6-CORE,10.1.1.1,HPE,true,F6,F6核心路由器(ARP來源)

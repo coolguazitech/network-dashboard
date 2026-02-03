@@ -46,47 +46,59 @@ class VersionIndicator(BaseIndicator):
             session, maintenance_id
         )
 
+        # 若無期望，直接返回
+        if not version_expectations:
+            return IndicatorEvaluationResult(
+                indicator_type=self.indicator_type,
+                phase=phase,
+                maintenance_id=maintenance_id,
+                total_count=0,
+                pass_count=0,
+                fail_count=0,
+                pass_rates={"version_match": 0},
+                failures=None,
+                summary="無版本期望設定",
+            )
+
         # 查詢所有指定階段的版本數據（每台設備最新一筆）
         repo = VersionRecordRepo(session)
         records = await repo.get_latest_per_device(phase, maintenance_id)
 
-        # 按設備去重（get_latest_per_device 已取最新 batch，但每台設備可能有一筆）
-        seen_devices: set[str] = set()
-        unique_records: list[VersionRecord] = []
+        # 建立 hostname -> 最新版本記錄 的映射
+        records_by_hostname: dict[str, VersionRecord] = {}
         for record in records:
-            if record.switch_hostname not in seen_devices:
-                unique_records.append(record)
-                seen_devices.add(record.switch_hostname)
+            if record.switch_hostname not in records_by_hostname:
+                records_by_hostname[record.switch_hostname] = record
 
-        total_count = 0
+        # 以「期望」為基準計算（而非以採集記錄為基準）
+        total_count = len(version_expectations)
         pass_count = 0
         failures = []
 
-        # 遍歷每條採集記錄
-        for record in unique_records:
-            device_hostname = record.switch_hostname
+        # 遍歷每個版本期望
+        for hostname, expected_versions in version_expectations.items():
+            record = records_by_hostname.get(hostname)
 
-            # 獲取期望版本（無期望則跳過，不計入總數）
-            expected_versions = version_expectations.get(device_hostname)
-
-            if not expected_versions:
-                continue
-
-            total_count += 1
-
-            # 獲取實際版本
-            actual_version = record.version
-
-            # 比較版本（支援分號分隔的多個期望版本）
-            if actual_version and actual_version in expected_versions:
-                pass_count += 1
-            else:
+            if record is None:
+                # 尚未採集到該設備的版本資料
                 failures.append({
-                    "device": device_hostname,
-                    "reason": "版本不符",
+                    "device": hostname,
+                    "reason": "尚未採集",
                     "expected": ";".join(expected_versions),
-                    "actual": actual_version,
+                    "actual": None,
                 })
+            else:
+                actual_version = record.version
+                # 比較版本（支援分號分隔的多個期望版本）
+                if actual_version and actual_version in expected_versions:
+                    pass_count += 1
+                else:
+                    failures.append({
+                        "device": hostname,
+                        "reason": "版本不符",
+                        "expected": ";".join(expected_versions),
+                        "actual": actual_version,
+                    })
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
@@ -104,7 +116,7 @@ class VersionIndicator(BaseIndicator):
                 f"版本驗收: {pass_count}/{total_count} 通過 "
                 f"({pass_count / total_count * 100:.1f}%)"
             )
-            if total_count > 0 else "無版本數據",
+            if total_count > 0 else "無版本期望設定",
         )
 
     async def _load_expectations(

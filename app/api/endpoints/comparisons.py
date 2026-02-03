@@ -34,6 +34,465 @@ router = APIRouter(
 comparison_service = ClientComparisonService()
 
 
+@router.get("/checkpoints/{maintenance_id}")
+async def get_checkpoints(
+    maintenance_id: str,
+    max_days: int = Query(
+        default=7,
+        ge=1,
+        le=30,
+        description="時間範圍（天），預設 7 天",
+    ),
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """
+    獲取 Checkpoint 列表（整點快照）。
+
+    Checkpoint 是每小時的快照，用戶可選擇其中一個作為 Before 比較基準。
+    預設使用第一個 Checkpoint 作為 Before。
+    """
+    from datetime import timedelta, timezone
+    from sqlalchemy import func, distinct
+    from app.db.models import ClientRecord, MaintenanceConfig
+    from app.core.enums import MaintenancePhase
+
+    # 獲取歲修配置
+    config_stmt = select(MaintenanceConfig).where(
+        MaintenanceConfig.maintenance_id == maintenance_id
+    )
+    config_result = await session.execute(config_stmt)
+    config = config_result.scalar_one_or_none()
+
+    start_time = config.start_date if config else None
+
+    # 計算截止時間（max_days 天前）
+    from datetime import datetime
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
+
+    # 獲取所有 NEW 階段的時間點
+    stmt = (
+        select(distinct(ClientRecord.collected_at))
+        .where(
+            ClientRecord.maintenance_id == maintenance_id,
+            ClientRecord.phase == MaintenancePhase.NEW,
+            ClientRecord.collected_at >= cutoff,
+        )
+        .order_by(ClientRecord.collected_at)
+    )
+    result = await session.execute(stmt)
+    all_timepoints = result.scalars().all()
+
+    # 篩選整點時間（每小時取最後一筆作為 Checkpoint）
+    hourly_checkpoints: dict[str, datetime] = {}
+    for tp in all_timepoints:
+        # 取整點 key（年-月-日-時）
+        hour_key = tp.strftime("%Y-%m-%d-%H")
+        hourly_checkpoints[hour_key] = tp  # 該小時最後一筆
+
+    checkpoints = sorted(hourly_checkpoints.values())
+
+    # 台灣時區 (UTC+8)
+    tw_tz = timezone(timedelta(hours=8))
+
+    return {
+        "maintenance_id": maintenance_id,
+        "start_time": start_time.isoformat() if start_time else None,
+        "max_days": max_days,
+        "checkpoint_count": len(checkpoints),
+        "checkpoints": [
+            {
+                "timestamp": cp.isoformat(),
+                # label 使用台灣時間顯示
+                "label": cp.replace(tzinfo=timezone.utc).astimezone(tw_tz).strftime("%m/%d %H:00"),
+                "is_default": i == 0,  # 第一個為預設
+            }
+            for i, cp in enumerate(checkpoints)
+        ],
+    }
+
+
+@router.get("/checkpoints/{maintenance_id}/summaries")
+async def get_checkpoint_summaries(
+    maintenance_id: str,
+    max_days: int = Query(
+        default=7,
+        ge=1,
+        le=30,
+        description="時間範圍（天），預設 7 天",
+    ),
+    include_categories: bool = Query(
+        default=False,
+        description="是否包含按類別分組的統計（用於折線圖）",
+    ),
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """
+    批量獲取每個 Checkpoint 的異常摘要。
+
+    使用與 /diff 端點相同的比較邏輯，確保數字一致。
+    當 include_categories=True 時，會額外回傳每個類別的異常數趨勢。
+    """
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import func, distinct
+    from app.db.models import ClientRecord, MaintenanceMacList, ClientCategory, ClientCategoryMember
+
+    # 計算截止時間
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
+
+    # 獲取所有 checkpoint 時間點（整點）
+    stmt = (
+        select(distinct(ClientRecord.collected_at))
+        .where(
+            ClientRecord.maintenance_id == maintenance_id,
+            ClientRecord.phase == MaintenancePhase.NEW,
+            ClientRecord.collected_at >= cutoff,
+        )
+        .order_by(ClientRecord.collected_at)
+    )
+    result = await session.execute(stmt)
+    all_timepoints = result.scalars().all()
+
+    # 篩選整點時間
+    hourly_checkpoints: dict[str, datetime] = {}
+    for tp in all_timepoints:
+        hour_key = tp.strftime("%Y-%m-%d-%H")
+        hourly_checkpoints[hour_key] = tp
+
+    checkpoints = sorted(hourly_checkpoints.values())
+
+    if not checkpoints:
+        return {
+            "maintenance_id": maintenance_id,
+            "summaries": {},
+            "categories": [] if include_categories else None,
+        }
+
+    # 獲取最新快照時間
+    latest_stmt = (
+        select(func.max(ClientRecord.collected_at))
+        .where(
+            ClientRecord.maintenance_id == maintenance_id,
+            ClientRecord.phase == MaintenancePhase.NEW,
+        )
+    )
+    latest_result = await session.execute(latest_stmt)
+    current_time = latest_result.scalar()
+
+    if not current_time:
+        return {
+            "maintenance_id": maintenance_id,
+            "summaries": {},
+            "categories": [] if include_categories else None,
+        }
+
+    # 獲取 MAC 清單中註冊的總數
+    mac_list_stmt = select(func.count()).select_from(MaintenanceMacList).where(
+        MaintenanceMacList.maintenance_id == maintenance_id
+    )
+    mac_list_result = await session.execute(mac_list_stmt)
+    registered_total = mac_list_result.scalar() or 0
+
+    # 獲取覆蓋記錄
+    override_stmt = select(SeverityOverride).where(
+        SeverityOverride.maintenance_id == maintenance_id
+    )
+    override_result = await session.execute(override_stmt)
+    overrides = override_result.scalars().all()
+    override_map = {o.mac_address.upper(): o.override_severity for o in overrides}
+
+    # 如果需要類別分組，獲取類別資訊
+    categories_info = []
+    mac_to_categories: dict[str, list[int]] = {}
+    if include_categories:
+        cat_stmt = select(ClientCategory).where(
+            ClientCategory.is_active == True,
+            ClientCategory.maintenance_id == maintenance_id,
+        )
+        cat_result = await session.execute(cat_stmt)
+        categories = cat_result.scalars().all()
+
+        categories_info = [
+            {"id": c.id, "name": c.name, "color": c.color}
+            for c in categories
+        ]
+
+        # 獲取類別成員
+        if categories:
+            active_cat_ids = [c.id for c in categories]
+            member_stmt = select(ClientCategoryMember).where(
+                ClientCategoryMember.category_id.in_(active_cat_ids)
+            )
+            member_result = await session.execute(member_stmt)
+            members = member_result.scalars().all()
+            for m in members:
+                mac = m.mac_address.upper() if m.mac_address else ""
+                if mac:
+                    if mac not in mac_to_categories:
+                        mac_to_categories[mac] = []
+                    mac_to_categories[mac].append(m.category_id)
+
+    # 計算每個 checkpoint 的摘要（使用與 /diff 相同的邏輯）
+    summaries = {}
+
+    # 排除等於 current_time 的 checkpoint（比較自己跟自己永遠是 0，沒有意義）
+    # 允許 60 秒的容差，因為 checkpoint 時間可能與 current_time 相差幾秒
+    valid_checkpoints = [
+        cp for cp in checkpoints
+        if abs((cp - current_time).total_seconds()) > 60
+    ]
+
+    for cp_time in valid_checkpoints:
+        # 使用 comparison_service 生成比較結果
+        comparisons = await comparison_service._generate_checkpoint_diff(
+            maintenance_id=maintenance_id,
+            checkpoint_time=cp_time,
+            current_time=current_time,
+            session=session,
+        )
+
+        # 計算異常數量（與 /diff 端點邏輯完全一致）
+        issue_count = 0
+        change_count = 0
+
+        # 按類別統計
+        category_issues: dict[int, int] = {}
+        if include_categories:
+            for cat in categories_info:
+                category_issues[cat["id"]] = 0
+
+        for comp in comparisons:
+            mac = comp.mac_address.upper() if comp.mac_address else ""
+
+            # 取得覆蓋後的 severity
+            override_severity = override_map.get(mac)
+            display_severity = override_severity if override_severity else comp.severity
+
+            # 判斷是否為異常（與 /diff 邏輯一致）
+            if display_severity == "info":
+                is_issue = False
+            elif display_severity == "undetected":
+                is_issue = True
+            else:
+                is_issue = comp.is_changed or display_severity in ("critical", "warning")
+
+            if comp.is_changed:
+                change_count += 1
+
+            if is_issue:
+                issue_count += 1
+                # 更新類別統計
+                if include_categories:
+                    cat_ids = mac_to_categories.get(mac, [])
+                    for cat_id in cat_ids:
+                        if cat_id in category_issues:
+                            category_issues[cat_id] += 1
+
+        summary_data = {
+            "issue_count": issue_count,
+            "change_count": change_count,
+            "total": registered_total if registered_total > 0 else len(comparisons),
+        }
+
+        if include_categories:
+            summary_data["by_category"] = category_issues
+
+        summaries[cp_time.isoformat()] = summary_data
+
+    response = {
+        "maintenance_id": maintenance_id,
+        "current_time": current_time.isoformat(),
+        "summaries": summaries,
+    }
+
+    if include_categories:
+        response["categories"] = categories_info
+
+    return response
+
+
+@router.get("/diff/{maintenance_id}")
+async def get_diff(
+    maintenance_id: str,
+    checkpoint: str = Query(..., description="Checkpoint 時間（ISO 格式）作為 Before"),
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """
+    獲取 Checkpoint 與最新快照的差異比較。
+
+    比較選定的 Checkpoint（Before）與最新 Snapshot（Current）之間的變化。
+    兩者都來自 NEW 階段，用於追蹤歲修過程中設備狀態的變化。
+    """
+    from datetime import datetime
+    from fastapi import HTTPException
+    from app.db.models import ClientCategory, ClientCategoryMember
+
+    try:
+        checkpoint_time = datetime.fromisoformat(checkpoint)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"無效的時間格式: {checkpoint}，請使用 ISO 格式"
+        )
+
+    # 獲取最新快照時間
+    from sqlalchemy import func
+    from app.db.models import ClientRecord
+    from app.core.enums import MaintenancePhase
+
+    latest_stmt = (
+        select(func.max(ClientRecord.collected_at))
+        .where(
+            ClientRecord.maintenance_id == maintenance_id,
+            ClientRecord.phase == MaintenancePhase.NEW,
+        )
+    )
+    latest_result = await session.execute(latest_stmt)
+    current_time = latest_result.scalar()
+
+    # 使用新的 Checkpoint vs Current 比較邏輯（都在 NEW 階段內）
+    comparisons = await comparison_service._generate_checkpoint_diff(
+        maintenance_id=maintenance_id,
+        checkpoint_time=checkpoint_time,
+        current_time=current_time,
+        session=session,
+    )
+
+    # 獲取分類資訊
+    cat_stmt = select(ClientCategory).where(
+        ClientCategory.is_active == True,
+        ClientCategory.maintenance_id == maintenance_id,
+    )
+    cat_result = await session.execute(cat_stmt)
+    categories = cat_result.scalars().all()
+
+    # 獲取分類成員
+    active_cat_ids = [c.id for c in categories]
+    mac_to_categories: dict[str, list[int]] = {}
+    if active_cat_ids:
+        member_stmt = select(ClientCategoryMember).where(
+            ClientCategoryMember.category_id.in_(active_cat_ids)
+        )
+        member_result = await session.execute(member_stmt)
+        members = member_result.scalars().all()
+        for m in members:
+            mac = m.mac_address.upper() if m.mac_address else ""
+            if mac:
+                if mac not in mac_to_categories:
+                    mac_to_categories[mac] = []
+                mac_to_categories[mac].append(m.category_id)
+
+    # 獲取覆蓋記錄（完整物件，用於判斷 is_overridden）
+    override_stmt = select(SeverityOverride).where(
+        SeverityOverride.maintenance_id == maintenance_id
+    )
+    override_result = await session.execute(override_stmt)
+    overrides = override_result.scalars().all()
+    override_map = {o.mac_address.upper(): o for o in overrides}
+
+    # 獲取 MAC 清單中註冊的總數
+    from app.db.models import MaintenanceMacList
+    mac_list_stmt = select(func.count()).select_from(MaintenanceMacList).where(
+        MaintenanceMacList.maintenance_id == maintenance_id
+    )
+    mac_list_result = await session.execute(mac_list_stmt)
+    registered_total = mac_list_result.scalar() or 0
+
+    # 計算統計（優先使用 MAC 清單總數）
+    total = registered_total if registered_total > 0 else len(comparisons)
+    has_issues = 0
+    by_category: dict[int | None, dict] = {}
+
+    # 初始化分類統計
+    by_category[-1] = {"id": -1, "name": "全部", "color": "#1F2937", "total": 0, "issues": 0}
+    for cat in categories:
+        by_category[cat.id] = {"id": cat.id, "name": cat.name, "color": cat.color, "total": 0, "issues": 0}
+    by_category[None] = {"id": None, "name": "未分類", "color": "#6B7280", "total": 0, "issues": 0}
+
+    results = []
+    for comp in comparisons:
+        mac = comp.mac_address.upper() if comp.mac_address else ""
+        cat_ids = mac_to_categories.get(mac, [None])
+        if not cat_ids:
+            cat_ids = [None]
+
+        # 取得覆蓋資訊
+        override = override_map.get(mac)
+        is_overridden = override is not None
+        auto_severity = comp.severity  # 自動判斷的嚴重程度
+        display_severity = override.override_severity if override else comp.severity
+        original_severity = override.original_severity if override else None
+
+        # 判斷是否為異常：使用覆蓋後的 severity
+        # 如果被覆蓋為 info（正常），則不算異常
+        if display_severity == "info":
+            is_issue = False
+        elif display_severity == "undetected":
+            is_issue = True
+        else:
+            # critical/warning 或有變化都算異常
+            is_issue = comp.is_changed or display_severity in ("critical", "warning")
+
+        if is_issue:
+            has_issues += 1
+
+        # 更新分類統計
+        by_category[-1]["total"] += 1
+        if is_issue:
+            by_category[-1]["issues"] += 1
+
+        for cat_id in cat_ids:
+            if cat_id in by_category:
+                by_category[cat_id]["total"] += 1
+                if is_issue:
+                    by_category[cat_id]["issues"] += 1
+
+        # 構建結果
+        results.append({
+            "mac_address": comp.mac_address,
+            "category_ids": cat_ids,
+            "is_changed": comp.is_changed,
+            "is_issue": is_issue,
+            "severity": display_severity,
+            "auto_severity": auto_severity,
+            "is_overridden": is_overridden,
+            "original_severity": original_severity,
+            "differences": comp.differences,
+            "before": {
+                "ip_address": comp.old_ip_address,
+                "switch_hostname": comp.old_switch_hostname,
+                "interface_name": comp.old_interface_name,
+                "speed": comp.old_speed,
+                "duplex": comp.old_duplex,
+                "link_status": comp.old_link_status,
+                "ping_reachable": comp.old_ping_reachable,
+                "acl_passes": comp.old_acl_passes,
+            },
+            "current": {
+                "ip_address": comp.new_ip_address,
+                "switch_hostname": comp.new_switch_hostname,
+                "interface_name": comp.new_interface_name,
+                "speed": comp.new_speed,
+                "duplex": comp.new_duplex,
+                "link_status": comp.new_link_status,
+                "ping_reachable": comp.new_ping_reachable,
+                "acl_passes": comp.new_acl_passes,
+            },
+        })
+
+    return {
+        "maintenance_id": maintenance_id,
+        "checkpoint_time": checkpoint_time.isoformat(),
+        "current_time": current_time.isoformat() if current_time else None,
+        "summary": {
+            "total": total,
+            "has_issues": has_issues,
+            "normal": total - has_issues,
+        },
+        "by_category": list(by_category.values()),
+        "results": results,
+    }
+
+
 @router.get("/timepoints/{maintenance_id}")
 async def get_timepoints(
     maintenance_id: str,
@@ -103,6 +562,57 @@ async def get_statistics(
     }
 
 
+@router.get("/debug/{maintenance_id}")
+async def debug_comparison_data(
+    maintenance_id: str,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """
+    除錯用：查看比較相關的資料狀態。
+    """
+    from app.db.models import MaintenanceMacList, ClientRecord, ClientComparison
+    from sqlalchemy import func
+
+    # 查詢各表的資料數量
+    mac_list_count = await session.execute(
+        select(func.count()).select_from(MaintenanceMacList).where(
+            MaintenanceMacList.maintenance_id == maintenance_id
+        )
+    )
+    mac_count = mac_list_count.scalar() or 0
+
+    # 查詢 MAC 清單內容
+    mac_list_stmt = select(MaintenanceMacList.mac_address).where(
+        MaintenanceMacList.maintenance_id == maintenance_id
+    )
+    mac_list_result = await session.execute(mac_list_stmt)
+    mac_addresses = [m for m in mac_list_result.scalars().all()]
+
+    # ClientRecord 數量
+    client_record_count = await session.execute(
+        select(func.count()).select_from(ClientRecord).where(
+            ClientRecord.maintenance_id == maintenance_id
+        )
+    )
+    record_count = client_record_count.scalar() or 0
+
+    # ClientComparison 數量
+    comparison_count = await session.execute(
+        select(func.count()).select_from(ClientComparison).where(
+            ClientComparison.maintenance_id == maintenance_id
+        )
+    )
+    comp_count = comparison_count.scalar() or 0
+
+    return {
+        "maintenance_id": maintenance_id,
+        "mac_list_count": mac_count,
+        "mac_addresses": mac_addresses[:20],  # 最多顯示 20 筆
+        "client_record_count": record_count,
+        "client_comparison_count": comp_count,
+    }
+
+
 @router.post("/generate/{maintenance_id}")
 async def generate_comparisons(
     maintenance_id: str,
@@ -110,31 +620,43 @@ async def generate_comparisons(
 ) -> dict[str, Any]:
     """
     生成客戶端比較結果。
-    
+
     比較指定維護 ID 下，所有客戶端在 OLD 和 NEW 階段的變化。
     """
+    from app.db.models import MaintenanceMacList
+    from sqlalchemy import func
+
     try:
+        # 先查詢 MAC 清單數量用於除錯
+        mac_count_result = await session.execute(
+            select(func.count()).select_from(MaintenanceMacList).where(
+                MaintenanceMacList.maintenance_id == maintenance_id
+            )
+        )
+        mac_list_count = mac_count_result.scalar() or 0
+
         # 生成比較結果
         comparisons = await comparison_service.generate_comparisons(
             maintenance_id=maintenance_id,
             session=session,
         )
-        
+
         # 保存到資料庫
         await comparison_service.save_comparisons(
             comparisons=comparisons,
             session=session,
         )
-        
+
         # 生成摘要
         summary = await comparison_service.get_comparison_summary(
             maintenance_id=maintenance_id,
             session=session,
         )
-        
+
         return {
             "success": True,
             "maintenance_id": maintenance_id,
+            "mac_list_count": mac_list_count,  # 新增：顯示 MAC 清單數量
             "comparisons_count": len(comparisons),
             "summary": summary,
         }

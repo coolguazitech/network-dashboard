@@ -250,21 +250,23 @@ class DataCollectionService:
             brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
             http: HTTP client（由外層注入）
         """
-        # 使用新設備的 vendor 決定 parser（處理大小寫）
-        vendor = (
-            VendorType(device.new_vendor.lower())
-            if device.new_vendor
-            else VendorType.HPE
-        )
+        # 使用新設備的 vendor 決定 parser（處理 Cisco-IOS/Cisco-NXOS 等格式）
+        vendor_str = (device.new_vendor or "").lower()
+        if vendor_str.startswith("cisco"):
+            vendor = VendorType.CISCO
+        elif vendor_str.startswith("hpe") or vendor_str.startswith("aruba"):
+            vendor = VendorType.HPE
+        else:
+            vendor = VendorType.HPE
 
-        # 根據 vendor 決定 platform（簡化處理）
-        platform_map = {
-            VendorType.HPE: PlatformType.HPE_COMWARE,
-            VendorType.CISCO: PlatformType.CISCO_NXOS,
-        }
-        platform = platform_map.get(
-            vendor, PlatformType.HPE_COMWARE,
-        )
+        # 根據 vendor 和原始 vendor_str 決定 platform
+        if vendor == VendorType.CISCO:
+            if "nxos" in vendor_str:
+                platform = PlatformType.CISCO_NXOS
+            else:
+                platform = PlatformType.CISCO_IOS
+        else:
+            platform = PlatformType.HPE_COMWARE
 
         # 取得 parser
         parser = parser_registry.get(
@@ -313,11 +315,12 @@ class DataCollectionService:
             maintenance_id=maintenance_id,
         )
 
-        # 同步 ping 可達性到 MaintenanceDeviceList
+        # 同步 ping 可達性到 MaintenanceDeviceList (新設備)
         if collection_type == "ping" and parsed_items:
             from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
             device.is_reachable = parsed_items[0].is_reachable
-            device.last_check_at = datetime.now(timezone.utc)
+            device.last_check_at = now
 
         logger.info(
             "Collected %s from %s: %d items",
@@ -325,6 +328,45 @@ class DataCollectionService:
             device.new_hostname,
             len(parsed_items),
         )
+
+        # 同步 ping 可達性到 MaintenanceDeviceList (舊設備)
+        # 這允許時間軸收斂模型：舊設備從可達變不可達，新設備從不可達變可達
+        if collection_type == "ping" and device.old_ip_address:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+
+            # 對舊設備執行 ping
+            old_fetcher = fetcher_registry.get_or_raise(collection_type)
+            old_ctx = FetchContext(
+                switch_ip=device.old_ip_address,
+                switch_hostname=device.old_hostname,
+                site="maintenance",
+                source=source,
+                brand=brand,
+                vendor=vendor.value,
+                platform=platform.value,
+                http=http,
+                base_url=settings.external_api_server,
+                timeout=settings.external_api_timeout,
+            )
+            try:
+                old_result = await old_fetcher.fetch(old_ctx)
+                if old_result.success:
+                    old_parsed = parser.parse(old_result.raw_output)
+                    if old_parsed:
+                        device.old_is_reachable = old_parsed[0].is_reachable
+                        device.old_last_check_at = now
+                        logger.info(
+                            "Collected ping from OLD device %s: reachable=%s",
+                            device.old_hostname,
+                            device.old_is_reachable,
+                        )
+            except Exception as e:
+                logger.warning(
+                    "Failed to ping OLD device %s: %s",
+                    device.old_hostname,
+                    e,
+                )
 
     async def _collect_for_switch(
         self,

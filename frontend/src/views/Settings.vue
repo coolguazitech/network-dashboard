@@ -3,7 +3,7 @@
     <!-- 頁面標題 -->
     <div class="flex justify-between items-center mb-3">
       <div>
-        <h1 class="text-xl font-bold text-white">⚙️ 設備與設定</h1>
+        <h1 class="text-xl font-bold text-white">⚙️ 設置</h1>
       </div>
     </div>
 
@@ -73,7 +73,7 @@
             </button>
           </div>
 
-          <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <div ref="uplinkScrollContainer" class="overflow-x-auto max-h-[400px] overflow-y-auto">
             <table class="min-w-full text-sm">
               <thead class="bg-slate-900/60 sticky top-0">
                 <tr>
@@ -164,7 +164,7 @@
             </button>
           </div>
 
-          <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <div ref="versionScrollContainer" class="overflow-x-auto max-h-[400px] overflow-y-auto">
             <table class="min-w-full text-sm">
               <thead class="bg-slate-900/60 sticky top-0">
                 <tr>
@@ -255,7 +255,7 @@
             </button>
           </div>
 
-          <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <div ref="portChannelScrollContainer" class="overflow-x-auto max-h-[400px] overflow-y-auto">
             <table class="min-w-full text-sm">
               <thead class="bg-slate-900/60 sticky top-0">
                 <tr>
@@ -297,131 +297,6 @@
           <p class="text-xs text-slate-500 mt-2">
             💡 CSV 格式：hostname,port_channel,member_interfaces,description（成員介面用分號分隔，如 Gi1/0/1;Gi1/0/2）
           </p>
-        </div>
-      </div>
-
-      <!-- ARP 來源 Tab (歲修特定) -->
-      <div v-if="activeTab === 'arp'" class="space-y-4">
-        <div class="flex justify-between items-center">
-          <h3 class="text-white font-semibold">ARP 來源設備</h3>
-          <div class="flex gap-2">
-            <button @click="downloadArpTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
-              📄 下載範本
-            </button>
-            <label class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
-              📥 匯入 CSV
-              <input type="file" accept=".csv" class="hidden" @change="importArpList" />
-            </label>
-            <button @click="openAddArp" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
-              ➕ 新增來源
-            </button>
-          </div>
-        </div>
-        
-        <div v-if="!selectedMaintenanceId" class="text-center py-8 text-slate-400">
-          請先在頂部選擇歲修 ID
-        </div>
-        
-        <div v-else>
-          <p class="text-sm text-slate-400 mb-3">
-            指定從哪些 Router/Gateway 獲取 ARP Table，用於對應 MAC → IP
-          </p>
-
-          <!-- 搜尋和操作 -->
-          <div class="flex gap-3 mb-3">
-            <input
-              v-model="arpSearch"
-              type="text"
-              placeholder="搜尋設備或 IP..."
-              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
-              @input="loadArpList"
-            />
-            <button @click="exportArpCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition">
-              📤 匯出 CSV
-            </button>
-          </div>
-
-          <!-- 批量操作 -->
-          <div v-if="selectedArps.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
-            <span class="text-sm text-cyan-300">已選 {{ selectedArps.length }} 筆</span>
-            <button @click="batchDeleteArps" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
-              🗑️ 批量刪除
-            </button>
-            <button @click="clearArpSelection" class="px-2 py-1 text-slate-400 hover:text-white text-sm">
-              ✕ 清除選擇
-            </button>
-          </div>
-
-          <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
-            <table class="min-w-full text-sm">
-              <thead class="bg-slate-900/60 sticky top-0">
-                <tr>
-                  <th class="px-2 py-2 text-center">
-                    <input type="checkbox" v-model="arpSelectAll" @change="toggleArpSelectAll" class="rounded border-slate-500" />
-                  </th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">設備</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">IP</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">優先級</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">備註</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-slate-700">
-                <tr v-for="arp in arpSources" :key="arp.id" class="hover:bg-slate-700/50 transition" :class="{ 'bg-cyan-900/20': selectedArps.includes(arp.id) }">
-                  <td class="px-2 py-2 text-center">
-                    <input type="checkbox" :value="arp.id" v-model="selectedArps" class="rounded border-slate-500" />
-                  </td>
-                  <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ arp.hostname }}</td>
-                  <td class="px-3 py-2 font-mono text-slate-300 text-xs">{{ arp.ip_address }}</td>
-                  <td class="px-3 py-2 text-slate-300 text-xs">{{ arp.priority }}</td>
-                  <td class="px-3 py-2 text-slate-400 text-xs">{{ arp.description || '-' }}</td>
-                  <td class="px-3 py-2 text-xs whitespace-nowrap">
-                    <button @click="editArp(arp)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
-                    <button @click="deleteArpSource(arp)" class="text-red-400 hover:text-red-300">刪除</button>
-                  </td>
-                </tr>
-                <tr v-if="arpSources.length === 0">
-                  <td colspan="5" class="px-4 py-8 text-center text-slate-500">尚無 ARP 來源設備</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          
-          <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：hostname,ip_address,priority,description（priority 數字越小優先級越高）
-          </p>
-        </div>
-      </div>
-    </div>
-
-    <!-- 新增/編輯 ARP 來源 Modal -->
-    <div v-if="showAddArpModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="closeArpModal">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[450px]">
-        <h3 class="text-lg font-semibold text-white mb-4">{{ editingArp ? '編輯 ARP 來源' : '新增 ARP 來源' }}</h3>
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm text-slate-400 mb-1">設備 Hostname <span class="text-red-400">*</span></label>
-            <input v-model="newArp.hostname" type="text" placeholder="CORE-ROUTER-01" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-1">IP 位址 <span class="text-red-400">*</span></label>
-            <input v-model="newArp.ip_address" type="text" placeholder="10.1.1.1" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-1">優先級</label>
-            <input v-model.number="newArp.priority" type="number" min="1" placeholder="100" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
-            <p class="text-xs text-slate-500 mt-1">數字越小優先級越高，預設 100</p>
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-1">備註（選填）</label>
-            <input v-model="newArp.description" type="text" placeholder="例如：主要 Gateway" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
-          </div>
-        </div>
-        <div class="flex justify-end gap-2 mt-6">
-          <button @click="closeArpModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">取消</button>
-          <button @click="saveArp" :disabled="!newArp.hostname || !newArp.ip_address" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
-            {{ editingArp ? '儲存' : '新增' }}
-          </button>
         </div>
       </div>
     </div>
@@ -584,13 +459,11 @@ export default {
       uplinkLoading: false,
       versionLoading: false,
       portChannelLoading: false,
-      arpLoading: false,
       activeTab: 'uplink',
       tabs: [
         { id: 'uplink', name: 'Uplink 期望', icon: '🔗', scope: 'maintenance' },
         { id: 'version', name: '版本期望', icon: '📦', scope: 'maintenance' },
         { id: 'portchannel', name: 'Port Channel 期望', icon: '⛓️', scope: 'maintenance' },
-        { id: 'arp', name: 'ARP 來源', icon: '🌐', scope: 'maintenance' },
       ],
       
       // 數據
@@ -599,7 +472,6 @@ export default {
       deviceMappings: [],
       uplinkExpectations: [],
       versionExpectations: [],
-      arpSources: [],
       portChannelExpectations: [],
       
       // Uplink 期望
@@ -617,11 +489,6 @@ export default {
       selectedPortChannels: [],
       portChannelSelectAll: false,
 
-      // ARP 來源
-      arpSearch: '',
-      selectedArps: [],
-      arpSelectAll: false,
-      
       // 新增歲修表單
       newMaintenance: { id: '', name: '' },
       showAddMaintenanceModal: false,
@@ -637,13 +504,8 @@ export default {
       showImportUplinkModal: false,
       showAddVersionModal: false,
       showImportVersionModal: false,
-      showAddArpModal: false,
       showAddPortChannelModal: false,
-      
-      // ARP 來源表單
-      newArp: { hostname: '', ip_address: '', priority: 100, description: '' },
-      editingArp: null,
-      
+
       // Uplink 期望表單
       newUplink: { hostname: '', local_interface: '', expected_neighbor: '', expected_interface: '', description: '' },
       editingUplink: null,
@@ -685,8 +547,18 @@ export default {
         this.loadMaintenanceData();
       }
     },
+    activeTab(newTab) {
+      // 保存 Tab 狀態到 localStorage
+      localStorage.setItem('settings_active_tab', newTab);
+    },
   },
   mounted() {
+    // 從 localStorage 恢復 Tab 狀態
+    const savedTab = localStorage.getItem('settings_active_tab');
+    if (savedTab && this.tabs.some(t => t.id === savedTab)) {
+      this.activeTab = savedTab;
+    }
+
     this.loadMaintenanceList();
     if (this.selectedMaintenanceId) {
       this.loadMaintenanceData();
@@ -879,9 +751,6 @@ export default {
 
         // 載入 Port Channel 期望
         await this.loadPortChannelList();
-
-        // 載入 ARP 來源
-        await this.loadArpList();
       } catch (e) {
         console.error('載入歲修數據失敗:', e);
       } finally {
@@ -922,18 +791,27 @@ export default {
     // ========== Uplink 期望操作 ==========
     async loadUplinkList() {
       if (!this.selectedMaintenanceId) return;
-      
+
+      // 保存捲動位置
+      const scrollTop = this.$refs.uplinkScrollContainer?.scrollTop || 0;
+
       try {
         const params = new URLSearchParams();
         if (this.uplinkSearch) params.append('search', this.uplinkSearch);
-        
+
         let url = `/api/v1/expectations/uplink/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
-        
+
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
           this.uplinkExpectations = data.items || [];
+          // 恢復捲動位置
+          this.$nextTick(() => {
+            if (this.$refs.uplinkScrollContainer) {
+              this.$refs.uplinkScrollContainer.scrollTop = scrollTop;
+            }
+          });
         }
       } catch (e) {
         console.error('載入 Uplink 期望失敗:', e);
@@ -1151,18 +1029,27 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
     // ========== 版本期望操作 ==========
     async loadVersionList() {
       if (!this.selectedMaintenanceId) return;
-      
+
+      // 保存捲動位置
+      const scrollTop = this.$refs.versionScrollContainer?.scrollTop || 0;
+
       try {
         const params = new URLSearchParams();
         if (this.versionSearch) params.append('search', this.versionSearch);
-        
+
         let url = `/api/v1/expectations/version/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
-        
+
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
           this.versionExpectations = data.items || [];
+          // 恢復捲動位置
+          this.$nextTick(() => {
+            if (this.$refs.versionScrollContainer) {
+              this.$refs.versionScrollContainer.scrollTop = scrollTop;
+            }
+          });
         }
       } catch (e) {
         console.error('載入版本期望失敗:', e);
@@ -1357,18 +1244,27 @@ CORE-SW-01,9.4(1),NX-OS版本`;
     // ========== Port Channel 期望操作 ==========
     async loadPortChannelList() {
       if (!this.selectedMaintenanceId) return;
-      
+
+      // 保存捲動位置
+      const scrollTop = this.$refs.portChannelScrollContainer?.scrollTop || 0;
+
       try {
         const params = new URLSearchParams();
         if (this.portChannelSearch) params.append('search', this.portChannelSearch);
-        
+
         let url = `/api/v1/expectations/port-channel/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
-        
+
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
           this.portChannelExpectations = data.items || [];
+          // 恢復捲動位置
+          this.$nextTick(() => {
+            if (this.$refs.portChannelScrollContainer) {
+              this.$refs.portChannelScrollContainer.scrollTop = scrollTop;
+            }
+          });
         }
       } catch (e) {
         console.error('載入 Port Channel 期望失敗:', e);
@@ -1559,228 +1455,6 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
         params.append('search', this.portChannelSearch);
       }
       const url = `/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/export-csv?${params}`;
-      window.open(url, '_blank');
-    },
-
-    // ========== ARP 來源操作 ==========
-    async loadArpList() {
-      if (!this.selectedMaintenanceId) return;
-      
-      try {
-        const params = new URLSearchParams();
-        if (this.arpSearch) params.append('search', this.arpSearch);
-        
-        let url = `/api/v1/expectations/arp/${this.selectedMaintenanceId}`;
-        if (params.toString()) url += '?' + params.toString();
-        
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          this.arpSources = data.items || [];
-        }
-      } catch (e) {
-        console.error('載入 ARP 來源失敗:', e);
-      }
-    },
-    
-    downloadArpTemplate() {
-      const csv = `hostname,ip_address,priority,description
-CORE-ROUTER-01,10.1.1.1,10,主要 Gateway
-CORE-ROUTER-02,10.1.1.2,20,備援 Gateway
-DISTRO-SW-01,10.1.2.1,100,分發層交換機`;
-      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = 'arp_sources_template.csv';
-      link.click();
-    },
-    
-    async importArpList(event) {
-      const file = event.target.files[0];
-      if (!file || !this.selectedMaintenanceId) {
-        event.target.value = '';
-        return;
-      }
-
-      const validation = this.validateCsvFile(file);
-      if (!validation.valid) {
-        this.showMessage(validation.error, 'error');
-        event.target.value = '';
-        return;
-      }
-
-      this.arpLoading = true;
-      const formData = new FormData();
-      formData.append('file', file);
-
-      try {
-        const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/import-csv`, {
-          method: 'POST',
-          body: formData,
-        });
-        const data = await res.json();
-
-        if (res.ok) {
-          await this.loadArpList();
-          this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
-        } else {
-          this.showMessage(data.detail || '匯入失敗', 'error');
-        }
-      } catch (e) {
-        console.error('ARP 來源匯入失敗:', e);
-        this.showMessage('匯入失敗，請檢查網路連線', 'error');
-      } finally {
-        this.arpLoading = false;
-      }
-      event.target.value = '';
-    },
-    
-    openAddArp() {
-      this.editingArp = null;
-      this.newArp = { hostname: '', ip_address: '', priority: 100, description: '' };
-      this.showAddArpModal = true;
-    },
-    
-    editArp(arp) {
-      this.editingArp = arp;
-      this.newArp = {
-        id: arp.id,
-        hostname: arp.hostname || '',
-        ip_address: arp.ip_address || '',
-        priority: arp.priority || 100,
-        description: arp.description || '',
-      };
-      this.showAddArpModal = true;
-    },
-    
-    closeArpModal() {
-      this.showAddArpModal = false;
-      this.editingArp = null;
-      this.newArp = { hostname: '', ip_address: '', priority: 100, description: '' };
-    },
-    
-    async saveArp() {
-      if (!this.newArp.hostname || !this.newArp.ip_address || !this.selectedMaintenanceId) return;
-
-      // 驗證主機名稱
-      const hostnameCheck = this.validateHostname(this.newArp.hostname);
-      if (!hostnameCheck.valid) {
-        this.showMessage(hostnameCheck.error, 'error');
-        return;
-      }
-
-      // IP 地址格式驗證
-      const ipPattern = /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-      if (!ipPattern.test(this.newArp.ip_address.trim())) {
-        this.showMessage('IP 位址格式錯誤，正確格式：例如 192.168.1.1', 'error');
-        return;
-      }
-
-      try {
-        let res;
-        const payload = {
-          hostname: this.newArp.hostname.trim(),
-          ip_address: this.newArp.ip_address.trim(),
-          priority: this.newArp.priority || 100,
-          description: this.newArp.description?.trim() || null,
-        };
-        
-        if (this.editingArp && this.newArp.id) {
-          res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/${this.newArp.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-        } else {
-          res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-        }
-        
-        if (res.ok) {
-          const msg = this.editingArp ? 'ARP 來源更新成功' : 'ARP 來源新增成功';
-          this.closeArpModal();
-          await this.loadArpList();
-          this.showMessage(msg, 'success');
-        } else {
-          const err = await res.json();
-          this.showMessage(err.detail || (this.editingArp ? '更新失敗' : '新增失敗'), 'error');
-        }
-      } catch (e) {
-        console.error('儲存 ARP 來源失敗:', e);
-        this.showMessage('儲存失敗', 'error');
-      }
-    },
-    
-    async deleteArpSource(arp) {
-      const confirmed = await this.showConfirm(`確定要刪除 ARP 來源 ${arp.hostname}？`, '刪除確認');
-      if (!confirmed) return;
-
-      try {
-        const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/${arp.id}`, {
-          method: 'DELETE',
-        });
-        if (res.ok) {
-          await this.loadArpList();
-          this.showMessage('刪除成功', 'success');
-        }
-      } catch (e) {
-        console.error('刪除 ARP 來源失敗:', e);
-        this.showMessage('刪除失敗', 'error');
-      }
-    },
-
-    toggleArpSelectAll() {
-      if (this.arpSelectAll) {
-        this.selectedArps = this.arpSources.map(a => a.id);
-      } else {
-        this.selectedArps = [];
-      }
-    },
-
-    clearArpSelection() {
-      this.selectedArps = [];
-      this.arpSelectAll = false;
-    },
-
-    async batchDeleteArps() {
-      if (this.selectedArps.length === 0) return;
-
-      const confirmed = await this.showConfirm(
-        `確定要刪除選中的 ${this.selectedArps.length} 筆 ARP 來源？`,
-        '批量刪除確認'
-      );
-      if (!confirmed) return;
-
-      try {
-        const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/batch-delete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.selectedArps),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          this.showMessage(`成功刪除 ${data.deleted_count} 筆 ARP 來源`, 'success');
-          this.clearArpSelection();
-          await this.loadArpList();
-        } else {
-          this.showMessage('批量刪除失敗', 'error');
-        }
-      } catch (e) {
-        console.error('批量刪除 ARP 來源失敗:', e);
-        this.showMessage('批量刪除失敗', 'error');
-      }
-    },
-
-    exportArpCsv() {
-      const params = new URLSearchParams();
-      if (this.arpSearch) {
-        params.append('search', this.arpSearch);
-      }
-      const url = `/api/v1/expectations/arp/${this.selectedMaintenanceId}/export-csv?${params}`;
       window.open(url, '_blank');
     },
 

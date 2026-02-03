@@ -4,7 +4,93 @@
     <div class="flex justify-between items-center mb-3">
       <div>
         <h1 class="text-xl font-bold text-white">客戶端比較</h1>
-        <p class="text-xs text-slate-400">依照機台分類查看 OLD / NEW 階段的變化（分類管理請到 Settings → MAC 清單）</p>
+        <p class="text-xs text-slate-400">依照 Checkpoint 比較 MAC 設備在不同時間點的變化</p>
+      </div>
+      <div v-if="currentTime" class="text-xs text-slate-400">
+        最後更新: {{ formatTimeLabel(currentTime) }}
+        <span class="text-cyan-400 ml-1">(每分鐘自動更新)</span>
+      </div>
+    </div>
+
+    <!-- Checkpoint 選擇區 (可收合) -->
+    <div class="bg-slate-800/80 rounded border border-slate-600 mb-3">
+      <!-- 標題列（點擊可收合/展開） -->
+      <div
+        @click="checkpointPanelExpanded = !checkpointPanelExpanded"
+        class="flex justify-between items-center p-3 cursor-pointer hover:bg-slate-700/30 transition"
+      >
+        <div class="flex items-center gap-2">
+          <span class="text-slate-400 transition-transform" :class="checkpointPanelExpanded ? 'rotate-90' : ''">▶</span>
+          <h2 class="text-base font-bold text-white">📅 選擇比較基準</h2>
+        </div>
+        <div v-if="selectedCheckpoint" class="text-sm text-slate-300">
+          已選擇: <span class="text-cyan-400 font-medium">{{ formatCheckpointLabel(selectedCheckpoint) }}</span>
+        </div>
+      </div>
+
+      <!-- 可收合內容 -->
+      <div v-show="checkpointPanelExpanded" class="px-3 pb-3">
+        <div v-if="checkpoints.length > 0">
+          <!-- 日期分頁標籤 -->
+          <div class="flex gap-1 mb-3 border-b border-slate-600 pb-2">
+            <button
+              v-for="dateKey in sortedDateKeys"
+              :key="dateKey"
+              @click.stop="selectedDateTab = dateKey"
+              class="px-3 py-1.5 text-sm font-medium rounded-t transition"
+              :class="selectedDateTab === dateKey
+                ? 'bg-cyan-900/60 text-cyan-300 border-b-2 border-cyan-400'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'"
+            >
+              {{ formatDateTabLabel(dateKey) }}
+              <span v-if="isToday(dateKey)" class="ml-1 text-xs text-yellow-400">(今日)</span>
+            </button>
+          </div>
+
+          <!-- 小時網格（固定大小、全等矩形） -->
+          <div class="grid grid-cols-6 gap-3">
+            <button
+              v-for="cp in checkpointsByDate[selectedDateTab] || []"
+              :key="cp.timestamp"
+              @click.stop="selectCheckpoint(cp.timestamp)"
+              class="h-16 flex flex-col items-center justify-center text-sm font-mono rounded transition border"
+              :class="selectedCheckpoint === cp.timestamp
+                ? 'bg-cyan-900/60 border-cyan-500 text-cyan-300 ring-1 ring-cyan-400'
+                : 'bg-slate-700/40 border-slate-600 text-slate-300 hover:bg-slate-700 hover:border-slate-500'"
+            >
+              <!-- 時間 + 預設標記 -->
+              <span class="font-medium">
+                {{ formatHourLabel(cp.timestamp) }}
+                <span v-if="isDefaultCheckpoint(cp.timestamp)" class="text-yellow-400 text-xs ml-1">預設</span>
+              </span>
+              <!-- 異常摘要：異常數/總數 -->
+              <span
+                class="text-xs mt-1"
+                :class="getCheckpointBadgeClass(cp.timestamp)"
+                :title="getCheckpointTooltip(cp.timestamp)"
+              >
+                {{ getCheckpointBadgeText(cp.timestamp) }}
+              </span>
+            </button>
+          </div>
+        </div>
+        <div v-else class="text-center py-4 text-slate-400 text-sm">
+          暫無 Checkpoint 資料
+        </div>
+      </div>
+    </div>
+
+    <!-- 異常趨勢折線圖 -->
+    <div class="bg-slate-800/80 rounded border border-slate-600 mb-3 p-3">
+      <div class="flex justify-between items-center mb-2">
+        <h3 class="text-sm font-bold text-white">📈 異常趨勢</h3>
+        <span class="text-xs text-slate-400">每小時更新</span>
+      </div>
+      <div v-if="trendChartOption" style="height: 200px;">
+        <v-chart :option="trendChartOption" autoresize />
+      </div>
+      <div v-else class="flex items-center justify-center h-32 text-slate-400 text-sm">
+        載入中...
       </div>
     </div>
 
@@ -28,7 +114,7 @@
               {{ selectedCategories.includes(stat.category_id) ? '★' : '☆' }}
             </span>
           </div>
-          
+
           <!-- 數據行：異常數（左）+ 總數（右） -->
           <div class="flex justify-between items-end">
             <div>
@@ -40,39 +126,30 @@
               <p class="text-xs text-slate-400">總數</p>
             </div>
           </div>
-          
+
           <!-- 未偵測提示 -->
           <p v-if="stat.undetected_count > 0" class="text-xs text-orange-400 text-right mt-0.5">({{ stat.undetected_count }} 未偵測)</p>
         </div>
       </div>
     </div>
 
-    <!-- 異常趨勢圖（整合時間選擇器） -->
-    <div class="bg-slate-800/80 rounded border border-slate-600 p-3 mb-3">
-      <div class="flex justify-between items-center mb-2">
-        <div class="flex items-center gap-3">
-          <h2 class="text-base font-bold text-white">📊 異常趨勢圖</h2>
-          <!-- 當前選擇的時間顯示 -->
-          <div v-if="selectedBeforeTime" class="flex items-center gap-1.5 px-2 py-0.5 bg-slate-700 border border-slate-500 rounded text-sm">
-            <span class="text-cyan-300 font-medium">📅</span>
-            <span class="text-white font-medium">{{ formatTimeLabel(selectedBeforeTime) }}</span>
-            <span class="text-slate-400">→</span>
-            <span class="text-green-400 font-medium">最新</span>
-          </div>
+    <!-- 對比結果摘要 -->
+    <div v-if="summary" class="bg-slate-800/80 rounded border border-slate-600 p-3 mb-3">
+      <div class="flex items-center gap-4">
+        <div class="text-sm text-slate-300">
+          <span class="text-slate-400">Before:</span>
+          <span class="text-cyan-400 font-mono">{{ formatTimeLabel(selectedCheckpoint) }}</span>
         </div>
-        <p class="text-xs text-cyan-400/80">💡 點擊折線圖任意時間點選擇比較基準</p>
-      </div>
-      <div v-if="chartOptions" class="rounded bg-slate-900/60">
-        <v-chart 
-          ref="trendChart"
-          :option="chartOptions" 
-          style="height: 280px" 
-          @click="handleChartClick"
-          @datazoom="handleDataZoom"
-        />
-      </div>
-      <div v-else class="text-center py-6 text-slate-400 rounded bg-slate-900/60 text-sm">
-        暫無時間點統計數據
+        <span class="text-slate-500">→</span>
+        <div class="text-sm text-slate-300">
+          <span class="text-slate-400">Current:</span>
+          <span class="text-green-400 font-mono">{{ formatTimeLabel(currentTime) }}</span>
+        </div>
+        <div class="ml-auto flex items-center gap-4 text-sm">
+          <span class="text-slate-400">總數: <span class="text-white font-bold">{{ summary.total }}</span></span>
+          <span class="text-red-400">異常: <span class="font-bold">{{ summary.has_issues }}</span></span>
+          <span class="text-green-400">正常: <span class="font-bold">{{ summary.normal }}</span></span>
+        </div>
       </div>
     </div>
 
@@ -150,8 +227,8 @@
                   <span :class="isExpectedChange(comparison) ? 'text-green-500' : 'text-amber-500'">→</span>
                   <span :class="isExpectedChange(comparison) ? 'text-green-300' : 'text-amber-300'">{{ formatValue(change.new) }}</span>
                 </div>
-                <span 
-                  v-if="Object.keys(comparison.differences).length > 3" 
+                <span
+                  v-if="Object.keys(comparison.differences).length > 3"
                   class="text-xs px-1.5 py-0.5"
                   :class="isExpectedChange(comparison) ? 'text-green-400' : 'text-amber-400'"
                 >
@@ -162,7 +239,7 @@
             </div>
             <div class="flex gap-1.5 items-center">
               <!-- 手動覆蓋標記 -->
-              <span v-if="comparison.is_overridden" 
+              <span v-if="comparison.is_overridden"
                 class="text-xs text-purple-400 cursor-help"
                 :title="`原始判斷: ${getAutoSeverityText(comparison.auto_severity)}\n${comparison.override_note || '無備註'}`"
               >
@@ -235,11 +312,11 @@
 
         <div class="grid grid-cols-2 gap-6">
           <div>
-            <h3 class="font-semibold text-slate-100 mb-3 pb-2 border-b border-slate-700">📋 OLD 階段</h3>
+            <h3 class="font-semibold text-slate-100 mb-3 pb-2 border-b border-slate-700">📋 Before (Checkpoint)</h3>
             <dl class="space-y-2 text-sm">
-              <div v-for="(value, key) in selectedComparison.old" :key="key">
+              <div v-for="(value, key) in selectedComparison.before" :key="key">
                 <dt class="text-slate-500">{{ getFieldLabel(key) }}</dt>
-                <dd 
+                <dd
                   class="font-mono"
                   :class="isFieldChanged(key) ? 'text-rose-400 font-bold' : 'text-slate-200'"
                 >
@@ -249,11 +326,11 @@
             </dl>
           </div>
           <div>
-            <h3 class="font-semibold text-slate-100 mb-3 pb-2 border-b border-slate-700">📋 NEW 階段</h3>
+            <h3 class="font-semibold text-slate-100 mb-3 pb-2 border-b border-slate-700">📋 Current (Latest)</h3>
             <dl class="space-y-2 text-sm">
-              <div v-for="(value, key) in selectedComparison.new" :key="key">
+              <div v-for="(value, key) in selectedComparison.current" :key="key">
                 <dt class="text-slate-500">{{ getFieldLabel(key) }}</dt>
-                <dd 
+                <dd
                   class="font-mono"
                   :class="isFieldChanged(key) ? 'text-rose-400 font-bold' : 'text-slate-200'"
                 >
@@ -267,26 +344,26 @@
     </div>
 
     <!-- 嚴重程度覆蓋選單 -->
-    <div 
+    <div
       v-if="overrideMenuTarget"
       class="fixed z-50 bg-slate-800 border border-slate-600 rounded shadow-xl py-1 min-w-[140px]"
       :style="{ top: overrideMenuPos.y + 'px', left: overrideMenuPos.x + 'px' }"
     >
       <div class="px-3 py-1 text-xs text-slate-400 border-b border-slate-700 mb-1">修改標籤</div>
-      <button 
+      <button
         @click="setOverride('critical')"
         class="w-full px-3 py-1.5 text-left text-sm hover:bg-slate-700 text-rose-400"
       >🔴 重大</button>
-      <button 
+      <button
         @click="setOverride('warning')"
         class="w-full px-3 py-1.5 text-left text-sm hover:bg-slate-700 text-amber-400"
       >🟡 警告</button>
-      <button 
+      <button
         @click="setOverride('info')"
         class="w-full px-3 py-1.5 text-left text-sm hover:bg-slate-700 text-emerald-400"
       >✓ 正常</button>
       <div v-if="overrideMenuTarget.is_overridden" class="border-t border-slate-700 mt-1 pt-1">
-        <button 
+        <button
           @click="clearOverride()"
           class="w-full px-3 py-1.5 text-left text-sm hover:bg-slate-700 text-purple-400"
         >🔄 恢復自動</button>
@@ -316,55 +393,90 @@ export default {
     return {
       loading: false,
       showCategoryModal: false,
-      
+
       // 種類相關
       categories: [],
       categoryStats: [],
       categoryMembers: {},
-      
+
       // 篩選
       selectedCategories: [-1], // -1 = 全部
-      chartCategories: [],
       searchText: '',
       severityFilter: 'all',
-      
-      // 時間
-      timepoints: [],
-      selectedBeforeTime: null,
-      statistics: [],
-      
+
+      // Checkpoint 相關
+      checkpoints: [],
+      checkpointSummaries: {}, // 每個 checkpoint 的異常摘要
+      trendChartCategories: [], // 折線圖的類別資訊
+      selectedCheckpoint: null,
+      selectedDateTab: null, // 當前選中的日期分頁
+      checkpointPanelExpanded: false, // 控制 Checkpoint 選擇區收合狀態
+      currentTime: null,
+      summary: null,
+
       // 資料
       allComparisons: [],
       selectedComparison: null,
-      
+
       // 分頁
       currentPage: 1,
       pageSize: 25,
-      
-      // 圖表
-      chartOptions: null,
-      
+
       // 嚴重程度覆蓋選單
       overrideMenuTarget: null,
       overrideMenuPos: { x: 0, y: 0 },
+
+      // Polling
+      pollingInterval: null,
     };
   },
   computed: {
     selectedMaintenanceId() {
       return this.maintenanceId;
     },
-    
+
+    // 將 checkpoints 按日期分組
+    checkpointsByDate() {
+      const grouped = {};
+      for (const cp of this.checkpoints) {
+        // 解析時間戳並轉換為本地日期
+        let ts = cp.timestamp;
+        if (!ts.endsWith('Z') && !ts.includes('+')) {
+          ts = ts + 'Z';
+        }
+        const date = new Date(ts);
+        const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+        if (!grouped[dateKey]) {
+          grouped[dateKey] = [];
+        }
+        grouped[dateKey].push(cp);
+      }
+
+      // 每個日期內按時間排序（早 → 晚）
+      for (const dateKey in grouped) {
+        grouped[dateKey].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      }
+
+      return grouped;
+    },
+
+    // 日期標籤列表（按日期排序，最新在前）
+    sortedDateKeys() {
+      return Object.keys(this.checkpointsByDate).sort((a, b) => b.localeCompare(a));
+    },
+
     // 篩選後的比較結果
     filteredComparisons() {
       let result = this.allComparisons;
-      
+
       // 種類篩選（-1 = 全部，null = 未分類）
       if (!this.selectedCategories.includes(-1)) {
         result = result.filter(c => {
           // 標準化 MAC 格式（全部轉大寫）
           const normalizedMac = c.mac_address?.toUpperCase();
           const catIds = this.categoryMembers[normalizedMac] || [];
-          
+
           // 如果該 MAC 有任一分類在選擇的分類中，就顯示
           if (catIds.length === 0) {
             // 未分類的 MAC，檢查是否選擇了 null
@@ -373,7 +485,7 @@ export default {
           return catIds.some(id => this.selectedCategories.includes(id));
         });
       }
-      
+
       // 嚴重程度篩選（只有 critical、warning、undetected 才算異常，info 不算）
       if (this.severityFilter === 'critical') {
         result = result.filter(c => c.severity === 'critical');
@@ -382,23 +494,23 @@ export default {
       } else if (this.severityFilter === 'has_issues') {
         // 只有 critical、warning、undetected 才算異常
         // severity='info' 表示預期變化或無變化，不算異常
-        result = result.filter(c => 
-          c.severity === 'critical' || 
-          c.severity === 'warning' || 
+        result = result.filter(c =>
+          c.severity === 'critical' ||
+          c.severity === 'warning' ||
           c.severity === 'undetected'
         );
       }
-      
+
       // 搜尋篩選
       if (this.searchText) {
         const search = this.searchText.toLowerCase();
-        result = result.filter(c => 
+        result = result.filter(c =>
           (c.mac_address && c.mac_address.toLowerCase().includes(search)) ||
-          (c.old?.ip_address && c.old.ip_address.toLowerCase().includes(search)) ||
-          (c.new?.ip_address && c.new.ip_address.toLowerCase().includes(search))
+          (c.before?.ip_address && c.before.ip_address.toLowerCase().includes(search)) ||
+          (c.current?.ip_address && c.current.ip_address.toLowerCase().includes(search))
         );
       }
-      
+
       // 排序：重大問題 > 警告 > 其他
       const order = { critical: 1, warning: 2, info: 3 };
       result.sort((a, b) => {
@@ -406,17 +518,106 @@ export default {
         const ob = b.is_changed ? (order[b.severity] || 3) : 4;
         return oa - ob;
       });
-      
+
       return result;
     },
-    
+
     totalPages() {
       return Math.ceil(this.filteredComparisons.length / this.pageSize);
     },
-    
+
     paginatedComparisons() {
       const start = (this.currentPage - 1) * this.pageSize;
       return this.filteredComparisons.slice(start, start + this.pageSize);
+    },
+
+    // 折線圖設定
+    trendChartOption() {
+      if (!this.checkpointSummaries || Object.keys(this.checkpointSummaries).length === 0) {
+        return null;
+      }
+
+      // 按時間排序的 checkpoint keys
+      const sortedKeys = Object.keys(this.checkpointSummaries).sort();
+
+      // X 軸標籤（時間）
+      const xAxisData = sortedKeys.map(ts => {
+        let timestamp = ts;
+        if (!timestamp.endsWith('Z') && !timestamp.includes('+')) {
+          timestamp = timestamp + 'Z';
+        }
+        const date = new Date(timestamp);
+        return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:00`;
+      });
+
+      // 總體異常數系列
+      const totalSeries = {
+        name: '全部',
+        type: 'line',
+        data: sortedKeys.map(ts => this.checkpointSummaries[ts]?.issue_count || 0),
+        smooth: true,
+        lineStyle: { width: 2, color: '#6B7280' },
+        itemStyle: { color: '#6B7280' },
+        symbol: 'circle',
+        symbolSize: 6,
+      };
+
+      // 類別系列
+      const categorySeries = [];
+      if (this.trendChartCategories && this.trendChartCategories.length > 0) {
+        for (const cat of this.trendChartCategories) {
+          categorySeries.push({
+            name: cat.name,
+            type: 'line',
+            data: sortedKeys.map(ts => {
+              const byCategory = this.checkpointSummaries[ts]?.by_category;
+              return byCategory ? (byCategory[cat.id] || 0) : 0;
+            }),
+            smooth: true,
+            lineStyle: { width: 2, color: cat.color },
+            itemStyle: { color: cat.color },
+            symbol: 'circle',
+            symbolSize: 6,
+          });
+        }
+      }
+
+      return {
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: 'rgba(30, 41, 59, 0.95)',
+          borderColor: '#475569',
+          textStyle: { color: '#E2E8F0', fontSize: 12 },
+        },
+        legend: {
+          data: ['全部', ...this.trendChartCategories.map(c => c.name)],
+          textStyle: { color: '#94A3B8', fontSize: 11 },
+          top: 0,
+          itemWidth: 16,
+          itemHeight: 10,
+        },
+        grid: {
+          left: '3%',
+          right: '3%',
+          bottom: '3%',
+          top: '40px',
+          containLabel: true,
+        },
+        xAxis: {
+          type: 'category',
+          data: xAxisData,
+          axisLine: { lineStyle: { color: '#475569' } },
+          axisLabel: { color: '#94A3B8', fontSize: 10, rotate: 30 },
+        },
+        yAxis: {
+          type: 'value',
+          minInterval: 1,
+          axisLine: { lineStyle: { color: '#475569' } },
+          axisLabel: { color: '#94A3B8', fontSize: 10 },
+          splitLine: { lineStyle: { color: '#334155' } },
+        },
+        series: [totalSeries, ...categorySeries],
+      };
     },
   },
   watch: {
@@ -425,10 +626,10 @@ export default {
         // 重置所有狀態，避免顯示舊數據
         this.allComparisons = [];
         this.categoryStats = [];
-        this.statistics = [];
-        this.timepoints = [];
-        this.selectedBeforeTime = null;
-        this.chartOptions = null;
+        this.checkpoints = [];
+        this.selectedCheckpoint = null;
+        this.currentTime = null;
+        this.summary = null;
         this.currentPage = 1;
         // 清除該維護ID的localStorage狀態
         localStorage.removeItem(`comparison_state_${oldId}`);
@@ -440,26 +641,224 @@ export default {
   mounted() {
     if (this.selectedMaintenanceId) this.initialize();
   },
+  beforeUnmount() {
+    // 清理 polling
+    this.stopPolling();
+  },
   methods: {
     async initialize() {
       this.loading = true;
       try {
         await Promise.all([
           this.loadCategories(),
-          this.loadTimepoints(),
-          this.loadStatistics(),
+          this.loadCheckpoints(),
+          this.loadCheckpointSummaries(),
         ]);
-        
+
         this.restoreState();
-        
+
+        // 驗證恢復的 checkpoint 是否在當前列表中
+        const isValidCheckpoint = this.selectedCheckpoint &&
+          this.checkpoints.some(cp => cp.timestamp === this.selectedCheckpoint);
+
+        // 如果沒有選中的 checkpoint 或選中的不在列表中，使用第一個（預設）
+        if (!isValidCheckpoint && this.checkpoints.length > 0) {
+          this.selectedCheckpoint = this.checkpoints[0].timestamp;
+        }
+
+        // 設置預設的日期分頁（選中的 checkpoint 所在日期，或最新日期）
+        this.initializeDateTab();
+
+        await this.loadDiff();
         await this.loadCategoryStats();
-        await this.loadComparisons();
-        this.updateChart();
+
+        // 啟動 polling（每 60 秒）
+        this.startPolling();
       } finally {
         this.loading = false;
       }
     },
-    
+
+    // ===== Polling =====
+    startPolling() {
+      this.stopPolling(); // 確保沒有重複的 interval
+      this.pollingInterval = setInterval(() => {
+        this.refreshData();
+      }, 15000); // 15 秒
+    },
+
+    stopPolling() {
+      if (this.pollingInterval) {
+        clearInterval(this.pollingInterval);
+        this.pollingInterval = null;
+      }
+    },
+
+    async refreshData() {
+      // 靜默更新數據（不顯示 loading）
+      try {
+        await Promise.all([
+          this.loadDiff(),
+          this.loadCategoryStats(),
+          this.loadCheckpointSummaries(),
+        ]);
+      } catch (e) {
+        console.error('Polling refresh failed:', e);
+      }
+    },
+
+    // ===== Checkpoints =====
+    async loadCheckpoints() {
+      if (!this.selectedMaintenanceId) return;
+      try {
+        const res = await fetch(`/api/v1/comparisons/checkpoints/${this.selectedMaintenanceId}`);
+        if (res.ok) {
+          const data = await res.json();
+          this.checkpoints = data.checkpoints || [];
+          // 預設值設定在 initialize() 中處理，這裡只負責載入資料
+        }
+      } catch (e) {
+        console.error('載入 Checkpoints 失敗:', e);
+      }
+    },
+
+    async loadCheckpointSummaries() {
+      if (!this.selectedMaintenanceId) return;
+      try {
+        // 加入 include_categories=true 以取得類別分組統計（用於折線圖）
+        const res = await fetch(`/api/v1/comparisons/checkpoints/${this.selectedMaintenanceId}/summaries?include_categories=true`);
+        if (res.ok) {
+          const data = await res.json();
+          this.checkpointSummaries = data.summaries || {};
+          this.trendChartCategories = data.categories || [];
+        }
+      } catch (e) {
+        console.error('載入 Checkpoint 摘要失敗:', e);
+      }
+    },
+
+    async onCheckpointChange() {
+      this.saveState();
+      this.loading = true;
+      try {
+        await this.loadDiff();
+        await this.loadCategoryStats();
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    selectCheckpoint(timestamp) {
+      this.selectedCheckpoint = timestamp;
+      this.onCheckpointChange();
+    },
+
+    formatCheckpointLabel(timestamp) {
+      const cp = this.checkpoints.find(c => c.timestamp === timestamp);
+      return cp ? cp.label : this.formatTimeLabel(timestamp);
+    },
+
+    formatDateTabLabel(dateKey) {
+      // dateKey 格式: "2026-02-02"
+      const parts = dateKey.split('-');
+      return `${parts[1]}/${parts[2]}`;
+    },
+
+    formatHourLabel(timestamp) {
+      // 顯示小時:分鐘
+      let ts = timestamp;
+      if (!ts.endsWith('Z') && !ts.includes('+')) {
+        ts = ts + 'Z';
+      }
+      const date = new Date(ts);
+      const hour = String(date.getHours()).padStart(2, '0');
+      const min = String(date.getMinutes()).padStart(2, '0');
+      return `${hour}:${min}`;
+    },
+
+    isToday(dateKey) {
+      const today = new Date();
+      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      return dateKey === todayKey;
+    },
+
+    isDefaultCheckpoint(timestamp) {
+      // 第一個 checkpoint 是預設
+      return this.checkpoints.length > 0 && this.checkpoints[0].timestamp === timestamp;
+    },
+
+    initializeDateTab() {
+      // 設置預設的日期分頁
+      if (this.selectedCheckpoint && this.sortedDateKeys.length > 0) {
+        // 找出 selectedCheckpoint 所在的日期
+        let ts = this.selectedCheckpoint;
+        if (!ts.endsWith('Z') && !ts.includes('+')) {
+          ts = ts + 'Z';
+        }
+        const date = new Date(ts);
+        const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+        if (this.checkpointsByDate[dateKey]) {
+          this.selectedDateTab = dateKey;
+        } else {
+          // 預設使用最新日期
+          this.selectedDateTab = this.sortedDateKeys[0];
+        }
+      } else if (this.sortedDateKeys.length > 0) {
+        this.selectedDateTab = this.sortedDateKeys[0];
+      }
+    },
+
+    getCheckpointSummary(timestamp) {
+      // 獲取特定 checkpoint 的摘要
+      return this.checkpointSummaries[timestamp] || null;
+    },
+
+    getCheckpointBadgeClass(timestamp) {
+      const summary = this.getCheckpointSummary(timestamp);
+      if (!summary) return 'text-slate-500';
+      if (summary.issue_count > 0) return 'text-red-400'; // 有異常
+      return 'text-green-400'; // 無異常
+    },
+
+    getCheckpointBadgeText(timestamp) {
+      const summary = this.getCheckpointSummary(timestamp);
+      if (!summary) return '—';
+      // 顯示格式：異常數/總數（與「全部」卡片一致）
+      return `${summary.issue_count}/${summary.total}`;
+    },
+
+    getCheckpointTooltip(timestamp) {
+      const summary = this.getCheckpointSummary(timestamp);
+      if (!summary) return '無摘要資料';
+      if (summary.issue_count > 0) {
+        return `與現在相比有 ${summary.issue_count} 個異常（共 ${summary.total} 個設備）`;
+      }
+      return `與現在相比無異常（共 ${summary.total} 個設備）`;
+    },
+
+    // ===== Diff (Checkpoint vs Current) =====
+    async loadDiff() {
+      if (!this.selectedMaintenanceId || !this.selectedCheckpoint) return;
+      try {
+        const params = new URLSearchParams();
+        params.append('checkpoint', this.selectedCheckpoint);
+
+        const res = await fetch(`/api/v1/comparisons/diff/${this.selectedMaintenanceId}?${params}`);
+        if (res.ok) {
+          const data = await res.json();
+          this.currentTime = data.current_time;
+          this.summary = data.summary;
+          this.allComparisons = data.results || [];
+
+          // 更新分類統計（從 by_category）
+          // 這裡可以使用 diff API 返回的分類統計，但為了和原有邏輯一致，仍然呼叫 loadCategoryStats
+        }
+      } catch (e) {
+        console.error('載入 Diff 失敗:', e);
+      }
+    },
+
     // ===== 種類 =====
     async loadCategories() {
       if (!this.selectedMaintenanceId) return;
@@ -468,10 +867,7 @@ export default {
         const res = await fetch(`/api/v1/categories?maintenance_id=${encodeURIComponent(this.selectedMaintenanceId)}`);
         if (res.ok) {
           this.categories = await res.json();
-          // 初始化圖表種類選擇（包含所有分類ID + null未分類）
-          this.chartCategories = this.categories.map(c => c.id);
-          this.chartCategories.push(null); // 未分類
-          
+
           // 重新載入成員對應（一對多：一個 MAC 可屬於多個分類）
           this.categoryMembers = {};
           for (const cat of this.categories) {
@@ -489,24 +885,18 @@ export default {
             }
           }
         }
-        
-        // 重新載入統計數據、卡片、圖表和列表
-        await this.loadStatistics();  // 重新獲取圖表統計數據
-        await this.loadCategoryStats();
-        await this.loadComparisons();
-        this.updateChart();
       } catch (e) {
         console.error('載入種類失敗:', e);
       }
     },
-    
+
     async loadCategoryStats() {
       if (!this.selectedMaintenanceId) return;
       try {
-        // 使用當前選擇的 before_time，確保卡片和列表數據一致
+        // 使用當前選擇的 checkpoint，確保卡片和列表數據一致
         const params = new URLSearchParams();
-        if (this.selectedBeforeTime) {
-          params.append('before_time', this.selectedBeforeTime);
+        if (this.selectedCheckpoint) {
+          params.append('before_time', this.selectedCheckpoint);
         }
         const url = `/api/v1/categories/stats/${this.selectedMaintenanceId}?${params}`;
         const res = await fetch(url);
@@ -517,14 +907,14 @@ export default {
         console.error('載入種類統計失敗:', e);
       }
     },
-    
+
     getMacCategoryIds(mac) {
       // 標準化 MAC 格式（全部轉大寫）以確保匹配
       // 返回陣列（一個 MAC 可屬於多個分類）
       const normalizedMac = mac?.toUpperCase();
       return this.categoryMembers[normalizedMac] || [];
     },
-    
+
     getCategoryName(mac) {
       // 返回所有分類名稱，用逗號分隔
       const catIds = this.getMacCategoryIds(mac);
@@ -535,7 +925,7 @@ export default {
         .map(c => c.name);
       return names.length > 0 ? names.join(', ') : null;
     },
-    
+
     getCategoryColor(mac) {
       // 返回第一個分類的顏色
       const catIds = this.getMacCategoryIds(mac);
@@ -543,7 +933,7 @@ export default {
       const cat = this.categories.find(c => c.id === catIds[0]);
       return cat ? cat.color : '#6B7280';
     },
-    
+
     toggleCategoryFilter(catId) {
       if (catId === -1) {
         this.selectedCategories = [-1];
@@ -562,275 +952,57 @@ export default {
       this.currentPage = 1;
       this.saveState();
     },
-    
-    toggleChartCategory(catId) {
-      const idx = this.chartCategories.indexOf(catId);
-      if (idx >= 0) {
-        this.chartCategories.splice(idx, 1);
-      } else {
-        this.chartCategories.push(catId);
-      }
-      this.updateChart();
-      this.saveState();
-    },
-    
-    // ===== 時間 =====
-    async loadTimepoints() {
-      if (!this.selectedMaintenanceId) return;
-      try {
-        const res = await fetch(`/api/v1/comparisons/timepoints/${this.selectedMaintenanceId}`);
-        if (res.ok) {
-          const data = await res.json();
-          this.timepoints = data.timepoints || [];
-          if (this.timepoints.length > 0 && !this.selectedBeforeTime) {
-            this.selectedBeforeTime = this.timepoints[0].timestamp;
-          }
-        }
-      } catch (e) {
-        console.error('載入時間點失敗:', e);
-      }
-    },
-    
-    async onBeforeTimeChange() {
-      this.saveState();
-      // 同時更新卡片統計和列表，確保數據一致
-      await Promise.all([
-        this.loadCategoryStats(),
-        this.loadComparisons(),
-      ]);
-      // 更新圖表以移動虛線
-      this.updateChart();
-    },
-    
-    // ===== 統計 =====
-    async loadStatistics() {
-      if (!this.selectedMaintenanceId) return;
-      try {
-        const res = await fetch(`/api/v1/comparisons/statistics/${this.selectedMaintenanceId}`);
-        if (res.ok) {
-          const data = await res.json();
-          this.statistics = data.statistics || [];
-        }
-      } catch (e) {
-        console.error('載入統計失敗:', e);
-      }
-    },
-    
-    // ===== 比較資料 =====
-    async loadComparisons() {
-      if (!this.selectedMaintenanceId) return;
-      this.loading = true;
-      try {
-        const params = new URLSearchParams();
-        if (this.selectedBeforeTime) {
-          params.append('before_time', this.selectedBeforeTime);
-        }
-        const res = await fetch(`/api/v1/comparisons/list/${this.selectedMaintenanceId}?${params}`);
-        if (res.ok) {
-          const data = await res.json();
-          this.allComparisons = data.results || [];
-        }
-      } catch (e) {
-        console.error('載入比較結果失敗:', e);
-      } finally {
-        this.loading = false;
-      }
-    },
-    
-    // ===== 圖表 =====
-    updateChart() {
-      // 折線時間趨勢圖：橫軸時間，縱軸異常數，每個機台種類一條折線
-      if (this.statistics.length === 0) {
-        this.chartOptions = null;
-        return;
-      }
-      
-      // 時間標籤
-      const timeLabels = this.statistics.map(s => s.label);
-      
-      // 從第一個時間點獲取所有分類
-      const firstStat = this.statistics[0];
-      const byUserCategory = firstStat.by_user_category || {};
-      
-      // 建立每個分類的折線數據
-      const series = [];
-      const legendData = [];
-      
-      for (const [catKey, catData] of Object.entries(byUserCategory)) {
-        const catName = catData.name || (catKey === 'null' ? '未分類' : `分類${catKey}`);
-        const catColor = catData.color || '#6B7280';
-        
-        // 該分類在每個時間點的異常數
-        const issueData = this.statistics.map(stat => {
-          const byCat = stat.by_user_category || {};
-          const thisCat = byCat[catKey] || {};
-          return thisCat.has_issues || 0;
-        });
-        
-        // 顯示所有分類的折線（包含 total=0 的分類）
-        legendData.push(catName);
-        series.push({
-          name: catName,
-          type: 'line',
-          smooth: true,
-          symbol: 'circle',
-          symbolSize: 6,
-          data: issueData,
-          itemStyle: { color: catColor },
-          lineStyle: { color: catColor, width: 2 },
-        });
-      }
-      
-      if (series.length === 0) {
-        this.chartOptions = null;
-        return;
-      }
-      
-      // 簡化的時間標籤（只顯示 MM/DD HH:mm）
-      const shortTimeLabels = this.statistics.map(s => {
-        const ts = s.timestamp;
-        return this.formatTimeLabel(ts);
-      });
-      
-      // 找到當前選中時間點的索引
-      const selectedIndex = this.statistics.findIndex(s => s.timestamp === this.selectedBeforeTime);
-      
-      this.chartOptions = {
-        tooltip: {
-          trigger: 'axis',
-          formatter: params => {
-            // 使用完整時間標籤
-            const idx = params[0].dataIndex;
-            const stat = this.statistics[idx];
-            const fullLabel = stat?.label || params[0].axisValue;
-            let html = `<b>${fullLabel}</b><br/>`;
-            params.forEach(p => {
-              // 從統計數據中獲取該分類的詳細信息
-              const catKey = Object.keys(stat?.by_user_category || {}).find(k => {
-                const cat = stat.by_user_category[k];
-                return cat.name === p.seriesName;
-              });
-              const catData = catKey ? stat.by_user_category[catKey] : null;
-              const undetected = catData?.undetected || 0;
-              const total = catData?.total || 0;
-              // 使用後端計算的 normal 值
-              const normalCount = catData?.normal || 0;
-              
-              html += `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.color};margin-right:5px;"></span>`;
-              html += `${p.seriesName}: <b>${p.value}</b> 異常`;
-              if (undetected > 0) {
-                html += ` / <span style="color:#999">${undetected} 未偵測</span>`;
-              }
-              html += ` / ${normalCount} 正常 (共 ${total})<br/>`;
-            });
-            return html;
-          },
-        },
-        legend: {
-          show: true,
-          top: 0,
-          data: legendData,
-          textStyle: { color: '#94A3B8' },
-        },
-        grid: { left: '3%', right: '4%', bottom: '40px', top: '40px', containLabel: true },
-        xAxis: {
-          type: 'category',
-          boundaryGap: false,
-          data: shortTimeLabels,
-          axisLabel: { 
-            rotate: 0,
-            fontSize: 11,
-            color: '#64748B',
-          },
-          axisLine: { lineStyle: { color: '#334155' } },
-        },
-        yAxis: {
-          type: 'value',
-          name: '異常數',
-          minInterval: 1,
-          nameTextStyle: { color: '#94A3B8' },
-          axisLabel: { color: '#64748B' },
-          axisLine: { lineStyle: { color: '#334155' } },
-          splitLine: { lineStyle: { color: '#1E293B' } },
-        },
-        // 標記當前選中的時間點（加粗虛線）
-        series: series.map(s => ({
-          ...s,
-          markLine: selectedIndex >= 0 ? {
-            silent: true,
-            symbol: 'none',
-            data: [{ xAxis: selectedIndex }],
-            lineStyle: { color: '#3B82F6', type: 'dashed', width: 4 },
-            label: { show: false },
-          } : undefined,
-        })),
-      };
-    },
-    
-    handleChartClick(e) {
-      if (e.dataIndex !== undefined && this.statistics[e.dataIndex]) {
-        this.selectedBeforeTime = this.statistics[e.dataIndex].timestamp;
-        this.onBeforeTimeChange();
-      }
-    },
-    
-    handleDataZoom(e) {
-      // 當滑塊拖動時，選擇對應的時間點
-      if (e.batch && e.batch[0]) {
-        const startValue = e.batch[0].startValue;
-        if (startValue !== undefined && this.statistics[startValue]) {
-          this.selectedBeforeTime = this.statistics[startValue].timestamp;
-          this.onBeforeTimeChange();
-        }
-      }
-    },
-    
-    formatTimeLabel(timestamp) {
-      // 格式化時間標籤為更簡短的格式
-      if (!timestamp) return '';
-      try {
-        const date = new Date(timestamp);
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hour = String(date.getHours()).padStart(2, '0');
-        const min = String(date.getMinutes()).padStart(2, '0');
-        return `${month}/${day} ${hour}:${min}`;
-      } catch {
-        return timestamp;
-      }
-    },
-    
+
     // ===== 狀態保存 =====
     saveState() {
       const state = {
-        selectedBeforeTime: this.selectedBeforeTime,
+        selectedCheckpoint: this.selectedCheckpoint,
         selectedCategories: this.selectedCategories,
-        chartCategories: this.chartCategories,
         searchText: this.searchText,
         severityFilter: this.severityFilter,
         pageSize: this.pageSize,
       };
       localStorage.setItem(`comparison_state_${this.selectedMaintenanceId}`, JSON.stringify(state));
     },
-    
+
     restoreState() {
       const saved = localStorage.getItem(`comparison_state_${this.selectedMaintenanceId}`);
       if (saved) {
         const state = JSON.parse(saved);
-        this.selectedBeforeTime = state.selectedBeforeTime || this.selectedBeforeTime;
+        this.selectedCheckpoint = state.selectedCheckpoint || this.selectedCheckpoint;
         this.selectedCategories = state.selectedCategories || [-1];
-        // 不恢復 chartCategories，讓它使用 loadCategories 中初始化的值（包含所有分類）
         this.searchText = state.searchText || '';
         this.severityFilter = state.severityFilter || 'all';
         this.pageSize = state.pageSize || 25;
       }
     },
-    
+
     onSearchChange() {
       this.currentPage = 1;
       this.saveState();
     },
-    
+
+    formatTimeLabel(timestamp) {
+      // 格式化時間標籤為更簡短的格式（後端傳來的是 UTC 時間）
+      if (!timestamp) return '';
+      try {
+        // 後端傳來的時間是 UTC，需要加上 Z 後綴讓 JS 正確解析並轉換為本地時間
+        let ts = timestamp;
+        if (!ts.endsWith('Z') && !ts.includes('+')) {
+          ts = ts + 'Z';
+        }
+        const date = new Date(ts);
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hour = String(date.getHours()).padStart(2, '0');
+        const min = String(date.getMinutes()).padStart(2, '0');
+        const sec = String(date.getSeconds()).padStart(2, '0');
+        return `${month}/${day} ${hour}:${min}:${sec}`;
+      } catch {
+        return timestamp;
+      }
+    },
+
     // ===== 輔助 =====
     getLimitedDifferences(differences, limit) {
       // 只返回前 N 個差異項
@@ -843,7 +1015,7 @@ export default {
       });
       return limited;
     },
-    
+
     getFieldLabel(field) {
       const labels = {
         switch_hostname: '交換機',
@@ -859,13 +1031,13 @@ export default {
       };
       return labels[field] || field;
     },
-    
+
     formatValue(v) {
       if (v === null || v === undefined) return '無';
       if (typeof v === 'boolean') return v ? '✓' : '✗';
       return String(v);
     },
-    
+
     getBorderClass(c) {
       if (c.severity === 'undetected') return 'border-gray-400';
       if (c.severity === 'critical') return 'border-red-500';
@@ -875,7 +1047,7 @@ export default {
       if (c.is_changed) return 'border-blue-500';
       return 'border-green-500';
     },
-    
+
     getSeverityBadgeClass(c) {
       if (c.severity === 'undetected') return 'px-2 py-1 bg-slate-600 text-slate-300 rounded text-xs font-semibold';
       if (c.severity === 'critical') return 'px-2 py-1 bg-rose-900/50 text-rose-400 rounded text-xs font-semibold';
@@ -885,13 +1057,13 @@ export default {
       if (c.is_changed) return 'px-2 py-1 bg-sky-900/50 text-sky-400 rounded text-xs font-semibold';
       return 'px-2 py-1 bg-emerald-900/50 text-emerald-400 rounded text-xs font-semibold';
     },
-    
+
     getSeverityText(c) {
       if (c.severity === 'undetected') {
         // 顯示哪個階段未偵測
-        if (!c.old_detected && !c.new_detected) return '⚫ 未偵測';
-        if (!c.old_detected) return '⚫ OLD未偵測';
-        if (!c.new_detected) return '⚫ NEW未偵測';
+        if (!c.before_detected && !c.current_detected) return '⚫ 未偵測';
+        if (!c.before_detected) return '⚫ Before未偵測';
+        if (!c.current_detected) return '⚫ Current未偵測';
         return '⚫ 未偵測';
       }
       if (c.severity === 'critical') return '🔴 重大';
@@ -901,7 +1073,7 @@ export default {
       if (c.is_changed) return 'ℹ️ 變化';
       return '✓ 正常';
     },
-    
+
     getIssueCountClass(stat) {
       // 如果全部都是未偵測，顯示灰色
       if (stat.total_count > 0 && stat.total_count === stat.undetected_count) {
@@ -910,11 +1082,11 @@ export default {
       // 有異常顯示紅色，否則顯示綠色 - 使用更鮮明的顏色
       return stat.issue_count > 0 ? 'text-red-400' : 'text-green-400';
     },
-    
+
     selectComparison(c) {
       this.selectedComparison = c;
     },
-    
+
     isFieldChanged(field) {
       // 檢查該欄位是否有變化
       if (!this.selectedComparison || !this.selectedComparison.differences) {
@@ -922,25 +1094,25 @@ export default {
       }
       return field in this.selectedComparison.differences;
     },
-    
+
     isExpectedChange(comparison) {
       // 檢查是否為預期變化（有設備對應的 switch/interface 變化）
       // 當 is_changed=true 但 severity=info 時，表示變化是預期的
       return comparison.is_changed && comparison.severity === 'info';
     },
-    
+
     exportCSV() {
       const rows = this.filteredComparisons;
       if (!rows.length) return;
-      
-      // 完整欄位：包含 OLD 和 NEW 所有資料
+
+      // 完整欄位：包含 Before 和 Current 所有資料
       const headers = [
         'MAC', '種類',
-        'OLD_IP', 'OLD_交換機', 'OLD_連接埠', 'OLD_VLAN', 'OLD_速率', 'OLD_雙工', 'OLD_連接狀態', 'OLD_Ping', 'OLD_ACL',
-        'NEW_IP', 'NEW_交換機', 'NEW_連接埠', 'NEW_VLAN', 'NEW_速率', 'NEW_雙工', 'NEW_連接狀態', 'NEW_Ping', 'NEW_ACL',
+        'Before_IP', 'Before_交換機', 'Before_連接埠', 'Before_速率', 'Before_雙工', 'Before_連接狀態', 'Before_Ping', 'Before_ACL',
+        'Current_IP', 'Current_交換機', 'Current_連接埠', 'Current_速率', 'Current_雙工', 'Current_連接狀態', 'Current_Ping', 'Current_ACL',
         '狀態', '嚴重程度', '差異說明',
       ];
-      
+
       const csv = [
         headers.join(','),
         ...rows.map(c => {
@@ -951,46 +1123,44 @@ export default {
           } else if (c.is_changed) {
             status = '有變化';
           }
-          
+
           // 嚴重程度翻譯
-          const severityMap = { 
-            critical: '重大', 
-            warning: '警告', 
-            info: '正常', 
-            undetected: '未偵測' 
+          const severityMap = {
+            critical: '重大',
+            warning: '警告',
+            info: '正常',
+            undetected: '未偵測'
           };
           const severityText = severityMap[c.severity] || c.severity || '';
-          
+
           // 差異說明：將 _status 改為更易懂的名稱
           const diffKeys = Object.keys(c.differences || {});
           const diffExplain = diffKeys.map(k => {
             if (k === '_status') return '偵測狀態變化';
             return this.getFieldLabel(k);
           }).join('; ');
-          
+
           return [
             c.mac_address,
             this.getCategoryName(c.mac_address) || '未分類',
-            // OLD 資料
-            c.old?.ip_address || '',
-            c.old?.switch_hostname || '',
-            c.old?.interface_name || '',
-            c.old?.vlan_id || '',
-            c.old?.speed || '',
-            c.old?.duplex || '',
-            c.old?.link_status || '',
-            c.old?.ping_reachable === true ? '是' : (c.old?.ping_reachable === false ? '否' : ''),
-            c.old?.acl_passes === true ? '是' : (c.old?.acl_passes === false ? '否' : ''),
-            // NEW 資料
-            c.new?.ip_address || '',
-            c.new?.switch_hostname || '',
-            c.new?.interface_name || '',
-            c.new?.vlan_id || '',
-            c.new?.speed || '',
-            c.new?.duplex || '',
-            c.new?.link_status || '',
-            c.new?.ping_reachable === true ? '是' : (c.new?.ping_reachable === false ? '否' : ''),
-            c.new?.acl_passes === true ? '是' : (c.new?.acl_passes === false ? '否' : ''),
+            // Before 資料
+            c.before?.ip_address || '',
+            c.before?.switch_hostname || '',
+            c.before?.interface_name || '',
+            c.before?.speed || '',
+            c.before?.duplex || '',
+            c.before?.link_status || '',
+            c.before?.ping_reachable === true ? '✓' : c.before?.ping_reachable === false ? '✗' : '',
+            c.before?.acl_passes === true ? '✓' : c.before?.acl_passes === false ? '✗' : '',
+            // Current 資料
+            c.current?.ip_address || '',
+            c.current?.switch_hostname || '',
+            c.current?.interface_name || '',
+            c.current?.speed || '',
+            c.current?.duplex || '',
+            c.current?.link_status || '',
+            c.current?.ping_reachable === true ? '✓' : c.current?.ping_reachable === false ? '✗' : '',
+            c.current?.acl_passes === true ? '✓' : c.current?.acl_passes === false ? '✗' : '',
             // 狀態
             status,
             severityText,
@@ -998,39 +1168,39 @@ export default {
           ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
         })
       ].join('\n');
-      
+
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
       link.download = `comparison_${this.selectedMaintenanceId}_${new Date().toISOString().slice(0,10)}.csv`;
       link.click();
     },
-    
+
     // ===== 嚴重程度覆蓋 =====
     openOverrideMenu(comparison, event) {
       this.overrideMenuTarget = comparison;
       // 定位選單
       const rect = event.target.getBoundingClientRect();
       const menuHeight = 150; // 選單大約高度
-      
+
       // 判斷是否接近底部，如果是則向上彈出
       const spaceBelow = window.innerHeight - rect.bottom;
       const showAbove = spaceBelow < menuHeight;
-      
+
       this.overrideMenuPos = {
         x: Math.min(rect.left, window.innerWidth - 160),
         y: showAbove ? rect.top - menuHeight : rect.bottom + 4,
       };
     },
-    
+
     async setOverride(severity) {
       if (!this.overrideMenuTarget) return;
       const mac = this.overrideMenuTarget.mac_address;
       // 確保正確獲取原始嚴重程度（未覆蓋時使用當前 severity）
-      const original = this.overrideMenuTarget.is_overridden 
-        ? this.overrideMenuTarget.auto_severity 
+      const original = this.overrideMenuTarget.is_overridden
+        ? this.overrideMenuTarget.auto_severity
         : this.overrideMenuTarget.severity;
-      
+
       try {
         const res = await fetch(`/api/v1/comparisons/overrides/${this.selectedMaintenanceId}`, {
           method: 'POST',
@@ -1041,7 +1211,7 @@ export default {
             original_severity: original,
           }),
         });
-        
+
         if (res.ok) {
           // 更新本地數據
           const idx = this.allComparisons.findIndex(c => c.mac_address === mac);
@@ -1050,25 +1220,28 @@ export default {
             this.allComparisons[idx].is_overridden = true;
             this.allComparisons[idx].original_severity = original;
           }
-          // 重新載入統計數據（更新卡片異常數）
-          await this.loadCategoryStats();
+          // 重新載入統計數據（更新卡片異常數和 Checkpoint 摘要）
+          await Promise.all([
+            this.loadCategoryStats(),
+            this.loadCheckpointSummaries(),
+          ]);
         }
       } catch (e) {
         console.error('設置覆蓋失敗:', e);
       }
-      
+
       this.overrideMenuTarget = null;
     },
-    
+
     async clearOverride() {
       if (!this.overrideMenuTarget) return;
       const mac = this.overrideMenuTarget.mac_address;
-      
+
       try {
         const res = await fetch(`/api/v1/comparisons/overrides/${this.selectedMaintenanceId}/${encodeURIComponent(mac)}`, {
           method: 'DELETE',
         });
-        
+
         if (res.ok) {
           const data = await res.json();
           // 更新本地數據，恢復原始嚴重程度
@@ -1079,16 +1252,19 @@ export default {
             this.allComparisons[idx].is_overridden = false;
             this.allComparisons[idx].original_severity = null;
           }
-          // 重新載入統計數據（更新卡片異常數）
-          await this.loadCategoryStats();
+          // 重新載入統計數據（更新卡片異常數和 Checkpoint 摘要）
+          await Promise.all([
+            this.loadCategoryStats(),
+            this.loadCheckpointSummaries(),
+          ]);
         }
       } catch (e) {
         console.error('清除覆蓋失敗:', e);
       }
-      
+
       this.overrideMenuTarget = null;
     },
-    
+
     getAutoSeverityText(severity) {
       const map = {
         critical: '🔴 重大',

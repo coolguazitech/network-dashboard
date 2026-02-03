@@ -24,7 +24,7 @@
       <div class="w-full bg-slate-700 rounded-full h-2">
         <div
           class="h-2 rounded-full transition-all duration-500"
-          :class="getProgressBarColor(summary.overall.pass_rate)"
+          :class="getProgressBarColor(summary.overall)"
           :style="{ width: summary.overall.pass_rate + '%' }"
         ></div>
       </div>
@@ -36,8 +36,11 @@
         v-for="[type, indicator] in sortedIndicators"
         :key="type"
         @click="selectIndicator(type)"
-        class="bg-slate-800/80 rounded cursor-pointer transition overflow-hidden hover:bg-slate-700/80 border"
-        :class="selectedIndicator === type ? 'border-cyan-500 ring-1 ring-cyan-500/50' : 'border-slate-600'"
+        :class="[
+          getCardBgColor(indicator),
+          'rounded cursor-pointer transition overflow-hidden border hover:brightness-110',
+          selectedIndicator === type ? 'border-cyan-500 ring-1 ring-cyan-500/50' : 'border-slate-600'
+        ]"
       >
         <div class="px-3 py-2">
           <!-- 頂部：圖標 + 標題 -->
@@ -46,7 +49,10 @@
               <span class="text-lg">{{ getIcon(type) }}</span>
               <span class="text-white font-semibold text-sm">{{ getTitle(type) }}</span>
             </div>
-            <span v-if="indicator.fail_count > 0" class="text-xs px-1.5 py-0.5 bg-red-900/50 text-red-400 rounded font-medium">
+            <span v-if="indicator.total_count === 0" class="text-xs px-1.5 py-0.5 bg-slate-700/50 text-slate-400 rounded font-medium">
+              — 無資料
+            </span>
+            <span v-else-if="indicator.fail_count > 0" class="text-xs px-1.5 py-0.5 bg-red-900/50 text-red-400 rounded font-medium">
               {{ indicator.fail_count }} 失敗
             </span>
             <span v-else class="text-xs px-1.5 py-0.5 bg-green-900/50 text-green-400 rounded font-medium">
@@ -56,22 +62,23 @@
           
           <!-- 通過率 -->
           <div class="flex items-end justify-between">
-            <div class="text-2xl font-black" :class="getPassRateColor(indicator.pass_rate)">
-              {{ Math.round(indicator.pass_rate) }}%
+            <div class="text-2xl font-black" :class="getPassRateColor(indicator)">
+              {{ indicator.total_count === 0 ? '—' : Math.round(indicator.pass_rate) + '%' }}
             </div>
             <div class="text-right text-xs text-slate-400">
               {{ indicator.pass_count }}/{{ indicator.total_count }}
             </div>
           </div>
-          
-          <!-- 迷你進度條 -->
-          <div class="mt-1.5 w-full bg-slate-700 rounded-full h-1">
+
+          <!-- 迷你進度條（無資料時隱藏） -->
+          <div v-if="indicator.total_count > 0" class="mt-1.5 w-full bg-slate-700 rounded-full h-1">
             <div
               class="h-1 rounded-full transition-all"
-              :class="getProgressBarColor(indicator.pass_rate)"
+              :class="getProgressBarColor(indicator)"
               :style="{ width: indicator.pass_rate + '%' }"
             ></div>
           </div>
+          <div v-else class="mt-1.5 h-1"></div>
         </div>
       </div>
     </div>
@@ -124,6 +131,12 @@
         </table>
       </div>
       
+      <!-- 無資料 -->
+      <div v-else-if="!selectedIndicatorData || selectedIndicatorData.total_count === 0" class="text-center py-8 text-slate-400 bg-slate-900/40 rounded">
+        <div class="text-4xl mb-2">📭</div>
+        <p>尚無資料</p>
+      </div>
+      <!-- 全部通過 -->
       <div v-else class="text-center py-8 text-slate-400 bg-slate-900/40 rounded">
         <div class="text-4xl mb-2">✅</div>
         <p>無失敗項目 - 所有檢查都通過了！</p>
@@ -166,6 +179,11 @@ const summary = ref({
 const selectedIndicator = ref('transceiver')
 const indicatorDetails = ref(null)
 
+// 取得當前選中指標的資料
+const selectedIndicatorData = computed(() => {
+  return summary.value.indicators[selectedIndicator.value] || null
+})
+
 const overallPassRate = computed(() => Math.round(summary.value.overall.pass_rate))
 
 const overallStatusColor = computed(() => {
@@ -203,16 +221,48 @@ const getIcon = (type) => {
   return icons[type] || '📊'
 }
 
-const getPassRateColor = (rate) => {
-  if (rate === 100) return 'text-green-400'
-  if (rate >= 80) return 'text-yellow-400'
-  return 'text-red-400'
+// 判斷指標狀態類型
+const getIndicatorStatus = (indicator) => {
+  if (indicator.total_count === 0) return 'no-data'
+  if (indicator.pass_rate === 100) return 'success'
+  if (indicator.pass_rate >= 80) return 'warning'
+  return 'error'
 }
 
-const getProgressBarColor = (rate) => {
-  if (rate === 100) return 'bg-green-500'
-  if (rate >= 80) return 'bg-yellow-500'
-  return 'bg-red-500'
+// 卡片背景色（淡色漸層）
+const getCardBgColor = (indicator) => {
+  const status = getIndicatorStatus(indicator)
+  switch (status) {
+    case 'no-data': return 'bg-slate-700/50'
+    case 'success': return 'bg-green-900/30'
+    case 'warning': return 'bg-yellow-900/20'
+    case 'error': return 'bg-red-900/30'
+    default: return 'bg-slate-800/80'
+  }
+}
+
+// 通過率文字顏色
+const getPassRateColor = (indicator) => {
+  const status = getIndicatorStatus(indicator)
+  switch (status) {
+    case 'no-data': return 'text-slate-400'
+    case 'success': return 'text-green-400'
+    case 'warning': return 'text-yellow-400'
+    case 'error': return 'text-red-400'
+    default: return 'text-slate-400'
+  }
+}
+
+// Progress Bar 顏色
+const getProgressBarColor = (indicator) => {
+  const status = getIndicatorStatus(indicator)
+  switch (status) {
+    case 'no-data': return 'bg-slate-600'
+    case 'success': return 'bg-green-500'
+    case 'warning': return 'bg-yellow-500'
+    case 'error': return 'bg-red-500'
+    default: return 'bg-slate-600'
+  }
 }
 
 const getColumnTitle = (type) => {

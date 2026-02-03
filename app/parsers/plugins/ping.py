@@ -63,6 +63,14 @@ class CiscoNxosPingParser(BaseParser[PingData]):
             )
         ]
 
+class CiscoIosPingParser(CiscoNxosPingParser):
+    """Parser for Cisco IOS Ping."""
+    vendor = VendorType.CISCO
+    platform = PlatformType.CISCO_IOS
+    indicator_type = "ping"
+    command = "ping"
+
+
 class HpePingParser(CiscoNxosPingParser):
     """Parser for HPE Ping."""
     vendor = VendorType.HPE
@@ -73,4 +81,5 @@ class HpePingParser(CiscoNxosPingParser):
 
 # Register parsers
 parser_registry.register(CiscoNxosPingParser())
+parser_registry.register(CiscoIosPingParser())
 parser_registry.register(HpePingParser())

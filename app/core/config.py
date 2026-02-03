@@ -47,6 +47,14 @@ class Settings(BaseSettings):
             "When False, uses ExternalApiClient pointing at EXTERNAL_API_SERVER."
         ),
     )
+    mock_ping_converge_time: int = Field(
+        default=600,
+        description=(
+            "Mock ping convergence time in seconds. "
+            "Devices become reachable within this time window. "
+            "Default is 600 (10 minutes). Set to 0 for instant reachability."
+        ),
+    )
 
     # Application
     app_name: str = Field(

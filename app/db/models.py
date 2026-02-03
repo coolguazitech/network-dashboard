@@ -213,7 +213,6 @@ class ArpSource(Base):
         nullable=False,
     )
     hostname: Mapped[str] = mapped_column(String(255), index=True)
-    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
     priority: Mapped[int] = mapped_column(
         Integer,
         default=100,
@@ -692,15 +691,25 @@ class Checkpoint(Base):
 class ReferenceClient(Base):
     """
     Reference Client model for always-on test machines.
-    
+
     不斷電機台：歲修期間不會關機的測試設備，
     用於驗證網路連通性，理論上歲修前後應該保持一致。
+
+    每個歲修有自己獨立的不斷電機台清單，避免資料混淆。
     """
-    
+
     __tablename__ = "reference_clients"
-    
+    __table_args__ = (
+        # MAC 地址在同一歲修內唯一
+        UniqueConstraint(
+            "maintenance_id", "mac_address",
+            name="uq_reference_client_maintenance_mac"
+        ),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
-    mac_address = Column(String(17), unique=True, index=True, nullable=False)
+    maintenance_id = Column(String(100), index=True, nullable=False)  # 歲修專屬
+    mac_address = Column(String(17), index=True, nullable=False)
     description = Column(String(200), nullable=True)
     location = Column(String(200), nullable=True)
     reason = Column(Text, nullable=True)
@@ -739,9 +748,9 @@ class ClientCategory(Base):
     """
     
     __tablename__ = "client_categories"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    maintenance_id = Column(String(100), index=True, nullable=True)  # 歲修專屬
+    maintenance_id = Column(String(100), index=True, nullable=False)  # 歲修專屬（必填）
     name = Column(String(100), nullable=False)
     description = Column(String(500), nullable=True)
     color = Column(String(20), nullable=True)  # 用於前端顯示的顏色代碼
@@ -875,9 +884,13 @@ class MaintenanceDeviceList(Base):
     
     # 對應設定
     use_same_port = Column(Boolean, default=True)  # 是否同埠對應
-    
-    # 可達性狀態（檢查新設備）
-    is_reachable = Column(Boolean, nullable=True)  # NULL=未檢查
+
+    # 可達性狀態（舊設備）
+    old_is_reachable = Column(Boolean, nullable=True)  # NULL=未檢查
+    old_last_check_at = Column(DateTime, nullable=True)
+
+    # 可達性狀態（新設備）- 保留原欄位名稱以維持相容性
+    is_reachable = Column(Boolean, nullable=True)  # NULL=未檢查 (新設備)
     last_check_at = Column(DateTime, nullable=True)
     
     # 備註（選填）

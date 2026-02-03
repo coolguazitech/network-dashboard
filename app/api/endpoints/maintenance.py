@@ -14,17 +14,39 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_async_session
+from sqlalchemy import text
+
 from app.db.models import (
+    # Config & Checkpoints
     Checkpoint,
     ReferenceClient,
     MaintenanceConfig,
+    # Expectations
     UplinkExpectation,
+    VersionExpectation,
+    ArpSource,
+    PortChannelExpectation,
+    # Collection
     CollectionBatch,
     IndicatorResult,
+    # Typed Records
+    TransceiverRecord,
+    VersionRecord,
+    FanRecord,
+    PowerRecord,
+    PortChannelRecord,
+    PingRecord,
+    NeighborRecord,
+    InterfaceErrorRecord,
+    # Client
     ClientRecord,
     ClientComparison,
     SeverityOverride,
     ClientCategory,
+    ClientCategoryMember,
+    # Maintenance Lists
+    MaintenanceMacList,
+    MaintenanceDeviceList,
 )
 
 
@@ -73,6 +95,7 @@ class ReferenceClientCreate(BaseModel):
 
 class ReferenceClientResponse(BaseModel):
     id: int
+    maintenance_id: str
     mac_address: str
     description: str | None
     location: str | None
@@ -151,7 +174,6 @@ async def delete_maintenance(
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """刪除歲修 ID 及所有相關數據。"""
-    
     # 查找歲修配置
     stmt = select(MaintenanceConfig).where(
         MaintenanceConfig.maintenance_id == maintenance_id
@@ -163,72 +185,156 @@ async def delete_maintenance(
         raise HTTPException(status_code=404, detail="歲修 ID 不存在")
     
     deleted_counts = {}
-    
-    # 1. 刪除 UplinkExpectation
-    result = await session.execute(
-        delete(UplinkExpectation).where(
-            UplinkExpectation.maintenance_id == maintenance_id
+
+    # === 1. 刪除 Typed Records（採集記錄，先刪子表）===
+    typed_records = [
+        (TransceiverRecord, "transceiver_records"),
+        (VersionRecord, "version_records"),
+        (FanRecord, "fan_records"),
+        (PowerRecord, "power_records"),
+        (PortChannelRecord, "port_channel_records"),
+        (PingRecord, "ping_records"),
+        (NeighborRecord, "neighbor_records"),
+        (InterfaceErrorRecord, "interface_error_records"),
+    ]
+    for model, name in typed_records:
+        result = await session.execute(
+            delete(model).where(model.maintenance_id == maintenance_id)
         )
-    )
-    deleted_counts["uplink_expectations"] = result.rowcount
-    
-    # 4. 刪除 CollectionBatch（FK CASCADE 自動刪除 typed records）
+        deleted_counts[name] = result.rowcount
+
+    # === 1.5 刪除可能存在的舊表（使用 raw SQL，忽略不存在的表）===
+    raw_sql_tables = [
+        "collection_records",
+        "device_mappings",
+        "interface_mappings",
+        "uplink_records",
+    ]
+    for table in raw_sql_tables:
+        try:
+            # 先檢查表是否存在
+            check_result = await session.execute(
+                text("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = :tbl"),
+                {"tbl": table}
+            )
+            if check_result.scalar() > 0:
+                result = await session.execute(
+                    text(f"DELETE FROM {table} WHERE maintenance_id = :mid"),
+                    {"mid": maintenance_id}
+                )
+                deleted_counts[table] = result.rowcount
+            else:
+                deleted_counts[table] = 0
+        except Exception:
+            # 忽略任何錯誤
+            deleted_counts[table] = 0
+
+    # === 2. 刪除 CollectionBatch ===
     result = await session.execute(
         delete(CollectionBatch).where(
             CollectionBatch.maintenance_id == maintenance_id
         )
     )
     deleted_counts["collection_batches"] = result.rowcount
-    
-    # 5. 刪除 IndicatorResult
-    result = await session.execute(
-        delete(IndicatorResult).where(
-            IndicatorResult.maintenance_id == maintenance_id
+
+    # === 3. 刪除期望值 ===
+    expectations = [
+        (UplinkExpectation, "uplink_expectations"),
+        (VersionExpectation, "version_expectations"),
+        (ArpSource, "arp_sources"),
+        (PortChannelExpectation, "port_channel_expectations"),
+    ]
+    for model, name in expectations:
+        result = await session.execute(
+            delete(model).where(model.maintenance_id == maintenance_id)
         )
-    )
-    deleted_counts["indicator_results"] = result.rowcount
-    
-    # 6. 刪除 ClientRecord
+        deleted_counts[name] = result.rowcount
+
+    # === 4. 刪除 Client 相關 ===
     result = await session.execute(
         delete(ClientRecord).where(
             ClientRecord.maintenance_id == maintenance_id
         )
     )
     deleted_counts["client_records"] = result.rowcount
-    
-    # 7. 刪除 ClientComparison
+
     result = await session.execute(
         delete(ClientComparison).where(
             ClientComparison.maintenance_id == maintenance_id
         )
     )
     deleted_counts["client_comparisons"] = result.rowcount
-    
-    # 8. 刪除 Checkpoint
-    result = await session.execute(
-        delete(Checkpoint).where(
-            Checkpoint.maintenance_id == maintenance_id
-        )
-    )
-    deleted_counts["checkpoints"] = result.rowcount
-    
-    # 9. 刪除 SeverityOverride
+
     result = await session.execute(
         delete(SeverityOverride).where(
             SeverityOverride.maintenance_id == maintenance_id
         )
     )
     deleted_counts["severity_overrides"] = result.rowcount
-    
-    # 10. 刪除 ClientCategory（歲修專屬分類）
+
+    # 先刪除分類成員（FK 依賴 client_categories）
+    # 取得該歲修的所有分類 ID
+    cat_stmt = select(ClientCategory.id).where(
+        ClientCategory.maintenance_id == maintenance_id
+    )
+    cat_result = await session.execute(cat_stmt)
+    category_ids = [row[0] for row in cat_result.fetchall()]
+
+    if category_ids:
+        result = await session.execute(
+            delete(ClientCategoryMember).where(
+                ClientCategoryMember.category_id.in_(category_ids)
+            )
+        )
+        deleted_counts["client_category_members"] = result.rowcount
+    else:
+        deleted_counts["client_category_members"] = 0
+
     result = await session.execute(
         delete(ClientCategory).where(
             ClientCategory.maintenance_id == maintenance_id
         )
     )
     deleted_counts["client_categories"] = result.rowcount
-    
-    # 11. 最後刪除歲修配置本身
+
+    # === 5. 刪除 Maintenance 資料清單 ===
+    result = await session.execute(
+        delete(MaintenanceMacList).where(
+            MaintenanceMacList.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["mac_list"] = result.rowcount
+
+    result = await session.execute(
+        delete(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["device_list"] = result.rowcount
+
+    # === 6. 刪除 Checkpoint、ReferenceClient 和 IndicatorResult ===
+    result = await session.execute(
+        delete(Checkpoint).where(
+            Checkpoint.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["checkpoints"] = result.rowcount
+
+    result = await session.execute(
+        delete(ReferenceClient).where(
+            ReferenceClient.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["reference_clients"] = result.rowcount
+
+    result = await session.execute(
+        delete(IndicatorResult).where(
+            IndicatorResult.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["indicator_results"] = result.rowcount
+
+    # === 7. 最後刪除歲修配置本身 ===
     await session.delete(config)
     
     await session.commit()
@@ -309,58 +415,100 @@ async def delete_checkpoint(
 
 
 # ===== Reference Client Endpoints =====
+# 不斷電機台現在以 maintenance_id 區分，每個歲修有獨立的清單
 
-@router.get("/reference-clients", response_model=list[ReferenceClientResponse])
+@router.get("/{maintenance_id}/reference-clients", response_model=list[ReferenceClientResponse])
 async def get_reference_clients(
+    maintenance_id: str,
     session: AsyncSession = Depends(get_async_session),
 ) -> list[dict]:
-    """取得所有不斷電機台。"""
-    
-    stmt = select(ReferenceClient).where(ReferenceClient.is_active == True)
+    """取得指定歲修的所有不斷電機台。"""
+
+    stmt = select(ReferenceClient).where(
+        ReferenceClient.maintenance_id == maintenance_id,
+        ReferenceClient.is_active == True,  # noqa: E712
+    )
     result = await session.execute(stmt)
     clients = result.scalars().all()
-    
-    return [client.__dict__ for client in clients]
+
+    return [
+        {
+            "id": c.id,
+            "maintenance_id": c.maintenance_id,
+            "mac_address": c.mac_address,
+            "description": c.description,
+            "location": c.location,
+            "reason": c.reason,
+            "is_active": c.is_active,
+        }
+        for c in clients
+    ]
 
 
-@router.post("/reference-clients", response_model=ReferenceClientResponse)
+@router.post("/{maintenance_id}/reference-clients", response_model=ReferenceClientResponse)
 async def create_reference_client(
+    maintenance_id: str,
     client: ReferenceClientCreate,
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
-    """新增不斷電機台。"""
-    
+    """新增不斷電機台到指定歲修。"""
+
+    # 檢查是否已存在相同 MAC
+    existing_stmt = select(ReferenceClient).where(
+        ReferenceClient.maintenance_id == maintenance_id,
+        ReferenceClient.mac_address == client.mac_address.upper(),
+    )
+    existing_result = await session.execute(existing_stmt)
+    if existing_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail=f"MAC {client.mac_address} 已存在於此歲修的不斷電機台清單中"
+        )
+
     db_client = ReferenceClient(
-        mac_address=client.mac_address,
+        maintenance_id=maintenance_id,
+        mac_address=client.mac_address.upper(),
         description=client.description,
         location=client.location,
         reason=client.reason,
     )
-    
+
     session.add(db_client)
     await session.commit()
     await session.refresh(db_client)
-    
-    return db_client.__dict__
+
+    return {
+        "id": db_client.id,
+        "maintenance_id": db_client.maintenance_id,
+        "mac_address": db_client.mac_address,
+        "description": db_client.description,
+        "location": db_client.location,
+        "reason": db_client.reason,
+        "is_active": db_client.is_active,
+    }
 
 
-@router.delete("/reference-clients/{client_id}")
+@router.delete("/{maintenance_id}/reference-clients/{client_id}")
 async def delete_reference_client(
+    maintenance_id: str,
     client_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
-    """刪除不斷電機台。"""
-    
-    stmt = select(ReferenceClient).where(ReferenceClient.id == client_id)
+    """刪除指定歲修的不斷電機台。"""
+
+    stmt = select(ReferenceClient).where(
+        ReferenceClient.maintenance_id == maintenance_id,
+        ReferenceClient.id == client_id,
+    )
     result = await session.execute(stmt)
     client = result.scalar_one_or_none()
-    
+
     if not client:
         raise HTTPException(status_code=404, detail="Reference client not found")
-    
+
     client.is_active = False
     await session.commit()
-    
+
     return {"message": "Reference client deleted successfully"}
 
 

@@ -11,7 +11,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ClientRecord, MaintenanceMacList
+from app.db.models import (
+    ClientRecord,
+    MaintenanceMacList,
+    MaintenanceDeviceList,
+    CollectionBatch,
+    VersionRecord,
+    VersionExpectation,
+)
 from app.core.enums import MaintenancePhase, TenantGroup
 
 
@@ -75,6 +82,11 @@ class MockDataGenerator:
         now = datetime.now(timezone.utc)
         records = []
 
+        # 獲取有效的交換機 hostname 列表
+        valid_hostnames = await self._get_valid_switch_hostnames(
+            maintenance_id, phase, session
+        )
+
         if base_records:
             # 基於現有記錄產生變化
             for base in base_records:
@@ -90,11 +102,133 @@ class MockDataGenerator:
 
             for mac_entry in mac_list:
                 record = self._create_new_record(
-                    mac_entry, maintenance_id, phase, now,
+                    mac_entry, maintenance_id, phase, now, valid_hostnames,
                 )
                 records.append(record)
 
         return records
+
+    async def generate_version_records(
+        self,
+        maintenance_id: str,
+        phase: MaintenancePhase,
+        session: AsyncSession,
+    ) -> list[VersionRecord]:
+        """
+        生成 VersionRecord 資料。
+
+        根據 MaintenanceDeviceList 中的設備，產生版本採集記錄。
+        如果設備有 VersionExpectation，會以一定機率符合期望版本。
+
+        Args:
+            maintenance_id: 歲修 ID
+            phase: 階段（OLD 或 NEW）
+            session: DB session
+
+        Returns:
+            生成的 VersionRecord 列表
+        """
+        now = datetime.now(timezone.utc)
+        records = []
+
+        # 獲取設備列表
+        stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+        result = await session.execute(stmt)
+        devices = result.scalars().all()
+
+        if not devices:
+            return records
+
+        # 獲取版本期望（用於模擬符合/不符合）
+        exp_stmt = select(VersionExpectation).where(
+            VersionExpectation.maintenance_id == maintenance_id
+        )
+        exp_result = await session.execute(exp_stmt)
+        expectations = exp_result.scalars().all()
+        exp_map = {exp.hostname: exp.expected_versions.split(";")[0] for exp in expectations}
+
+        # 可能的版本列表
+        VERSIONS = ["16.12.4", "17.3.2", "17.3.3", "15.2.4", "9.3(8)", "7.0(3)I7(6)"]
+
+        for device in devices:
+            # 根據 phase 選擇 hostname 和檢查可達性
+            if phase == MaintenancePhase.NEW:
+                hostname = device.new_hostname
+                is_reachable = device.is_reachable
+            else:
+                hostname = device.old_hostname
+                is_reachable = device.old_is_reachable
+
+            # 只對可達的設備生成版本記錄
+            if not hostname or not is_reachable:
+                continue
+
+            # 創建 CollectionBatch
+            batch = CollectionBatch(
+                collection_type="version",
+                switch_hostname=hostname,
+                phase=phase,
+                maintenance_id=maintenance_id,
+                collected_at=now,
+                raw_data=str({"mock": True}),
+                item_count=1,
+            )
+            session.add(batch)
+            await session.flush()  # 獲取 batch.id
+
+            # 決定版本：80% 機率符合期望，20% 機率隨機
+            if hostname in exp_map and random.random() < 0.8:
+                version = exp_map[hostname]
+            else:
+                version = random.choice(VERSIONS)
+
+            # 創建 VersionRecord
+            record = VersionRecord(
+                batch_id=batch.id,
+                switch_hostname=hostname,
+                phase=phase,
+                maintenance_id=maintenance_id,
+                collected_at=now,
+                version=version,
+                model=f"Catalyst {random.choice(['9300', '9400', '9500'])}",
+                serial_number=f"SN{random.randint(100000, 999999)}",
+                uptime=f"{random.randint(1, 365)} days",
+            )
+            records.append(record)
+
+        return records
+
+    async def _get_valid_switch_hostnames(
+        self,
+        maintenance_id: str,
+        phase: MaintenancePhase,
+        session: AsyncSession,
+    ) -> list[str]:
+        """獲取有效的交換機 hostname 列表。
+
+        根據 phase 決定使用 old_hostname 或 new_hostname。
+        只返回可達 (is_reachable=True) 的設備，與真實採集邏輯一致。
+        """
+        stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+        result = await session.execute(stmt)
+        devices = result.scalars().all()
+
+        if phase == MaintenancePhase.OLD:
+            # OLD 階段：只返回舊設備可達的 hostname
+            return [
+                d.old_hostname for d in devices
+                if d.old_hostname and d.old_is_reachable
+            ]
+        else:
+            # NEW 階段：只返回新設備可達的 hostname
+            return [
+                d.new_hostname for d in devices
+                if d.new_hostname and d.is_reachable
+            ]
 
     def _create_varied_record(
         self,
@@ -159,15 +293,20 @@ class MockDataGenerator:
         maintenance_id: str,
         phase: MaintenancePhase,
         collected_at: datetime,
+        valid_hostnames: list[str] | None = None,
     ) -> ClientRecord:
         """從 MAC 清單條目創建新記錄。
 
-        根據 tenant_group 決定 switch hostname 和 VLAN。
+        使用 MaintenanceDeviceList 中的有效交換機 hostname。
         """
-        # 根據 tenant_group 決定 switch hostname
-        switch_num = random.randint(11, 34)
-        category = self._tenant_to_category(mac_entry.tenant_group)
-        switch_hostname = f"SW-NEW-{switch_num:03d}-{category}"
+        # 從有效的交換機列表中隨機選擇
+        if valid_hostnames:
+            switch_hostname = random.choice(valid_hostnames)
+        else:
+            # Fallback: 如果沒有有效列表，使用舊的隨機生成邏輯
+            switch_num = random.randint(11, 34)
+            category = self._tenant_to_category(mac_entry.tenant_group)
+            switch_hostname = f"SW-NEW-{switch_num:03d}-{category}"
 
         return ClientRecord(
             maintenance_id=maintenance_id,

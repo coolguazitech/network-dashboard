@@ -16,6 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import ClientRecord, ClientComparison
 from app.core.enums import MaintenancePhase
 
+# 快照標記的特殊 MAC 地址（用於在沒有實際資料時記錄時間點）
+SNAPSHOT_MARKER_MAC = "__MARKER__"
+
 
 class ClientComparisonService:
     """客戶端比較服務。
@@ -87,13 +90,20 @@ class ClientComparisonService:
         3. 資料數量與歲修設定一致
         """
         from app.db.models import MaintenanceDeviceList, MaintenanceMacList
+        from app.core.enums import ClientDetectionStatus
 
-        # 1. 從 MaintenanceMacList 載入 MAC 清單作為基準
-        mac_stmt = select(MaintenanceMacList.mac_address).where(
+        # 1. 從 MaintenanceMacList 載入 MAC 清單及偵測狀態
+        mac_stmt = select(MaintenanceMacList).where(
             MaintenanceMacList.maintenance_id == maintenance_id
         )
         mac_result = await session.execute(mac_stmt)
-        mac_list = [m.upper() for m in mac_result.scalars().all()]
+        mac_records = mac_result.scalars().all()
+
+        # 建立 MAC 到偵測狀態的對應
+        mac_list = [m.mac_address.upper() for m in mac_records]
+        mac_detection_status: dict[str, ClientDetectionStatus] = {
+            m.mac_address.upper(): m.detection_status for m in mac_records
+        }
 
         if not mac_list:
             # 如果沒有 MAC 清單，回退到原有邏輯（從 ClientRecord 取）
@@ -113,10 +123,12 @@ class ClientComparisonService:
         old_result = await session.execute(old_stmt)
         old_records = old_result.scalars().all()
 
-        # 按 MAC 地址分組（大寫），只保留最新記錄
+        # 按 MAC 地址分組（大寫），只保留最新記錄（排除快照標記）
         old_by_mac: dict[str, ClientRecord] = {}
         for record in old_records:
             mac_upper = record.mac_address.upper()
+            if mac_upper == SNAPSHOT_MARKER_MAC:
+                continue  # 跳過快照標記
             if mac_upper not in old_by_mac:
                 old_by_mac[mac_upper] = record
 
@@ -132,10 +144,12 @@ class ClientComparisonService:
         new_result = await session.execute(new_stmt)
         new_records = new_result.scalars().all()
 
-        # 按 MAC 地址分組（大寫），只保留最新記錄
+        # 按 MAC 地址分組（大寫），只保留最新記錄（排除快照標記）
         new_by_mac: dict[str, ClientRecord] = {}
         for record in new_records:
             mac_upper = record.mac_address.upper()
+            if mac_upper == SNAPSHOT_MARKER_MAC:
+                continue  # 跳過快照標記
             if mac_upper not in new_by_mac:
                 new_by_mac[mac_upper] = record
 
@@ -176,7 +190,12 @@ class ClientComparisonService:
                 comparison.old_acl_passes = old_record.acl_passes
 
             # 添加 NEW（新設備）數據
-            if new_record:
+            # 只有當 client 目前可偵測時才填入 NEW 資料
+            # 若偵測狀態為 NOT_DETECTED，Current 顯示為空（表示目前無法取得資料）
+            detection_status = mac_detection_status.get(mac)
+            is_currently_detectable = detection_status == ClientDetectionStatus.DETECTED
+
+            if new_record and is_currently_detectable:
                 comparison.new_ip_address = new_record.ip_address
                 comparison.new_switch_hostname = new_record.switch_hostname
                 comparison.new_interface_name = new_record.interface_name
@@ -224,6 +243,8 @@ class ClientComparisonService:
         old_by_mac: dict[str, ClientRecord] = {}
         for record in old_records:
             mac_upper = record.mac_address.upper()
+            if mac_upper == SNAPSHOT_MARKER_MAC:
+                continue  # 跳過快照標記
             if mac_upper not in old_by_mac:
                 old_by_mac[mac_upper] = record
 
@@ -245,6 +266,8 @@ class ClientComparisonService:
         new_by_mac: dict[str, ClientRecord] = {}
         for record in new_records:
             mac_upper = record.mac_address.upper()
+            if mac_upper == SNAPSHOT_MARKER_MAC:
+                continue  # 跳過快照標記
             if mac_upper not in new_by_mac:
                 new_by_mac[mac_upper] = record
 
@@ -404,21 +427,50 @@ class ClientComparisonService:
         device_mappings: dict[str, str] | None = None,
     ) -> str:
         """基於差異類型計算嚴重程度。
-        
-        簡化邏輯：
-        1. link_status/ping/acl 變化 → critical
-        2. 設備變化 + 符合對應 → info（正常）
-        3. 設備變化 + 不符合對應 → warning（警告）
-        4. port 有變化 → warning（警告）
-        5. 其他 warning 欄位（speed, duplex, vlan）→ warning
+
+        邏輯：
+        1. 狀態惡化（True→False）→ critical
+        2. 狀態改善（False→True）→ warning（好事但仍需注意）
+        3. 設備變化 + 符合對應 → info（正常）
+        4. 設備變化 + 不符合對應 → warning（警告）
+        5. port 有變化 → warning（警告）
+        6. 其他 warning 欄位（speed, duplex, vlan）→ warning
         """
         diff_keys = set(differences.keys())
         device_mappings = device_mappings or {}
-        
-        # 1. 真正的 critical 欄位（不管設備對應）
-        real_critical = {"link_status", "ping_reachable", "acl_passes"}
-        if diff_keys & real_critical:
+
+        # 1. 檢查布林狀態欄位（ping_reachable, link_status, acl_passes）
+        # 惡化（True→False）= critical，改善（False→True）= warning
+        status_fields = {"ping_reachable", "acl_passes"}
+        has_degradation = False
+        has_improvement = False
+
+        for field in status_fields:
+            if field in differences:
+                change = differences[field]
+                old_val = change.get("old")
+                new_val = change.get("new")
+                # True → False 是惡化（重大問題）
+                if old_val is True and new_val is False:
+                    has_degradation = True
+                # False → True 是改善（警告/注意）
+                elif old_val is False and new_val is True:
+                    has_improvement = True
+
+        # link_status 特殊處理（up → down = 惡化，down → up = 改善）
+        if "link_status" in differences:
+            change = differences["link_status"]
+            old_val = str(change.get("old", "")).lower()
+            new_val = str(change.get("new", "")).lower()
+            if old_val == "up" and new_val == "down":
+                has_degradation = True
+            elif old_val == "down" and new_val == "up":
+                has_improvement = True
+
+        if has_degradation:
             return "critical"
+        if has_improvement:
+            return "warning"
         
         switch_change = differences.get("switch_hostname")
         interface_change = differences.get("interface_name")
@@ -704,6 +756,14 @@ class ClientComparisonService:
 
         # === 預先載入所有資料（一次性查詢，避免 N+1） ===
 
+        # 0. 載入 MaintenanceMacList 作為 MAC 清單基準
+        from app.db.models import MaintenanceMacList
+        mac_list_stmt = select(MaintenanceMacList.mac_address).where(
+            MaintenanceMacList.maintenance_id == maintenance_id
+        )
+        mac_list_result = await session.execute(mac_list_stmt)
+        mac_list = {m.upper() for m in mac_list_result.scalars().all()}
+
         # 1. 載入設備對應
         dev_stmt = select(MaintenanceDeviceList).where(
             MaintenanceDeviceList.maintenance_id == maintenance_id
@@ -729,7 +789,9 @@ class ClientComparisonService:
         old_by_mac: dict[str, ClientRecord] = {}
         for record in old_records:
             mac_upper = record.mac_address.upper() if record.mac_address else ""
-            if mac_upper and mac_upper not in old_by_mac:
+            if not mac_upper or mac_upper == SNAPSHOT_MARKER_MAC:
+                continue  # 跳過空值和快照標記
+            if mac_upper not in old_by_mac:
                 old_by_mac[mac_upper] = record
 
         # 3. 載入所有 NEW 階段記錄（按 MAC+時間排序，限制在 cutoff 之後）
@@ -809,12 +871,16 @@ class ClientComparisonService:
             for record in all_new_records:
                 if record.collected_at and record.collected_at <= tp:
                     mac_upper = record.mac_address.upper() if record.mac_address else ""
-                    if mac_upper:
+                    if mac_upper and mac_upper != SNAPSHOT_MARKER_MAC:
                         # 因為已按時間排序，後面的會覆蓋前面的（保留最新）
                         new_by_mac[mac_upper] = record
 
             # 生成比較結果（在記憶體中處理）
-            all_macs = set(old_by_mac.keys()) | set(new_by_mac.keys())
+            # 優先使用 MaintenanceMacList，確保刪除的 MAC 不再顯示
+            if mac_list:
+                all_macs = mac_list
+            else:
+                all_macs = set(old_by_mac.keys()) | set(new_by_mac.keys())
             comparisons = []
 
             for mac in all_macs:
@@ -853,10 +919,15 @@ class ClientComparisonService:
                 comparisons.append(comparison)
 
             # 計算統計
+            # 異常包括：有變化的 + 未偵測的（severity="undetected"）
             total = len(comparisons)
-            has_issues = sum(1 for c in comparisons if c.is_changed)
+            has_issues = sum(
+                1 for c in comparisons
+                if c.is_changed or c.severity == "undetected"
+            )
             critical = sum(1 for c in comparisons if c.severity == "critical")
             warning = sum(1 for c in comparisons if c.severity == "warning")
+            undetected = sum(1 for c in comparisons if c.severity == "undetected")
 
             # 按使用者分類統計
             by_user_category: dict[str, dict[str, Any]] = {}
@@ -889,8 +960,11 @@ class ClientComparisonService:
                     if cat_key not in by_user_category:
                         cat_key = "null"
                     by_user_category[cat_key]["total"] += 1
-                    if comp.is_changed:
+                    # 異常包括：有變化的 + 未偵測的
+                    if comp.is_changed or comp.severity == "undetected":
                         by_user_category[cat_key]["has_issues"] += 1
+                    if comp.severity == "undetected":
+                        by_user_category[cat_key]["undetected"] += 1
 
             for mac, cat_ids in mac_to_categories.items():
                 if mac not in detected_macs:
@@ -924,22 +998,33 @@ class ClientComparisonService:
         after_time: datetime | None,
         session: AsyncSession,
     ) -> list[ClientComparison]:
-        """在指定時間點生成比較結果（不保存到資料庫）。"""
-        from app.db.models import MaintenanceDeviceList
-        
+        """在指定時間點生成比較結果（不保存到資料庫）。
+
+        使用 MaintenanceMacList 作為 MAC 清單基準，確保新加入的 MAC
+        即使尚未有偵測記錄也會出現在比較結果中。
+        """
+        from app.db.models import MaintenanceDeviceList, MaintenanceMacList
+
         # 載入設備對應（從新的 MaintenanceDeviceList 表格）
         dev_stmt = select(MaintenanceDeviceList).where(
             MaintenanceDeviceList.maintenance_id == maintenance_id
         )
         dev_result = await session.execute(dev_stmt)
         device_mappings_list = dev_result.scalars().all()
-        
+
         # 建立設備對應字典 {old_hostname: new_hostname}（大小寫不敏感）
         device_mappings: dict[str, str] = {}
         for dm in device_mappings_list:
             # 使用小寫 key 以確保比較時大小寫不敏感
             device_mappings[dm.old_hostname.lower()] = dm.new_hostname
-        
+
+        # 載入 MaintenanceMacList 作為 MAC 清單基準
+        mac_list_stmt = select(MaintenanceMacList.mac_address).where(
+            MaintenanceMacList.maintenance_id == maintenance_id
+        )
+        mac_list_result = await session.execute(mac_list_stmt)
+        mac_list = {m.upper() for m in mac_list_result.scalars().all()}
+
         # 查詢 OLD 階段記錄（歲修前基線）
         before_stmt = (
             select(ClientRecord)
@@ -956,11 +1041,14 @@ class ClientComparisonService:
         before_result = await session.execute(before_stmt)
         before_records = before_result.scalars().all()
 
-        # 按 MAC 地址分組，只保留最新記錄
+        # 按 MAC 地址分組，只保留最新記錄（排除快照標記）
         before_by_mac = {}
         for record in before_records:
-            if record.mac_address not in before_by_mac:
-                before_by_mac[record.mac_address] = record
+            mac_upper = record.mac_address.upper() if record.mac_address else ""
+            if not mac_upper or mac_upper == SNAPSHOT_MARKER_MAC:
+                continue  # 跳過空值和快照標記
+            if mac_upper not in before_by_mac:
+                before_by_mac[mac_upper] = record
 
         # 查詢 NEW 階段記錄（歲修後）
         # 僅查詢 NEW phase，避免 OLD 記錄洩漏到 after 端
@@ -992,16 +1080,23 @@ class ClientComparisonService:
         after_result = await session.execute(after_stmt)
         after_records = after_result.scalars().all()
 
-        # 按 MAC 地址分組，只保留最新記錄
+        # 按 MAC 地址分組，只保留最新記錄（排除快照標記）
         after_by_mac = {}
         for record in after_records:
-            if record.mac_address not in after_by_mac:
-                after_by_mac[record.mac_address] = record
-        
+            mac_upper = record.mac_address.upper() if record.mac_address else ""
+            if not mac_upper or mac_upper == SNAPSHOT_MARKER_MAC:
+                continue  # 跳過空值和快照標記
+            if mac_upper not in after_by_mac:
+                after_by_mac[mac_upper] = record
+
         # 生成比較結果
+        # 優先使用 MaintenanceMacList，確保刪除的 MAC 不再顯示
         comparisons = []
-        all_macs = set(before_by_mac.keys()) | set(after_by_mac.keys())
-        
+        if mac_list:
+            all_macs = mac_list
+        else:
+            all_macs = set(before_by_mac.keys()) | set(after_by_mac.keys())
+
         for mac in all_macs:
             before_record = before_by_mac.get(mac)
             after_record = after_by_mac.get(mac)
@@ -1039,7 +1134,153 @@ class ClientComparisonService:
             # 比較差異（傳入設備對應）
             comparison = self._compare_records(comparison, device_mappings)
             comparisons.append(comparison)
-        
+
+        return comparisons
+
+    async def _generate_checkpoint_diff(
+        self,
+        maintenance_id: str,
+        checkpoint_time: datetime,
+        current_time: datetime | None,
+        session: AsyncSession,
+    ) -> list[ClientComparison]:
+        """比較 NEW 階段內的 Checkpoint vs Current 快照。
+
+        這是新的 Checkpoint 比較邏輯：
+        - Before (Checkpoint): NEW 階段在 checkpoint_time 時間點的快照
+        - Current: NEW 階段在 current_time（或最新）時間點的快照
+
+        兩者都來自 NEW 階段，用於追蹤歲修過程中設備狀態的變化。
+        """
+        from app.db.models import MaintenanceDeviceList, MaintenanceMacList
+
+        # 載入設備對應
+        dev_stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+        dev_result = await session.execute(dev_stmt)
+        device_mappings_list = dev_result.scalars().all()
+        device_mappings: dict[str, str] = {}
+        for dm in device_mappings_list:
+            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
+
+        # 載入 MAC 清單
+        mac_list_stmt = select(MaintenanceMacList.mac_address).where(
+            MaintenanceMacList.maintenance_id == maintenance_id
+        )
+        mac_list_result = await session.execute(mac_list_stmt)
+        mac_list = {m.upper() for m in mac_list_result.scalars().all()}
+
+        # 查詢 Checkpoint 時間點的 NEW 階段記錄
+        checkpoint_stmt = (
+            select(ClientRecord)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.phase == MaintenancePhase.NEW,
+                ClientRecord.collected_at <= checkpoint_time,
+            )
+            .order_by(
+                ClientRecord.mac_address,
+                ClientRecord.collected_at.desc(),
+            )
+        )
+        checkpoint_result = await session.execute(checkpoint_stmt)
+        checkpoint_records = checkpoint_result.scalars().all()
+
+        # 按 MAC 分組，保留最接近 checkpoint 時間的記錄（排除快照標記）
+        checkpoint_by_mac = {}
+        for record in checkpoint_records:
+            mac_upper = record.mac_address.upper() if record.mac_address else ""
+            if not mac_upper or mac_upper == SNAPSHOT_MARKER_MAC:
+                continue  # 跳過空值和快照標記
+            if mac_upper not in checkpoint_by_mac:
+                checkpoint_by_mac[mac_upper] = record
+
+        # 查詢 Current（最新）時間點的 NEW 階段記錄
+        if current_time:
+            current_stmt = (
+                select(ClientRecord)
+                .where(
+                    ClientRecord.maintenance_id == maintenance_id,
+                    ClientRecord.phase == MaintenancePhase.NEW,
+                    ClientRecord.collected_at <= current_time,
+                )
+                .order_by(
+                    ClientRecord.mac_address,
+                    ClientRecord.collected_at.desc(),
+                )
+            )
+        else:
+            current_stmt = (
+                select(ClientRecord)
+                .where(
+                    ClientRecord.maintenance_id == maintenance_id,
+                    ClientRecord.phase == MaintenancePhase.NEW,
+                )
+                .order_by(
+                    ClientRecord.mac_address,
+                    ClientRecord.collected_at.desc(),
+                )
+            )
+        current_result = await session.execute(current_stmt)
+        current_records = current_result.scalars().all()
+
+        # 按 MAC 分組，保留最新記錄（排除快照標記）
+        current_by_mac = {}
+        for record in current_records:
+            mac_upper = record.mac_address.upper() if record.mac_address else ""
+            if not mac_upper or mac_upper == SNAPSHOT_MARKER_MAC:
+                continue  # 跳過空值和快照標記
+            if mac_upper not in current_by_mac:
+                current_by_mac[mac_upper] = record
+
+        # 生成比較結果
+        # 優先使用 MaintenanceMacList 作為基準，確保刪除的 MAC 不再顯示
+        # 如果沒有 MaintenanceMacList，才使用 ClientRecord 的聯集
+        comparisons = []
+        if mac_list:
+            all_macs = mac_list
+        else:
+            all_macs = set(checkpoint_by_mac.keys()) | set(current_by_mac.keys())
+
+        for mac in all_macs:
+            checkpoint_record = checkpoint_by_mac.get(mac)
+            current_record = current_by_mac.get(mac)
+
+            comparison = ClientComparison(
+                maintenance_id=maintenance_id,
+                collected_at=datetime.utcnow(),
+                mac_address=mac,
+            )
+
+            # 添加 Checkpoint (Before) 資料
+            if checkpoint_record:
+                comparison.old_ip_address = checkpoint_record.ip_address
+                comparison.old_switch_hostname = checkpoint_record.switch_hostname
+                comparison.old_interface_name = checkpoint_record.interface_name
+                comparison.old_vlan_id = checkpoint_record.vlan_id
+                comparison.old_speed = checkpoint_record.speed
+                comparison.old_duplex = checkpoint_record.duplex
+                comparison.old_link_status = checkpoint_record.link_status
+                comparison.old_ping_reachable = checkpoint_record.ping_reachable
+                comparison.old_acl_passes = checkpoint_record.acl_passes
+
+            # 添加 Current 資料
+            if current_record:
+                comparison.new_ip_address = current_record.ip_address
+                comparison.new_switch_hostname = current_record.switch_hostname
+                comparison.new_interface_name = current_record.interface_name
+                comparison.new_vlan_id = current_record.vlan_id
+                comparison.new_speed = current_record.speed
+                comparison.new_duplex = current_record.duplex
+                comparison.new_link_status = current_record.link_status
+                comparison.new_ping_reachable = current_record.ping_reachable
+                comparison.new_acl_passes = current_record.acl_passes
+
+            # 比較差異
+            comparison = self._compare_records(comparison, device_mappings)
+            comparisons.append(comparison)
+
         return comparisons
 
     def _compare_records(

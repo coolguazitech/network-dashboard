@@ -66,7 +66,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, inject } from 'vue'
 import { useRoute } from 'vue-router'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -80,6 +80,7 @@ use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent
 
 const route = useRoute()
 const indicatorName = route.params.name
+const maintenanceId = inject('maintenanceId')
 
 const loading = ref(true)
 const metadata = ref({ title: '', description: '' })
@@ -146,7 +147,8 @@ const fetchMetadata = async () => {
 
 const fetchTimeSeries = async () => {
   try {
-    const response = await axios.get(`/api/v1/indicators/${indicatorName}/timeseries`)
+    const mid = maintenanceId?.value || maintenanceId
+    const response = await axios.get(`/api/v1/indicators/${mid}/${indicatorName}/timeseries`)
     timeSeries.value = response.data.data
     metadata.value.series_names = response.data.series_names
     metadata.value.display_config = response.data.display_config
@@ -157,7 +159,8 @@ const fetchTimeSeries = async () => {
 
 const fetchRawData = async () => {
   try {
-    const response = await axios.get(`/api/v1/indicators/${indicatorName}/rawdata`)
+    const mid = maintenanceId?.value || maintenanceId
+    const response = await axios.get(`/api/v1/indicators/${mid}/${indicatorName}/rawdata`)
     tableColumns.value = response.data.columns
     tableRows.value = response.data.rows
   } catch (error) {

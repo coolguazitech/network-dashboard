@@ -85,45 +85,38 @@ class PingIndicator(BaseIndicator):
 
         for device in expected_devices:
             hostname = device["new_hostname"]
-            record = collected.get(hostname)
+            device_status = collected.get(hostname)
 
-            if record is None:
-                # 尚未採集數據
+            if device_status is None:
+                # 該設備不在清單中
                 failures.append({
                     "device": hostname,
                     "interface": "Mgmt",
-                    "reason": "尚未採集 Ping 數據",
+                    "reason": "設備不在清單中",
                     "data": None
                 })
-            elif not record.is_reachable:
+            elif device_status["is_reachable"] is None:
+                # 尚未測試
+                failures.append({
+                    "device": hostname,
+                    "interface": "Mgmt",
+                    "reason": "尚未測試可達性",
+                    "data": None
+                })
+            elif not device_status["is_reachable"]:
                 # 不可達
                 failures.append({
                     "device": hostname,
                     "interface": "Mgmt",
                     "reason": "Ping 不可達",
                     "data": {
-                        "is_reachable": record.is_reachable,
-                        "success_rate": record.success_rate,
+                        "is_reachable": device_status["is_reachable"],
+                        "last_check_at": str(device_status["last_check_at"]) if device_status["last_check_at"] else None,
                     }
                 })
             else:
-                if record.success_rate < self.SUCCESS_RATE_THRESHOLD:
-                    # 成功率過低
-                    failures.append({
-                        "device": hostname,
-                        "interface": "Mgmt",
-                        "reason": (
-                            f"Ping 成功率過低: {record.success_rate}% "
-                            f"(預期 >= {self.SUCCESS_RATE_THRESHOLD}%)"
-                        ),
-                        "data": {
-                            "is_reachable": record.is_reachable,
-                            "success_rate": record.success_rate,
-                        }
-                    })
-                else:
-                    # 通過
-                    pass_count += 1
+                # 可達，通過
+                pass_count += 1
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
@@ -163,15 +156,26 @@ class PingIndicator(BaseIndicator):
         session: AsyncSession,
         maintenance_id: str,
         phase: MaintenancePhase,
-    ) -> dict[str, PingRecord]:
-        """獲取採集數據，返回 hostname -> PingRecord 的映射。"""
-        repo = PingRecordRepo(session)
-        records = await repo.get_latest_per_device(phase, maintenance_id)
+    ) -> dict[str, dict]:
+        """
+        獲取設備可達性數據。
 
-        # Ping 每台設備一筆記錄，直接以 switch_hostname 作為 key
-        collected: dict[str, PingRecord] = {}
-        for record in records:
-            collected[record.switch_hostname] = record
+        直接從 MaintenanceDeviceList 讀取 is_reachable 欄位，
+        確保與設備清單顯示的可達性狀態一致。
+        """
+        stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+        result = await session.execute(stmt)
+        devices = result.scalars().all()
+
+        # 返回 hostname -> 可達性資訊的映射
+        collected: dict[str, dict] = {}
+        for device in devices:
+            collected[device.new_hostname] = {
+                "is_reachable": device.is_reachable,
+                "last_check_at": device.last_check_at,
+            }
 
         return collected
 

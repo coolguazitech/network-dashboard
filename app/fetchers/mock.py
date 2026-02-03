@@ -42,6 +42,74 @@ def _ip_hash(switch_ip: str, salt: str = "") -> int:
     return int(digest, 16)
 
 
+# ── Mock Network State ─────────────────────────────────────────────
+
+
+_mock_network_state_cache: list[dict] | None = None
+
+
+def _load_mock_network_state() -> list[dict]:
+    """
+    載入模擬網路狀態設定檔。
+
+    從 test_data/mock_network_state.csv 讀取，定義哪些 MAC 在模擬網路中存在。
+    這與用戶輸入 (MaintenanceMacList) 分開，避免循環論證。
+
+    Returns:
+        模擬網路狀態列表，每筆包含:
+        - mac_address: MAC 地址
+        - ip_address: IP 地址
+        - switch_hostname: 所在 switch
+        - interface: 介面名稱
+        - vlan: VLAN ID
+        - ping_reachable: 是否可 ping
+    """
+    global _mock_network_state_cache
+
+    if _mock_network_state_cache is not None:
+        return _mock_network_state_cache
+
+    import csv
+    import os
+
+    # 找到 test_data 目錄
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(current_dir))
+    csv_path = os.path.join(project_root, "test_data", "mock_network_state.csv")
+
+    if not os.path.exists(csv_path):
+        _mock_network_state_cache = []
+        return _mock_network_state_cache
+
+    entries = []
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            entries.append({
+                "mac_address": row["mac_address"].strip().upper(),
+                "ip_address": row["ip_address"].strip(),
+                "switch_hostname": row["switch_hostname"].strip(),
+                "interface": row["interface"].strip(),
+                "vlan": int(row["vlan"]) if row.get("vlan") else 10,
+                "ping_reachable": row.get("ping_reachable", "true").lower() == "true",
+            })
+
+    _mock_network_state_cache = entries
+    return _mock_network_state_cache
+
+
+def _get_mock_entries_for_switch(switch_hostname: str) -> list[dict]:
+    """取得指定 switch 的模擬網路條目。"""
+    all_entries = _load_mock_network_state()
+    return [e for e in all_entries if e["switch_hostname"] == switch_hostname]
+
+
+def _get_mock_ping_reachability() -> dict[str, bool]:
+    """取得所有 IP 的 ping 可達性對應表。"""
+    all_entries = _load_mock_network_state()
+    return {e["ip_address"]: e["ping_reachable"] for e in all_entries}
+
+
 # ══════════════════════════════════════════════════════════════════
 # Indicator Fetchers (8)
 # ══════════════════════════════════════════════════════════════════
@@ -369,33 +437,62 @@ class MockPortChannelFetcher(BaseFetcher):
 
 class MockPingFetcher(BaseFetcher):
     """
-    Mock: Standard ping output with time-converging success rate.
+    Mock: Standard ping output with time-based deterministic convergence.
 
-    初始成功率較低，逐漸收斂到高成功率。
+    統一收斂邏輯（基於設備類型）：
+    - 使用 hostname 判斷設備類型（-OLD 或 -NEW）
+    - 收斂時間點 = MOCK_PING_CONVERGE_TIME / 2
+    - 收斂前：OLD 設備可達，NEW 設備不可達
+    - 收斂後：OLD 設備不可達，NEW 設備可達
+    - 設置 MOCK_PING_CONVERGE_TIME=0 時，只有 NEW 設備可達
     """
 
     fetch_type = "ping"
 
-    INITIAL_FAILURE_RATE = 0.40  # 初始 40% 失敗
-    TARGET_FAILURE_RATE = 0.05   # 目標 5% 失敗
+    FLAKY_RATE = 0.02  # 修好後仍有 2% 機率暫時不可達
 
     async def fetch(self, ctx: FetchContext) -> FetchResult:
+        from app.core.config import settings
+
         tracker = MockTimeTracker()
-        fails = should_fail(
-            elapsed=tracker.elapsed_seconds,
-            converge_time=tracker.config.ping_converge_time,
-            initial_failure_rate=self.INITIAL_FAILURE_RATE,
-            target_failure_rate=self.TARGET_FAILURE_RATE,
-        )
-
+        elapsed = tracker.elapsed_seconds
         ip = ctx.switch_ip
+        hostname = (ctx.switch_hostname or "").upper()
 
-        if fails:
-            # 隨機選擇失敗模式
-            loss = random.choice([100, 60, 40])
-            received = 5 - (loss * 5 // 100)
+        # 判斷設備類型
+        is_old_device = "-OLD" in hostname
+        is_new_device = "-NEW" in hostname
+
+        # 使用可配置的收斂時間
+        converge_time = settings.mock_ping_converge_time
+
+        # 計算是否已收斂（收斂時間點 = converge_time / 2）
+        if converge_time <= 0:
+            has_converged = True  # 立即收斂
         else:
+            switch_time = converge_time / 2
+            has_converged = elapsed >= switch_time
+
+        # 根據設備類型和收斂狀態決定可達性
+        if is_old_device:
+            # OLD 設備：收斂前可達，收斂後不可達
+            is_reachable = not has_converged
+        elif is_new_device:
+            # NEW 設備：收斂前不可達，收斂後可達
+            is_reachable = has_converged
+        else:
+            # 其他設備：始終可達
+            is_reachable = True
+
+        # 偶發網路問題（僅對可達設備）
+        if is_reachable and random.random() < self.FLAKY_RATE:
+            is_reachable = False
+
+        # 設定結果
+        if is_reachable:
             loss, received = 0, 5
+        else:
+            loss, received = 100, 0
 
         # 產生 ping 回應
         ping_lines = []
@@ -424,185 +521,118 @@ class MockPingFetcher(BaseFetcher):
 
 class MockMacTableFetcher(BaseFetcher):
     """
-    Mock: MAC table (CSV format) with deterministic addresses.
+    Mock: MAC table (CSV format) 基於 mock_network_state.csv 生成。
 
-    MAC 格式與 seed_client_data.py 一致:
-      EQP:    00:11:22:E0:XX:XX
-      AMHS:   00:11:22:A0:XX:XX
-      SNR:    00:11:22:B0:XX:XX
-      OTHERS: 00:11:22:C0:XX:XX
+    資料流邏輯：
+    1. 從 mock_network_state.csv 讀取模擬網路狀態
+    2. 返回該 switch 的 MAC table（只包含設定檔中屬於該 switch 的 MAC）
 
-    依 switch hostname 的類別 (EQP/AMHS/SNR/OTHERS) 分配對應的 MAC。
+    這確保 mock 資料來自獨立的模擬網路狀態，而非用戶輸入。
+    Ghost device（不在設定檔中的 MAC）自然不會出現。
     """
 
     fetch_type = "mac_table"
 
-    # 類別配置 (與 seed_client_data.py 一致)
-    # CORE/AGG 沒有客戶端 MAC，count=0
-    CATEGORY_CONFIG = {
-        "CORE": {"prefix": "", "count": 0, "vlan": 0},
-        "AGG": {"prefix": "", "count": 0, "vlan": 0},
-        "EQP": {"prefix": "E0", "count": 50, "vlan": 10},
-        "AMHS": {"prefix": "A0", "count": 25, "vlan": 20},
-        "SNR": {"prefix": "B0", "count": 15, "vlan": 30},
-        "OTHERS": {"prefix": "C0", "count": 10, "vlan": 40},
-    }
-
-    # 各類別有多少台 switch (從 factory_device_config.py)
-    SWITCHES_PER_CATEGORY = {
-        "CORE": 2,
-        "AGG": 8,
-        "EQP": 10,
-        "AMHS": 4,
-        "SNR": 5,
-        "OTHERS": 5,
-    }
-
-    def _get_category(self, hostname: str) -> str:
-        """從 hostname 提取類別 (最後一段)。"""
-        parts = hostname.split("-")
-        if parts:
-            cat = parts[-1].upper()
-            if cat in self.CATEGORY_CONFIG:
-                return cat
-        return ""  # 未知類別不產生 MAC
-
-    def _get_switch_index(self, hostname: str) -> int:
-        """從 hostname 提取設備編號，轉成 0-based index。"""
-        parts = hostname.split("-")
-        if len(parts) >= 2:
-            try:
-                # SW-NEW-013-EQP → 13 → index 2 (EQP 從 11 開始)
-                num = int(parts[2])
-                return num % 100  # 取最後兩位作為相對位置
-            except (ValueError, IndexError):
-                pass
-        return 0
-
     async def fetch(self, ctx: FetchContext) -> FetchResult:
         hostname = ctx.switch_hostname or ""
-        category = self._get_category(hostname)
 
-        # 未知類別或 CORE/AGG 不產生 MAC
-        if not category or category not in self.CATEGORY_CONFIG:
+        # 從 mock_network_state.csv 取得該 switch 的 MAC 清單
+        entries = _get_mock_entries_for_switch(hostname)
+
+        if not entries:
             return FetchResult(raw_output="MAC,Interface,VLAN")
 
-        config = self.CATEGORY_CONFIG[category]
-        if config["count"] == 0:
-            return FetchResult(raw_output="MAC,Interface,VLAN")
-
-        switches_count = self.SWITCHES_PER_CATEGORY.get(category, 1)
-
-        # 計算此 switch 在該類別中的相對位置
-        sw_index = self._get_switch_index(hostname) % switches_count
-
-        # 計算此 switch 應有的 MAC 範圍
-        total_macs = config["count"]
-        macs_per_switch = (total_macs + switches_count - 1) // switches_count
-
-        start_mac_idx = sw_index * macs_per_switch
-        end_mac_idx = min(start_mac_idx + macs_per_switch, total_macs)
-
+        # 生成 MAC table
         lines = ["MAC,Interface,VLAN"]
-        prefix = config["prefix"]
-        vlan = config["vlan"]
-
-        for port, mac_idx in enumerate(
-            range(start_mac_idx, end_mac_idx), start=1,
-        ):
-            idx = mac_idx + 1  # MAC 編號從 1 開始
-            mac = f"00:11:22:{prefix}:{idx:02X}:{idx:02X}"
-            lines.append(f"{mac},GE1/0/{port},{vlan}")
+        for entry in entries:
+            lines.append(
+                f"{entry['mac_address']},{entry['interface']},{entry['vlan']}"
+            )
 
         return FetchResult(raw_output="\n".join(lines))
 
 
 class MockArpTableFetcher(BaseFetcher):
     """
-    Mock: ARP table (CSV format) with deterministic mappings.
+    Mock: ARP table (CSV format) 基於 mock_network_state.csv 生成。
 
-    MAC 格式與 MockMacTableFetcher 一致，確保 MAC → IP 對應正確:
-      EQP:    00:11:22:E0:XX:XX → 10.0.10.XX
-      AMHS:   00:11:22:A0:XX:XX → 10.0.20.XX
-      SNR:    00:11:22:B0:XX:XX → 10.0.30.XX
-      OTHERS: 00:11:22:C0:XX:XX → 10.0.40.XX
+    資料流邏輯：
+    1. 從 mock_network_state.csv 讀取模擬網路狀態
+    2. 根據設備名稱判斷是 OLD 還是 NEW 設備
+    3. 根據時間收斂狀態決定是否返回 ARP 資料：
+       - OLD 設備：收斂前返回 ARP，收斂後不返回（設備已下線）
+       - NEW 設備：收斂前不返回 ARP，收斂後返回（設備已上線）
+
+    這確保 ARP 資料來自獨立的模擬網路狀態，而非用戶輸入。
     """
 
     fetch_type = "arp_table"
 
-    # 與 MockMacTableFetcher 保持一致
-    # CORE/AGG 沒有客戶端，count=0
-    CATEGORY_CONFIG = {
-        "CORE": {"prefix": "", "count": 0, "ip_base": ""},
-        "AGG": {"prefix": "", "count": 0, "ip_base": ""},
-        "EQP": {"prefix": "E0", "count": 50, "ip_base": "10.0.10"},
-        "AMHS": {"prefix": "A0", "count": 25, "ip_base": "10.0.20"},
-        "SNR": {"prefix": "B0", "count": 15, "ip_base": "10.0.30"},
-        "OTHERS": {"prefix": "C0", "count": 10, "ip_base": "10.0.40"},
-    }
-
-    SWITCHES_PER_CATEGORY = {
-        "CORE": 2,
-        "AGG": 8,
-        "EQP": 10,
-        "AMHS": 4,
-        "SNR": 5,
-        "OTHERS": 5,
-    }
-
-    def _get_category(self, hostname: str) -> str:
-        """從 hostname 提取類別 (最後一段)。"""
-        parts = hostname.split("-")
-        if parts:
-            cat = parts[-1].upper()
-            if cat in self.CATEGORY_CONFIG:
-                return cat
-        return ""  # 未知類別不產生 ARP
-
-    def _get_switch_index(self, hostname: str) -> int:
-        """從 hostname 提取設備編號，轉成 0-based index。"""
-        parts = hostname.split("-")
-        if len(parts) >= 2:
-            try:
-                num = int(parts[2])
-                return num % 100
-            except (ValueError, IndexError):
-                pass
-        return 0
-
     async def fetch(self, ctx: FetchContext) -> FetchResult:
+        from app.fetchers.convergence import MockTimeTracker
+        from app.core.config import settings
+
         hostname = ctx.switch_hostname or ""
-        category = self._get_category(hostname)
+        hostname_upper = hostname.upper()
 
-        # 未知類別或 CORE/AGG 不產生 ARP
-        if not category or category not in self.CATEGORY_CONFIG:
-            return FetchResult(raw_output="IP,MAC")
+        # 判斷設備類型（OLD/NEW）並根據收斂狀態決定是否返回 ARP
+        is_old_device = "-OLD" in hostname_upper
+        is_new_device = "-NEW" in hostname_upper
 
-        config = self.CATEGORY_CONFIG[category]
-        if config["count"] == 0:
-            return FetchResult(raw_output="IP,MAC")
+        if is_old_device or is_new_device:
+            # 計算收斂狀態（統一邏輯：收斂時間點 = converge_time / 2）
+            tracker = MockTimeTracker()
+            elapsed = tracker.elapsed_seconds
+            converge_time = settings.mock_ping_converge_time
 
-        switches_count = self.SWITCHES_PER_CATEGORY.get(category, 1)
+            if converge_time <= 0:
+                # 立即收斂：OLD 不可達，NEW 可達
+                has_converged = True
+            else:
+                # 統一收斂時間點 = converge_time / 2
+                switch_time = converge_time / 2
+                has_converged = elapsed >= switch_time
 
-        sw_index = self._get_switch_index(hostname) % switches_count
+            # OLD 設備：收斂前可達，收斂後不可達
+            # NEW 設備：收斂前不可達，收斂後可達
+            if is_old_device:
+                device_reachable = not has_converged
+            else:  # is_new_device
+                device_reachable = has_converged
 
-        total_macs = config["count"]
-        macs_per_switch = (total_macs + switches_count - 1) // switches_count
+            if not device_reachable:
+                # 設備不可達，返回空 ARP（模擬連線失敗）
+                return FetchResult(
+                    raw_output="IP,MAC",
+                    error=f"Device {hostname} is not reachable",
+                )
 
-        start_mac_idx = sw_index * macs_per_switch
-        end_mac_idx = min(start_mac_idx + macs_per_switch, total_macs)
+        # 設備可達，返回 ARP 資料
+        # Router/Gateway 可以看到整個網路的 ARP
+        is_router = "EDGE" not in hostname_upper
 
-        lines = ["IP,MAC"]
-        prefix = config["prefix"]
-        ip_base = config["ip_base"]
+        if is_router:
+            all_entries = _load_mock_network_state()
+            if not all_entries:
+                return FetchResult(raw_output="IP,MAC")
 
-        for mac_idx in range(start_mac_idx, end_mac_idx):
-            idx = mac_idx + 1  # MAC 編號從 1 開始
-            mac = f"00:11:22:{prefix}:{idx:02X}:{idx:02X}"
-            ip = f"{ip_base}.{idx}"
-            lines.append(f"{ip},{mac}")
+            lines = ["IP,MAC"]
+            for entry in all_entries:
+                lines.append(f"{entry['ip_address']},{entry['mac_address']}")
 
-        return FetchResult(raw_output="\n".join(lines))
+            return FetchResult(raw_output="\n".join(lines))
+        else:
+            # Edge Switch 只能看到自己的 ARP
+            entries = _get_mock_entries_for_switch(hostname)
+
+            if not entries:
+                return FetchResult(raw_output="IP,MAC")
+
+            lines = ["IP,MAC"]
+            for entry in entries:
+                lines.append(f"{entry['ip_address']},{entry['mac_address']}")
+
+            return FetchResult(raw_output="\n".join(lines))
 
 
 class MockInterfaceStatusFetcher(BaseFetcher):
@@ -673,36 +703,57 @@ class MockAclFetcher(BaseFetcher):
 
 class MockPingManyFetcher(BaseFetcher):
     """
-    Mock: Bulk ping results (CSV format) with time-converging reachability.
+    Mock: Bulk ping results (CSV format) with time-based deterministic convergence.
 
     從 ctx.params["target_ips"] 取得要 ping 的 IP 清單。
-    初始可達率較低，逐漸收斂到高可達率。
+
+    時間收斂邏輯（確定性，可配置）：
+    - 使用 MOCK_PING_CONVERGE_TIME 環境變數配置收斂時間（預設 600 秒 = 10 分鐘）
+    - 每個 IP 有一個「修好時間點」（0 到 converge_time 內，用 hash 決定）
+    - 修好前：不可達
+    - 修好後：可達（但有 2% 機率暫時不可達，模擬偶發網路問題）
+    - 設置 MOCK_PING_CONVERGE_TIME=0 可讓所有設備立即可達
     """
 
     fetch_type = "ping_many"
 
-    INITIAL_FAILURE_RATE = 0.20  # 初始 20% 不可達
-    TARGET_FAILURE_RATE = 0.03   # 目標 3% 不可達
+    FLAKY_RATE = 0.02  # 修好後仍有 2% 機率暫時不可達
 
     async def fetch(self, ctx: FetchContext) -> FetchResult:
+        from app.core.config import settings
+
         tracker = MockTimeTracker()
         elapsed = tracker.elapsed_seconds
-        converge_time = tracker.config.ping_converge_time
 
         # 從 params 取得要 ping 的 IP 清單
         target_ips: list[str] = []
         if ctx.params and "target_ips" in ctx.params:
             target_ips = ctx.params["target_ips"]
 
+        # 使用可配置的收斂時間（預設 10 分鐘）
+        converge_time = settings.mock_ping_converge_time
+
         lines = ["IP,Reachable"]
         for ip in target_ips:
-            unreachable = should_fail(
-                elapsed=elapsed,
-                converge_time=converge_time,
-                initial_failure_rate=self.INITIAL_FAILURE_RATE,
-                target_failure_rate=self.TARGET_FAILURE_RATE,
-            )
-            reachable = "false" if unreachable else "true"
+            # 如果 converge_time 為 0，所有設備立即可達
+            if converge_time <= 0:
+                fix_time = 0
+            else:
+                # 用 hash 決定該 IP 的「修好時間點」（0 到 converge_time 內）
+                h = _ip_hash(ip, "ping_many_fix_time")
+                fix_time = h % converge_time
+
+            # 判斷是否可達
+            if elapsed < fix_time:
+                # 尚未修好：不可達
+                reachable = "false"
+            elif random.random() < self.FLAKY_RATE:
+                # 偶發網路問題
+                reachable = "false"
+            else:
+                # 已修好：可達
+                reachable = "true"
+
             lines.append(f"{ip},{reachable}")
 
         return FetchResult(raw_output="\n".join(lines))
@@ -710,43 +761,40 @@ class MockPingManyFetcher(BaseFetcher):
 
 class MockGNMSPingFetcher(BaseFetcher):
     """
-    Mock: GNMS Ping API - 批次 ping switches by tenant group.
+    Mock: GNMS Ping API - 批次 ping clients by IP.
 
     從 ctx.params 取得：
-    - switch_ips: list[str] - 要 ping 的 switch IP 清單
+    - switch_ips: list[str] - 要 ping 的 client IP 清單
     - tenant_group: TenantGroup - 租戶群組
 
     回傳 CSV 格式: IP,Reachable,Latency_ms
+
+    Ping 可達性來自 mock_network_state.csv 的 ping_reachable 欄位。
+    不在設定檔中的 IP（如 ghost device）會被視為不可達。
     """
 
     fetch_type = "gnms_ping"
 
-    INITIAL_FAILURE_RATE = 0.40  # 初始 40% 不可達
-    TARGET_FAILURE_RATE = 0.05   # 目標 5% 不可達
-
     async def fetch(self, ctx: FetchContext) -> FetchResult:
-        tracker = MockTimeTracker()
-        elapsed = tracker.elapsed_seconds
-        converge_time = tracker.config.ping_converge_time
-
         # 從 params 取得參數
-        switch_ips: list[str] = []
+        target_ips: list[str] = []
         if ctx.params:
-            switch_ips = ctx.params.get("switch_ips", [])
+            target_ips = ctx.params.get("switch_ips", [])
+
+        # 取得 mock 網路狀態的 ping 可達性對應表
+        ping_reachability = _get_mock_ping_reachability()
 
         lines = ["IP,Reachable,Latency_ms"]
-        for ip in switch_ips:
-            unreachable = should_fail(
-                elapsed=elapsed,
-                converge_time=converge_time,
-                initial_failure_rate=self.INITIAL_FAILURE_RATE,
-                target_failure_rate=self.TARGET_FAILURE_RATE,
-            )
-            if unreachable:
-                lines.append(f"{ip},false,")
-            else:
+        for ip in target_ips:
+            # 從 mock_network_state.csv 查詢可達性
+            # 不在設定檔中的 IP（如 ghost device）視為不可達
+            is_reachable = ping_reachability.get(ip, False)
+
+            if is_reachable:
                 latency = round(random.uniform(1.0, 10.0), 2)
                 lines.append(f"{ip},true,{latency}")
+            else:
+                lines.append(f"{ip},false,")
 
         return FetchResult(
             raw_output="\n".join(lines),
@@ -777,7 +825,15 @@ _ALL_MOCK_FETCHERS: list[type[BaseFetcher]] = [
 ]
 
 
+def clear_mock_network_state_cache() -> None:
+    """清除 mock network state 快取，強制重新載入 CSV。"""
+    global _mock_network_state_cache
+    _mock_network_state_cache = None
+
+
 def register_mock_fetchers() -> None:
     """註冊所有 mock fetcher 到全域 registry。"""
+    # 清除快取，確保使用最新的 mock_network_state.csv
+    clear_mock_network_state_cache()
     for cls in _ALL_MOCK_FETCHERS:
         fetcher_registry.register(cls())

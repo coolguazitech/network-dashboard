@@ -18,13 +18,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.enums import ClientDetectionStatus, MaintenancePhase, TenantGroup
 from app.db.base import get_session_context
 from app.db.models import (
-    ClientRecord, Switch, MaintenanceMacList, MaintenanceDeviceList,
+    ClientRecord, Switch, MaintenanceMacList, MaintenanceDeviceList, ArpSource,
 )
 from app.parsers.client_parsers import (
     AclParser,
@@ -42,7 +43,7 @@ from app.parsers.protocols import (
 )
 from app.fetchers.base import FetchContext
 from app.fetchers.registry import fetcher_registry
-from app.repositories.switch import SwitchRepository
+# SwitchRepository 已移除，改用 MaintenanceDeviceList
 
 logger = logging.getLogger(__name__)
 
@@ -97,15 +98,15 @@ class ClientCollectionService:
     async def _load_device_tenant_groups(
         self,
         maintenance_id: str,
-        phase: MaintenancePhase,
         session: AsyncSession,
     ) -> dict[str, TenantGroup]:
         """
         載入設備的 tenant_group 對應表。
 
+        同時載入新舊設備的 IP，確保都有對應的 tenant_group。
+
         Args:
             maintenance_id: 歲修 ID
-            phase: 階段 (OLD/NEW)
             session: DB session
 
         Returns:
@@ -121,17 +122,119 @@ class ClientCollectionService:
 
         ip_to_tenant_group: dict[str, TenantGroup] = {}
         for device in devices:
-            if phase == MaintenancePhase.OLD:
-                ip = device.old_ip_address
-            else:
-                ip = device.new_ip_address
-            ip_to_tenant_group[ip] = device.tenant_group or TenantGroup.F18
+            tenant_group = device.tenant_group or TenantGroup.F18
+            # 加入舊設備 IP
+            if device.old_ip_address:
+                ip_to_tenant_group[device.old_ip_address] = tenant_group
+            # 加入新設備 IP（如果與舊設備相同則會覆蓋，但 tenant_group 一樣所以沒影響）
+            if device.new_ip_address:
+                ip_to_tenant_group[device.new_ip_address] = tenant_group
 
         logger.info(
-            "Loaded device tenant_groups for %s: %d devices",
+            "Loaded device tenant_groups for %s: %d unique IPs",
             maintenance_id, len(ip_to_tenant_group),
         )
         return ip_to_tenant_group
+
+    async def _load_maintenance_switches(
+        self,
+        maintenance_id: str,
+        session: AsyncSession,
+    ) -> list[Switch]:
+        """
+        從 MaintenanceDeviceList 載入設備清單，轉換為 Switch 物件。
+
+        同時載入新舊設備，並以 IP 去重（如果 old_ip == new_ip 表示設備未更換）。
+        這確保採集時可以從任一設備找到 MAC（因為 MAC 可能在舊或新設備上）。
+
+        Args:
+            maintenance_id: 歲修 ID
+            session: DB session
+
+        Returns:
+            Switch 物件列表（新舊設備合併，已去重）
+        """
+        from sqlalchemy import select
+        from app.core.enums import SiteType, VendorType, PlatformType
+
+        stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+        result = await session.execute(stmt)
+        devices = result.scalars().all()
+
+        # 用於去重：以 IP 為 key（因為同一 IP 代表同一設備）
+        seen_ips: set[str] = set()
+        switches = []
+
+        # 轉換函數
+        def _create_switch(hostname: str, ip: str, vendor_str: str) -> Switch | None:
+            if not ip or ip in seen_ips:
+                return None
+            seen_ips.add(ip)
+
+            # 轉換 vendor 字串為 VendorType
+            vendor_map = {
+                "HPE": VendorType.HPE,
+                "Cisco-IOS": VendorType.CISCO,
+                "Cisco-NXOS": VendorType.CISCO,
+            }
+            vendor = vendor_map.get(vendor_str, VendorType.HPE)
+
+            # 轉換 vendor 字串為 PlatformType
+            platform_map = {
+                "HPE": PlatformType.HPE_COMWARE,
+                "Cisco-IOS": PlatformType.CISCO_IOS,
+                "Cisco-NXOS": PlatformType.CISCO_NXOS,
+            }
+            platform = platform_map.get(vendor_str, PlatformType.HPE_COMWARE)
+
+            return Switch(
+                hostname=hostname,
+                ip_address=ip,
+                vendor=vendor,
+                platform=platform,
+                site=SiteType.T_SITE,  # 預設值
+                is_active=True,
+            )
+
+        skipped_unreachable = 0
+        for device in devices:
+            # 加入舊設備（只有可達的）
+            if device.old_is_reachable:
+                old_switch = _create_switch(
+                    device.old_hostname,
+                    device.old_ip_address,
+                    device.old_vendor,
+                )
+                if old_switch:
+                    switches.append(old_switch)
+            elif device.old_hostname:
+                skipped_unreachable += 1
+
+            # 加入新設備（只有可達的，如果 IP 與舊設備相同則跳過，因為已去重）
+            if device.is_reachable:
+                new_switch = _create_switch(
+                    device.new_hostname,
+                    device.new_ip_address,
+                    device.new_vendor,
+                )
+                if new_switch:
+                    switches.append(new_switch)
+            elif device.new_hostname:
+                skipped_unreachable += 1
+
+        if skipped_unreachable > 0:
+            logger.info(
+                "Skipped %d unreachable devices for %s",
+                skipped_unreachable, maintenance_id,
+            )
+
+        logger.info(
+            "Loaded %d unique reachable switches for %s (from %d device records)",
+            len(switches), maintenance_id, len(devices),
+        )
+        return switches
 
     # ── MAC 白名單載入 ─────────────────────────────────────────
 
@@ -169,6 +272,142 @@ class ClientCollectionService:
             maintenance_id, len(whitelist),
         )
         return whitelist
+
+    async def _load_arp_source_switches(
+        self,
+        maintenance_id: str,
+        session: AsyncSession,
+    ) -> list[Switch]:
+        """
+        從 ArpSource 設定載入 ARP 來源設備，轉換為 Switch 物件。
+
+        ArpSource 指定從哪些 Router/Gateway 獲取 ARP Table。
+        這些設備必須存在於 MaintenanceDeviceList 中。
+
+        資料流邏輯：
+        1. 先查詢 ArpSource 設定
+        2. 如果沒有設定，返回空列表（表示沒有 ARP 來源）
+        3. 如果有設定，從 MaintenanceDeviceList 找出對應的設備資訊
+
+        Args:
+            maintenance_id: 歲修 ID
+            session: DB session
+
+        Returns:
+            ARP 來源 Switch 物件列表（按 priority 排序）
+        """
+        from sqlalchemy import select, or_
+        from app.core.enums import SiteType, VendorType, PlatformType
+
+        # 1. 載入 ArpSource 設定
+        arp_stmt = select(ArpSource).where(
+            ArpSource.maintenance_id == maintenance_id
+        ).order_by(ArpSource.priority)
+
+        result = await session.execute(arp_stmt)
+        arp_sources = result.scalars().all()
+
+        if not arp_sources:
+            logger.info(
+                "No ArpSource configured for %s - ARP fetch will be skipped",
+                maintenance_id,
+            )
+            return []
+
+        # 2. 取得所有 ArpSource hostname
+        arp_hostnames = {src.hostname for src in arp_sources}
+
+        # 3. 從 MaintenanceDeviceList 載入對應的設備資訊
+        device_stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id,
+            or_(
+                MaintenanceDeviceList.new_hostname.in_(arp_hostnames),
+                MaintenanceDeviceList.old_hostname.in_(arp_hostnames),
+            ),
+        )
+
+        device_result = await session.execute(device_stmt)
+        devices = device_result.scalars().all()
+
+        # 4. 建立 hostname → device 對應表
+        hostname_to_device: dict[str, MaintenanceDeviceList] = {}
+        for device in devices:
+            if device.new_hostname in arp_hostnames:
+                hostname_to_device[device.new_hostname] = device
+            if device.old_hostname in arp_hostnames:
+                hostname_to_device[device.old_hostname] = device
+
+        # 5. 按 ArpSource 的 priority 順序轉換為 Switch 物件
+        switches = []
+        for arp_src in arp_sources:
+            device = hostname_to_device.get(arp_src.hostname)
+            if not device:
+                logger.warning(
+                    "ArpSource %s not found in MaintenanceDeviceList for %s",
+                    arp_src.hostname, maintenance_id,
+                )
+                continue
+
+            # 判斷使用新設備還是舊設備，並檢查可達性
+            if device.new_hostname == arp_src.hostname:
+                hostname = device.new_hostname
+                ip = device.new_ip_address
+                vendor_str = device.new_vendor
+                is_reachable = device.is_reachable
+            else:
+                hostname = device.old_hostname
+                ip = device.old_ip_address
+                vendor_str = device.old_vendor
+                is_reachable = device.old_is_reachable
+
+            if not ip:
+                logger.warning(
+                    "ArpSource %s has no IP address",
+                    arp_src.hostname,
+                )
+                continue
+
+            # 檢查設備可達性（必須先執行 ping collection 更新此欄位）
+            # is_reachable 為 None 表示尚未檢查，視為可嘗試連線
+            if is_reachable is False:
+                logger.info(
+                    "ArpSource %s is not reachable, skipping ARP fetch",
+                    arp_src.hostname,
+                )
+                continue
+
+            # 轉換 vendor 字串為 VendorType
+            vendor_map = {
+                "HPE": VendorType.HPE,
+                "Cisco-IOS": VendorType.CISCO,
+                "Cisco-NXOS": VendorType.CISCO,
+            }
+            vendor = vendor_map.get(vendor_str, VendorType.HPE)
+
+            # 轉換 vendor 字串為 PlatformType
+            platform_map = {
+                "HPE": PlatformType.HPE_COMWARE,
+                "Cisco-IOS": PlatformType.CISCO_IOS,
+                "Cisco-NXOS": PlatformType.CISCO_NXOS,
+            }
+            platform = platform_map.get(vendor_str, PlatformType.HPE_COMWARE)
+
+            switches.append(Switch(
+                hostname=hostname,
+                ip_address=ip,
+                vendor=vendor,
+                platform=platform,
+                site=SiteType.T_SITE,
+                is_active=True,
+            ))
+
+        logger.info(
+            "Loaded %d ArpSource switches for %s: %s",
+            len(switches),
+            maintenance_id,
+            [s.hostname for s in switches],
+        )
+        return switches
 
     async def _load_client_list(
         self,
@@ -238,6 +477,9 @@ class ClientCollectionService:
         """
         主入口：對所有 active switch 採集客戶端資料。
 
+        即使沒有設備或沒有 Client 清單，也會寫入一筆空的快照標記，
+        確保 Checkpoint 列表有時間點可選。
+
         Args:
             maintenance_id: 歲修 ID
             phase: 階段
@@ -258,29 +500,72 @@ class ClientCollectionService:
             "client_records_count": 0,
         }
 
+        now = datetime.now(timezone.utc)
+
         async with httpx.AsyncClient() as http:
             async with get_session_context() as session:
-                # 載入 MAC 白名單 - 只採集在白名單中的 MAC
-                mac_whitelist = await self._load_mac_whitelist(
-                    maintenance_id, session,
+                # 先檢查是否有設定 ArpSource
+                # 如果沒有設定，代表用戶還沒配置好，不應該採集資料
+                from sqlalchemy import func
+                arp_count_stmt = select(func.count()).select_from(ArpSource).where(
+                    ArpSource.maintenance_id == maintenance_id
                 )
+                arp_count_result = await session.execute(arp_count_stmt)
+                arp_count = arp_count_result.scalar()
 
-                if not mac_whitelist:
+                if arp_count == 0:
                     logger.warning(
-                        "No MAC whitelist found for %s, "
-                        "skipping client collection",
+                        "No ArpSource configured for %s - skipping client data collection. "
+                        "Please configure ARP sources first.",
                         maintenance_id,
+                    )
+                    # 寫入快照標記以記錄這個時間點
+                    await self._write_snapshot_marker(
+                        session=session,
+                        maintenance_id=maintenance_id,
+                        phase=phase,
+                        collected_at=now,
                     )
                     return results
 
-                # 載入設備 tenant_group 對應表 (用於 GNMS Ping)
-                device_tenant_groups = await self._load_device_tenant_groups(
-                    maintenance_id, phase, session,
+                # 載入完整的 Client 清單（包含 MAC 和用戶輸入的 IP）
+                client_list = await self._load_client_list(
+                    maintenance_id, session,
                 )
 
-                switch_repo = SwitchRepository(session)
-                switches = await switch_repo.get_active_switches()
+                # 從 MaintenanceDeviceList 載入設備清單（新舊設備都載入）
+                switches = await self._load_maintenance_switches(
+                    maintenance_id, session,
+                )
                 results["total"] = len(switches)
+
+                # 即使沒有 Client 或沒有設備，也要寫入快照時間點標記
+                # 這確保 Checkpoint 列表有時間點可選
+                if not client_list or not switches:
+                    await self._write_snapshot_marker(
+                        session=session,
+                        maintenance_id=maintenance_id,
+                        phase=phase,
+                        collected_at=now,
+                    )
+                    logger.info(
+                        "Wrote snapshot marker for %s (no clients: %s, no switches: %s)",
+                        maintenance_id,
+                        not client_list,
+                        not switches,
+                    )
+                    return results
+
+                # 建立 MAC → Client 對應表（用於匹配和 ping）
+                mac_to_client = {
+                    c.mac_address.upper(): c for c in client_list
+                }
+                mac_whitelist = set(mac_to_client.keys())
+
+                # 載入設備 tenant_group 對應表 (用於 GNMS Ping)
+                device_tenant_groups = await self._load_device_tenant_groups(
+                    maintenance_id, session,
+                )
 
                 for switch in switches:
                     try:
@@ -290,6 +575,7 @@ class ClientCollectionService:
                             phase=phase,
                             session=session,
                             mac_whitelist=mac_whitelist,
+                            mac_to_client=mac_to_client,
                             device_tenant_groups=device_tenant_groups,
                             source=source,
                             brand=brand,
@@ -309,6 +595,19 @@ class ClientCollectionService:
                             "Failed client collection %s: %s",
                             switch.hostname, e,
                         )
+
+                # 如果沒有採集到任何 ClientRecord，仍需寫入快照標記
+                if results["client_records_count"] == 0:
+                    await self._write_snapshot_marker(
+                        session=session,
+                        maintenance_id=maintenance_id,
+                        phase=phase,
+                        collected_at=now,
+                    )
+                    logger.info(
+                        "Wrote snapshot marker for %s (no records collected)",
+                        maintenance_id,
+                    )
 
         # 清理超過 30 天的舊資料
         async with get_session_context() as session:
@@ -331,6 +630,40 @@ class ClientCollectionService:
         )
         return results
 
+    async def _write_snapshot_marker(
+        self,
+        session: AsyncSession,
+        maintenance_id: str,
+        phase: MaintenancePhase,
+        collected_at: datetime,
+    ) -> None:
+        """
+        寫入快照時間點標記。
+
+        即使沒有實際採集到資料，也需要記錄這個時間點，
+        確保 Checkpoint 列表有時間點可選。
+
+        使用特殊的 MAC 地址 "SNAPSHOT_MARKER" 作為標記。
+        """
+        marker = ClientRecord(
+            maintenance_id=maintenance_id,
+            phase=phase,
+            collected_at=collected_at,
+            mac_address="__MARKER__",
+            ip_address=None,
+            switch_hostname="__SYSTEM__",
+            interface_name=None,
+            vlan_id=None,
+            speed=None,
+            duplex=None,
+            link_status=None,
+            ping_reachable=None,
+            acl_rules_applied=None,
+            acl_passes=None,
+        )
+        session.add(marker)
+        await session.flush()
+
     async def detect_clients(
         self,
         maintenance_id: str,
@@ -338,12 +671,17 @@ class ClientCollectionService:
         """
         偵測客戶端狀態。
 
-        流程：
+        完整流程：
         1. 從 MaintenanceMacList 載入所有 Client（IP + MAC + tenant_group）
-        2. 從最新的 ClientRecord 取得 ARP 資料
-        3. 檢查 IP-MAC 匹配：若 ARP 中的 IP-MAC 對應與用戶輸入不符 → MISMATCH
-        4. 按 tenant_group 分組，呼叫 GNMS Ping 檢查可達性
-        5. 更新 MaintenanceMacList.detection_status
+        2. 從 MaintenanceDeviceList 載入設備清單
+        3. 對每個設備即時呼叫 ARP fetcher 取得 ARP 資料
+        4. 檢查每個 Client：
+           - ARP 有此 MAC + IP-MAC 正確 → 繼續 ping
+           - ARP 有此 MAC + IP-MAC 不正確 → MISMATCH
+           - ARP 沒有此 MAC → NOT_DETECTED（網路上看不到）
+        5. 對 ARP 匹配的 clients 按 tenant_group 分組呼叫 GNMS Ping
+        6. Ping 通 → DETECTED，Ping 不通 → NOT_DETECTED
+        7. 更新 MaintenanceMacList.detection_status
 
         Args:
             maintenance_id: 歲修 ID
@@ -357,11 +695,12 @@ class ClientCollectionService:
             "detected": 0,
             "mismatch": 0,
             "not_detected": 0,
+            "no_arp": 0,  # ARP 中找不到的數量
             "errors": [],
         }
 
         async with get_session_context() as session:
-            # 載入 Client 清單
+            # 1. 載入 Client 清單
             clients = await self._load_client_list(maintenance_id, session)
             results["total"] = len(clients)
 
@@ -370,7 +709,6 @@ class ClientCollectionService:
                 return results
 
             # 先重置所有 clients 的偵測狀態為 NOT_CHECKED
-            # 確保每次偵測都是全新的開始
             from sqlalchemy import update
             reset_stmt = (
                 update(MaintenanceMacList)
@@ -383,38 +721,69 @@ class ClientCollectionService:
                 len(clients), maintenance_id,
             )
 
-            # 從 ClientRecord 取得最新的 ARP 資料（MAC → IP）
-            arp_mac_to_ip = await self._get_latest_arp_mapping(
+            # 2. 載入 ArpSource 設定的設備（不是所有設備）
+            # 資料流邏輯：
+            # - 先檢查 ArpSource 設定
+            # - 如果有設定，從這些設備取得 ARP
+            # - 如果沒有設定，返回空 ARP（模擬真實情況）
+            arp_source_switches = await self._load_arp_source_switches(
                 maintenance_id, session,
             )
 
-            # 檢查 IP-MAC 匹配，找出不匹配的 clients
-            mismatch_client_ids = set()
+            if not arp_source_switches:
+                # 沒有設定 ArpSource，無法取得 ARP 資料
+                # 所有 clients 都會被標記為 NOT_DETECTED (no_arp)
+                logger.warning(
+                    "No ArpSource configured for %s - all clients will be NOT_DETECTED",
+                    maintenance_id,
+                )
+                arp_mac_to_ip = {}
+            else:
+                # 3. 從 ArpSource 設備取得 ARP 資料
+                arp_mac_to_ip = await self._fetch_arp_from_switches(arp_source_switches)
+                logger.info(
+                    "Fetched ARP data from %d ArpSource switches: %d entries",
+                    len(arp_source_switches), len(arp_mac_to_ip),
+                )
+
+            # 4. 檢查每個 Client 的 ARP 狀態
+            arp_matched_clients: list[MaintenanceMacList] = []
             for client in clients:
                 mac_upper = client.mac_address.upper()
-                if mac_upper in arp_mac_to_ip:
-                    arp_ip = arp_mac_to_ip[mac_upper]
-                    if arp_ip != client.ip_address:
-                        # ARP 中的 IP 與用戶輸入不符
-                        mismatch_client_ids.add(client.id)
-                        await self._update_client_detection_status(
-                            session, client.id, ClientDetectionStatus.MISMATCH,
-                        )
-                        results["mismatch"] += 1
 
-            # 過濾掉已標記為 MISMATCH 的 clients
-            ping_clients = [
-                c for c in clients
-                if c.id not in mismatch_client_ids
-            ]
+                if mac_upper not in arp_mac_to_ip:
+                    # ARP 中沒有此 MAC → 網路上看不到這個 client
+                    await self._update_client_detection_status(
+                        session, client.id, ClientDetectionStatus.NOT_DETECTED,
+                    )
+                    results["not_detected"] += 1
+                    results["no_arp"] += 1
+                    continue
 
-            # 按 tenant_group 分組
+                # ARP 中有此 MAC，檢查 IP 是否匹配
+                arp_ip = arp_mac_to_ip[mac_upper]
+                if arp_ip != client.ip_address:
+                    # IP-MAC 不匹配
+                    await self._update_client_detection_status(
+                        session, client.id, ClientDetectionStatus.MISMATCH,
+                    )
+                    results["mismatch"] += 1
+                    logger.warning(
+                        "IP-MAC mismatch for %s: ARP=%s, user input=%s",
+                        mac_upper, arp_ip, client.ip_address,
+                    )
+                    continue
+
+                # ARP 匹配，加入 ping 清單
+                arp_matched_clients.append(client)
+
+            # 5. 按 tenant_group 分組 ping
             by_tenant: dict[TenantGroup, list[MaintenanceMacList]] = {}
-            for client in ping_clients:
+            for client in arp_matched_clients:
                 tg = client.tenant_group or TenantGroup.F18
                 by_tenant.setdefault(tg, []).append(client)
 
-            # 對每個 tenant_group 呼叫 GNMS Ping
+            # 6. 對每個 tenant_group 呼叫 GNMS Ping
             for tenant_group, group_clients in by_tenant.items():
                 client_ips = [c.ip_address for c in group_clients]
 
@@ -454,13 +823,76 @@ class ClientCollectionService:
 
         logger.info(
             "Client detection done for %s: %d detected, %d mismatch, "
-            "%d not_detected",
+            "%d not_detected (no_arp=%d)",
             maintenance_id,
             results["detected"],
             results["mismatch"],
             results["not_detected"],
+            results["no_arp"],
         )
         return results
+
+    async def _fetch_arp_from_switches(
+        self,
+        switches: list[Switch],
+    ) -> dict[str, str]:
+        """
+        從設備即時取得 ARP 資料。
+
+        對每個設備呼叫 ARP fetcher，合併結果。
+
+        Args:
+            switches: 設備清單
+
+        Returns:
+            {MAC_ADDRESS: IP_ADDRESS} 對應表（MAC 為大寫）
+        """
+        if not switches:
+            return {}
+
+        arp_fetcher = fetcher_registry.get_or_raise("arp_table")
+        arp_mac_to_ip: dict[str, str] = {}
+
+        for switch in switches:
+            ctx = FetchContext(
+                switch_ip=switch.ip_address,
+                switch_hostname=switch.hostname,
+                site=switch.site.value,
+                source=None,
+                brand=None,
+                vendor=switch.vendor.value,
+                platform=switch.platform.value,
+                http=None,
+                base_url=settings.external_api_server,
+                timeout=settings.external_api_timeout,
+            )
+
+            try:
+                result = await arp_fetcher.fetch(ctx)
+                if not result.success:
+                    logger.warning(
+                        "ARP fetch failed for %s: %s",
+                        switch.hostname, result.error,
+                    )
+                    continue
+
+                # 解析 ARP 結果 (CSV: IP,MAC)
+                lines = result.raw_output.strip().split("\n")
+                for line in lines[1:]:  # 跳過 header
+                    parts = line.split(",")
+                    if len(parts) >= 2:
+                        ip = parts[0].strip()
+                        mac = parts[1].strip().upper()
+                        if mac and ip:
+                            arp_mac_to_ip[mac] = ip
+
+            except Exception as e:
+                logger.error(
+                    "Failed to fetch ARP from %s: %s",
+                    switch.hostname, e,
+                )
+
+        return arp_mac_to_ip
 
     async def _get_latest_arp_mapping(
         self,
@@ -610,13 +1042,14 @@ class ClientCollectionService:
         phase: MaintenancePhase,
         session: AsyncSession,
         mac_whitelist: set[str],
+        mac_to_client: dict[str, MaintenanceMacList],
         device_tenant_groups: dict[str, TenantGroup],
         source: str | None = None,
         brand: str | None = None,
         http: httpx.AsyncClient | None = None,
     ) -> list[ClientRecord]:
         """
-        單台 switch 的完整採集流程 (Phase 1 → 2 → 3 → 4)。
+        單台 switch 的完整採集流程 (Phase 1 → 匹配檢查 → 2 → 3 → 4)。
 
         Args:
             switch: 目標設備
@@ -624,6 +1057,7 @@ class ClientCollectionService:
             phase: 階段
             session: DB session
             mac_whitelist: MAC 白名單，只採集在此清單中的 MAC
+            mac_to_client: {MAC: MaintenanceMacList} 對應表，用於取得用戶輸入的 IP
             device_tenant_groups: {switch_ip: tenant_group} 對應表
 
         Returns:
@@ -638,9 +1072,24 @@ class ClientCollectionService:
         )
         intermediates = self._phase1_parse(raw)
 
+        # ── 匹配檢查：比較 ARP TABLE 的 IP-MAC 與 Client 清單 ──────
+        # 只有 IP-MAC 對應一致的 Client 才會被 ping
+        matched_clients, mismatched_clients = self._match_clients_with_mac_table(
+            intermediates, mac_to_client,
+        )
+
+        # 記錄 mismatch 的 Client（可用於後續更新狀態）
+        if mismatched_clients:
+            logger.info(
+                "Found %d mismatched clients on %s",
+                len(mismatched_clients), switch.hostname,
+            )
+
         # ── Phase 2: 依賴呼叫 (使用 GNMS Ping) ──────────────
+        # 只 ping IP-MAC 匹配的 Client 的用戶輸入 IP
         await self._phase2_dependent_fetch(
             switch, intermediates,
+            matched_clients=matched_clients,
             tenant_group=tenant_group,
             source=source, brand=brand, http=http,
         )
@@ -652,6 +1101,7 @@ class ClientCollectionService:
             phase=phase,
             intermediates=intermediates,
             mac_whitelist=mac_whitelist,
+            mac_to_client=mac_to_client,
         )
 
         # ── Phase 4: 寫入 DB ───────────────────────────────
@@ -662,6 +1112,80 @@ class ClientCollectionService:
             len(records), switch.hostname,
         )
         return records
+
+    def _match_clients_with_mac_table(
+        self,
+        intermediates: _ParsedIntermediates,
+        mac_to_client: dict[str, MaintenanceMacList],
+    ) -> tuple[list[MaintenanceMacList], list[MaintenanceMacList]]:
+        """
+        匹配檢查：比較 ARP TABLE 中的 IP-MAC 對應是否與 Client 清單一致。
+
+        匹配邏輯：
+        1. 從 MAC TABLE 取得 MAC
+        2. 從 ARP TABLE 取得這個 MAC 對應的真實 IP
+        3. 比較 ARP 中的真實 IP 是否與 Client 清單中用戶輸入的 IP 一致
+        4. 一致 → matched（會被 ping）
+        5. 不一致 → mismatched（IP-MAC 對應錯誤）
+
+        Args:
+            intermediates: Phase 1 採集的中間資料
+            mac_to_client: {MAC: MaintenanceMacList} 對應表
+
+        Returns:
+            (matched_clients, mismatched_clients) 元組
+        """
+        # 建立 ARP TABLE 的 MAC → IP 對應
+        arp_mac_to_ip: dict[str, str] = {}
+        for arp_entry in intermediates.arp_entries:
+            mac_upper = arp_entry.mac_address.upper()
+            arp_mac_to_ip[mac_upper] = arp_entry.ip_address
+
+        matched_clients: list[MaintenanceMacList] = []
+        mismatched_clients: list[MaintenanceMacList] = []
+        seen_macs: set[str] = set()
+
+        for mac_entry in intermediates.mac_entries:
+            mac_upper = mac_entry.mac_address.upper()
+
+            # 跳過已處理的 MAC
+            if mac_upper in seen_macs:
+                continue
+            seen_macs.add(mac_upper)
+
+            # 檢查 MAC 是否在 Client 清單中
+            if mac_upper not in mac_to_client:
+                continue
+
+            client = mac_to_client[mac_upper]
+
+            # 檢查 ARP TABLE 中是否有這個 MAC
+            if mac_upper not in arp_mac_to_ip:
+                # MAC 在 MAC TABLE 中但不在 ARP TABLE 中
+                # 這種情況也算匹配（只是沒有 IP 資訊）
+                matched_clients.append(client)
+                continue
+
+            # 比較 ARP 中的真實 IP 與用戶輸入的 IP
+            arp_ip = arp_mac_to_ip[mac_upper]
+            user_ip = client.ip_address
+
+            if arp_ip == user_ip:
+                # IP-MAC 對應一致 → 匹配成功
+                matched_clients.append(client)
+            else:
+                # IP-MAC 對應不一致 → MISMATCH
+                mismatched_clients.append(client)
+                logger.warning(
+                    "IP-MAC mismatch for %s: ARP shows %s, user input %s",
+                    mac_upper, arp_ip, user_ip,
+                )
+
+        logger.debug(
+            "Match result: %d matched, %d mismatched from MAC TABLE",
+            len(matched_clients), len(mismatched_clients),
+        )
+        return matched_clients, mismatched_clients
 
     # ── Phase 1: 並行呼叫 Type A Fetchers ────────────────────────
 
@@ -738,6 +1262,7 @@ class ClientCollectionService:
         self,
         switch: Switch,
         intermediates: _ParsedIntermediates,
+        matched_clients: list[MaintenanceMacList],
         tenant_group: TenantGroup,
         source: str | None = None,
         brand: str | None = None,
@@ -747,7 +1272,7 @@ class ClientCollectionService:
         Phase 2: 依賴 Phase 1 結果的呼叫。
 
         2a. acl — 需要 interface 清單 (從 mac_table)
-        2b. gnms_ping — 使用 switch IP + tenant_group 呼叫 GNMS Ping API
+        2b. gnms_ping — ping Client 清單中用戶輸入的 IP（只有 MAC 匹配的）
 
         兩者互不依賴，可並行。
         """
@@ -755,6 +1280,13 @@ class ClientCollectionService:
         unique_interfaces = sorted({
             e.interface_name
             for e in intermediates.mac_entries
+        })
+
+        # 2b: 取得匹配的 Client 的用戶輸入 IP（不是 ARP 的 IP）
+        # 只 ping 那些 MAC 在 MAC TABLE 中被採集到的 Client
+        client_ips = sorted({
+            client.ip_address
+            for client in matched_clients
         })
 
         # 共用 context 欄位
@@ -776,11 +1308,11 @@ class ClientCollectionService:
             params={"interfaces": unique_interfaces},
         )
 
-        # 2b: GNMS Ping - 使用 switch IP + tenant_group
+        # 2b: GNMS Ping - 直接 ping client IP
         gnms_ping_ctx = FetchContext(
             **base_kwargs,
             params={
-                "switch_ips": [switch.ip_address],
+                "switch_ips": client_ips,  # 直接 ping client IP
                 "tenant_group": tenant_group,
             },
         )
@@ -809,54 +1341,37 @@ class ClientCollectionService:
         )
 
         # 解析 GNMS Ping 結果 (格式: IP,Reachable,Latency_ms)
-        # 轉換為 PingManyData 格式供後續處理使用
+        # 直接解析每個 client IP 的可達性
         intermediates.ping_entries = self._parse_gnms_ping_result(
             ping_result.raw_output,
-            intermediates,
         )
 
     def _parse_gnms_ping_result(
         self,
         raw_output: str,
-        intermediates: _ParsedIntermediates,
     ) -> list[PingManyData]:
         """
-        解析 GNMS Ping 結果並映射到客戶端 IP。
+        解析 GNMS Ping 結果。
 
-        GNMS Ping 回傳的是 switch-level 結果，需要映射到所有客戶端 IP。
-        如果 switch 可達，則該 switch 上的所有客戶端都視為可達。
+        直接解析每個 client IP 的實際可達性結果。
 
         Args:
             raw_output: GNMS Ping 原始輸出 (CSV: IP,Reachable,Latency_ms)
-            intermediates: 中間資料（包含 MAC/ARP entries）
 
         Returns:
-            客戶端 IP 的 ping 結果列表
+            每個 client IP 的 ping 結果列表
         """
-        # 解析 GNMS Ping 結果 (switch-level)
-        switch_reachable = True  # 預設可達
+        ping_entries: list[PingManyData] = []
         lines = raw_output.strip().split("\n")
+
         for line in lines[1:]:  # 跳過 header
             parts = line.split(",")
             if len(parts) >= 2:
-                reachable_str = parts[1].strip().lower()
-                switch_reachable = reachable_str == "true"
-                break  # 只有一個 switch
-
-        # 建立 MAC → IP 對應
-        mac_to_ip = {
-            e.mac_address: e.ip_address
-            for e in intermediates.arp_entries
-        }
-
-        # 將 switch-level 結果映射到所有客戶端 IP
-        ping_entries: list[PingManyData] = []
-        for mac_entry in intermediates.mac_entries:
-            ip = mac_to_ip.get(mac_entry.mac_address)
-            if ip:
+                ip = parts[0].strip()
+                reachable = parts[1].strip().lower() == "true"
                 ping_entries.append(PingManyData(
                     ip_address=ip,
-                    is_reachable=switch_reachable,
+                    is_reachable=reachable,
                 ))
 
         return ping_entries
@@ -870,6 +1385,7 @@ class ClientCollectionService:
         phase: MaintenancePhase,
         intermediates: _ParsedIntermediates,
         mac_whitelist: set[str],
+        mac_to_client: dict[str, MaintenanceMacList] | None = None,
     ) -> list[ClientRecord]:
         """
         將各 Fetcher 的中間資料拼裝為 ClientRecord。
@@ -880,7 +1396,7 @@ class ClientCollectionService:
         - arp_table: mac → ip
         - interface_status: interface → speed / duplex / link_status
         - acl: interface → acl_number
-        - ping_many: ip → is_reachable
+        - ping_many: ip → is_reachable（使用用戶輸入的 IP 查找）
 
         Args:
             switch_hostname: 交換機主機名
@@ -888,6 +1404,7 @@ class ClientCollectionService:
             phase: 階段
             intermediates: Fetcher 解析後的中間資料
             mac_whitelist: MAC 白名單（大寫），只處理在此清單中的 MAC
+            mac_to_client: {MAC: MaintenanceMacList} 對應表，用於取得用戶輸入的 IP
         """
         now = datetime.now(timezone.utc)
 
@@ -915,9 +1432,18 @@ class ClientCollectionService:
                 filtered_count += 1
                 continue
 
+            # IP 來自 ARP table（用於記錄）
             ip = mac_to_ip.get(mac_entry.mac_address)
             if_data = if_status_map.get(mac_entry.interface_name)
             acl_number = acl_map.get(mac_entry.interface_name)
+
+            # Ping 結果查找：優先使用用戶輸入的 IP（因為 ping 是用用戶輸入的 IP 做的）
+            # 如果沒有 mac_to_client，則 fallback 到 ARP 的 IP
+            ping_lookup_ip = None
+            if mac_to_client and mac_upper in mac_to_client:
+                ping_lookup_ip = mac_to_client[mac_upper].ip_address
+            elif ip:
+                ping_lookup_ip = ip
 
             record = ClientRecord(
                 maintenance_id=maintenance_id,
@@ -934,9 +1460,9 @@ class ClientCollectionService:
                 speed=if_data.speed if if_data else None,
                 duplex=if_data.duplex if if_data else None,
                 link_status=if_data.link_status if if_data else None,
-                # Ping
+                # Ping（使用用戶輸入的 IP 查找結果）
                 ping_reachable=(
-                    ping_map.get(ip) if ip else None
+                    ping_map.get(ping_lookup_ip) if ping_lookup_ip else None
                 ),
                 # ACL
                 acl_rules_applied=acl_number,

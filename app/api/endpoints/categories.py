@@ -133,15 +133,16 @@ async def get_category_stats(
 ) -> list[dict[str, Any]]:
     """
     獲取各種類的統計數據（用於卡片顯示）。
-    
-    優先使用 ClientRecord 動態生成比較結果，
-    如果沒有 ClientRecord 數據，則直接使用 ClientComparison 表。
+
+    當提供 before_time 時，使用動態比較（Checkpoint vs Current）。
+    否則使用 ClientComparison 表的靜態數據。
     """
     from datetime import datetime
     from sqlalchemy import func
     from app.db.models import ClientRecord
+    from app.core.enums import MaintenancePhase
     from app.services.client_comparison_service import ClientComparisonService
-    
+
     async with get_session_context() as session:
         # 獲取該歲修的所有種類
         cat_stmt = (
@@ -154,7 +155,7 @@ async def get_category_stats(
         )
         cat_result = await session.execute(cat_stmt)
         categories = cat_result.scalars().all()
-        
+
         # 獲取種類成員對應（只取活躍分類的成員）
         active_cat_ids = [c.id for c in categories]
         member_stmt = (
@@ -163,7 +164,7 @@ async def get_category_stats(
         )
         member_result = await session.execute(member_stmt)
         members = member_result.scalars().all()
-        
+
         # 建立 MAC -> category_ids 對照（一對多：一個 MAC 可屬於多個分類）
         mac_to_categories: dict[str, list[int]] = {}
         for m in members:
@@ -172,54 +173,32 @@ async def get_category_stats(
                 if normalized not in mac_to_categories:
                     mac_to_categories[normalized] = []
                 mac_to_categories[normalized].append(m.category_id)
-        
-        # 檢查是否有 ClientRecord 數據
-        record_count_stmt = (
-            select(func.count())
-            .select_from(ClientRecord)
-            .where(ClientRecord.maintenance_id == maintenance_id)
-        )
-        record_count_result = await session.execute(record_count_stmt)
-        record_count = record_count_result.scalar() or 0
-        
-        comparisons = []
-        
-        if record_count > 0:
-            # 有 ClientRecord 數據，使用動態生成
-            first_stmt = (
-                select(func.min(ClientRecord.collected_at))
-                .where(ClientRecord.maintenance_id == maintenance_id)
-            )
-            first_result = await session.execute(first_stmt)
-            first_time = first_result.scalar()
-            
+
+        # 如果提供 before_time，使用動態比較（與 /diff 端點一致）
+        if before_time:
+            checkpoint_time = datetime.fromisoformat(before_time)
+
+            # 獲取最新快照時間
             latest_stmt = (
                 select(func.max(ClientRecord.collected_at))
-                .where(ClientRecord.maintenance_id == maintenance_id)
+                .where(
+                    ClientRecord.maintenance_id == maintenance_id,
+                    ClientRecord.phase == MaintenancePhase.NEW,
+                )
             )
             latest_result = await session.execute(latest_stmt)
-            latest_time = latest_result.scalar()
-            
-            # 解析 before_time 參數
-            if before_time:
-                try:
-                    before_dt = datetime.fromisoformat(before_time)
-                except ValueError:
-                    before_dt = first_time
-            else:
-                before_dt = first_time
-            
-            # 動態生成比較結果
-            if before_dt and latest_time:
-                service = ClientComparisonService()
-                comparisons = await service._generate_comparisons_at_time(
-                    maintenance_id=maintenance_id,
-                    before_time=before_dt,
-                    after_time=latest_time,
-                    session=session,
-                )
+            current_time = latest_result.scalar()
+
+            # 使用動態 Checkpoint vs Current 比較
+            comparison_service = ClientComparisonService()
+            comparisons = await comparison_service._generate_checkpoint_diff(
+                maintenance_id=maintenance_id,
+                checkpoint_time=checkpoint_time,
+                current_time=current_time,
+                session=session,
+            )
         else:
-            # 沒有 ClientRecord 數據，直接使用 ClientComparison 表
+            # 沒有 before_time 時，使用 ClientComparison 表的靜態數據
             comp_stmt = (
                 select(ClientComparison)
                 .where(ClientComparison.maintenance_id == maintenance_id)
@@ -296,35 +275,37 @@ async def get_category_stats(
             effective_severity = override_map.get(
                 normalized_mac, comp.severity
             )
-            
-            # 判斷是否為異常：
-            # - 如果是手動覆蓋且不是 info，則為異常
-            # - 如果有變化且 severity 是 critical 或 warning，則為異常
-            is_override = normalized_mac in override_map
-            is_issue = False
-            
-            if is_override:
-                # 手動覆蓋：根據覆蓋值判斷
-                is_issue = effective_severity in ('critical', 'warning')
+
+            # 判斷是否為異常（與 /diff 端點邏輯一致）：
+            # - 如果被覆蓋為 info（正常），則不算異常
+            # - 否則：有變化的 OR severity 為 critical/warning/undetected
+            if effective_severity == "info":
+                is_issue = False
+            elif effective_severity == "undetected":
+                is_issue = True
             else:
-                # 自動判斷：有變化且嚴重程度不是 info
-                is_issue = comp.is_changed and effective_severity != 'info'
+                is_issue = comp.is_changed or effective_severity in ("critical", "warning")
             
             # 統計到每個所屬分類
             for cat_id in cat_ids:
                 if cat_id not in stats:
                     continue
                 stats[cat_id]["total_count"] += 1
-                
+
+                if effective_severity == "undetected":
+                    stats[cat_id]["undetected_count"] += 1
+
                 if is_issue:
                     stats[cat_id]["issue_count"] += 1
                     if effective_severity == "critical":
                         stats[cat_id]["critical_count"] += 1
                     elif effective_severity == "warning":
                         stats[cat_id]["warning_count"] += 1
-            
+
             # 聯集統計（用於「全部」）
             all_macs.add(normalized_mac)
+            if effective_severity == "undetected":
+                all_undetected_macs.add(normalized_mac)
             if is_issue:
                 all_issue_macs.add(normalized_mac)
                 if effective_severity == "critical":
@@ -762,10 +743,146 @@ async def import_members_csv(
                 imported += 1
         
         await session.commit()
-        
+
         return {
             "imported": imported,
             "updated": updated,
             "errors": errors[:10],  # 最多回傳 10 個錯誤
+            "total_errors": len(errors),
+        }
+
+
+@router.post("/bulk-import")
+async def bulk_import_categories(
+    maintenance_id: str,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """
+    批量匯入分類及成員。
+
+    CSV 格式: category_name,mac_address,description
+    會自動建立不存在的分類，並將成員加入對應分類。
+    """
+    # 預設顏色列表（循環使用）
+    DEFAULT_COLORS = [
+        "#3B82F6",  # 藍
+        "#10B981",  # 綠
+        "#F59E0B",  # 黃
+        "#EF4444",  # 紅
+        "#8B5CF6",  # 紫
+    ]
+
+    async with get_session_context() as session:
+        # 讀取 CSV
+        content = await file.read()
+        try:
+            text = content.decode("utf-8-sig")  # 處理 BOM
+        except UnicodeDecodeError:
+            text = content.decode("utf-8")
+
+        reader = csv.DictReader(io.StringIO(text))
+
+        # 獲取現有分類
+        existing_stmt = select(ClientCategory).where(
+            ClientCategory.maintenance_id == maintenance_id,
+            ClientCategory.is_active == True,
+        )
+        existing_result = await session.execute(existing_stmt)
+        existing_categories = {c.name: c for c in existing_result.scalars().all()}
+
+        # 統計
+        categories_created = 0
+        members_imported = 0
+        members_updated = 0
+        errors = []
+
+        # 按分類分組處理
+        category_members: dict[str, list[dict]] = {}
+
+        for row_num, row in enumerate(reader, start=2):
+            cat_name = row.get("category_name", "").strip()
+            raw_mac = row.get("mac_address", "").strip()
+            desc = row.get("description", "").strip() or None
+
+            if not cat_name:
+                errors.append(f"Row {row_num}: 分類名稱為空")
+                continue
+
+            if not raw_mac:
+                errors.append(f"Row {row_num}: MAC 地址為空")
+                continue
+
+            # 標準化 MAC 格式
+            mac = raw_mac.upper().replace("-", ":")
+
+            # 驗證 MAC 格式
+            if not MAC_REGEX.match(mac):
+                errors.append(f"Row {row_num}: MAC 格式錯誤 ({raw_mac})")
+                continue
+
+            if cat_name not in category_members:
+                category_members[cat_name] = []
+            category_members[cat_name].append({"mac": mac, "desc": desc})
+
+        # 檢查分類數量限制
+        new_categories = set(category_members.keys()) - set(existing_categories.keys())
+        total_categories = len(existing_categories) + len(new_categories)
+
+        if total_categories > MAX_CATEGORIES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"匯入後分類總數 ({total_categories}) 超過上限 ({MAX_CATEGORIES})",
+            )
+
+        # 建立新分類
+        color_idx = len(existing_categories)
+        for cat_name in new_categories:
+            category = ClientCategory(
+                maintenance_id=maintenance_id,
+                name=cat_name,
+                color=DEFAULT_COLORS[color_idx % len(DEFAULT_COLORS)],
+                sort_order=color_idx,
+            )
+            session.add(category)
+            await session.flush()  # 獲取 ID
+            existing_categories[cat_name] = category
+            categories_created += 1
+            color_idx += 1
+
+        # 匯入成員
+        for cat_name, members in category_members.items():
+            category = existing_categories[cat_name]
+
+            for member_data in members:
+                mac = member_data["mac"]
+                desc = member_data["desc"]
+
+                # 檢查是否已存在
+                existing_stmt = select(ClientCategoryMember).where(
+                    ClientCategoryMember.category_id == category.id,
+                    ClientCategoryMember.mac_address == mac,
+                )
+                existing = await session.execute(existing_stmt)
+                existing_member = existing.scalar_one_or_none()
+
+                if existing_member:
+                    existing_member.description = desc
+                    members_updated += 1
+                else:
+                    member = ClientCategoryMember(
+                        category_id=category.id,
+                        mac_address=mac,
+                        description=desc,
+                    )
+                    session.add(member)
+                    members_imported += 1
+
+        await session.commit()
+
+        return {
+            "categories_created": categories_created,
+            "members_imported": members_imported,
+            "members_updated": members_updated,
+            "errors": errors[:10],
             "total_errors": len(errors),
         }

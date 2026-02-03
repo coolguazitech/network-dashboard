@@ -1,0 +1,8 @@
+mac_address,ip_address,tenant_group,description,category
+AA:BB:CC:DD:EE:01,10.1.1.101,F6,F6-EQP設備1,EQP
+AA:BB:CC:DD:EE:02,10.1.1.102,F6,F6-EQP設備2,EQP
+AA:BB:CC:DD:EE:03,10.1.1.103,F6,F6-AMHS設備1,AMHS
+AA:BB:CC:DD:EE:04,10.1.1.104,AP,AP-SNR設備1,示範櫃
+AA:BB:CC:DD:EE:05,10.1.1.105,AP,AP-SNR設備2,示範櫃
+AA:BB:CC:DD:EE:06,10.1.1.106,AP,AP-SNR設備3,示範櫃
+AA:BB:CC:DD:EE:07,10.1.1.107,F6,F6-幽靈設備(永不上線),EQP

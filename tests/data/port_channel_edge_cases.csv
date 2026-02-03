@@ -1,0 +1,10 @@
+hostname,port_channel,member_interfaces,description
+SW-A-01-NEW,Po1,Gi1/0/1;Gi1/0/2,正常資料
+SW-UNKNOWN,Po1,Gi1/0/1,不存在的設備（應報錯）
+,Po1,Gi1/0/1,空 hostname（應報錯）
+SW-A-02-NEW,,Gi1/0/1,空 port_channel（應報錯）
+SW-B-01-NEW,Po1,,空 member_interfaces（應報錯）
+SW-B-02-NEW,Po1,  Gi1/0/1 ; Gi1/0/2  ,有空白的成員介面（應正規化）
+SW-C-01-NEW,Po1,Gi1/0/1;Gi1/0/2;Gi1/0/3;Gi1/0/4;Gi1/0/5;Gi1/0/6;Gi1/0/7;Gi1/0/8,八埠聚合（多成員）
+SW-A-01-NEW,Po99,Gi2/0/1;Gi2/0/2,同設備不同 Po（應成功）
+SW-A-01,Po1,Gi1/0/1,舊設備 hostname（應報錯-只能新設備）

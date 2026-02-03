@@ -206,9 +206,45 @@ class SchedulerService:
                             result["total"],
                             result["client_records_count"],
                         )
+
+                        # 採集後自動偵測客戶端狀態（更新 MaintenanceMacList.detection_status）
+                        detect_result = await svc.detect_clients(
+                            maintenance_id=mid,
+                        )
+                        logger.info(
+                            "Client detection for %s: %d detected, %d mismatch, %d not_detected",
+                            mid,
+                            detect_result.get("detected", 0),
+                            detect_result.get("mismatch", 0),
+                            detect_result.get("not_detected", 0),
+                        )
                     except Exception as e:
                         logger.error(
                             "Client collection failed for %s: %s",
+                            mid, e,
+                        )
+
+            elif job_name == "ping":
+                # Ping 採集需要針對每個歲修的 maintenance_device_list 設備
+                svc = self.collection_service
+                for mid in maintenance_ids:
+                    try:
+                        result = await svc.collect_indicator_data(
+                            collection_type=job_name,
+                            maintenance_id=mid,
+                            url=url,
+                            source=source,
+                            brand=brand,
+                        )
+                        logger.info(
+                            "Ping collection for %s: %d/%d successful",
+                            mid,
+                            result["success"],
+                            result["total"],
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "Ping collection failed for %s: %s",
                             mid, e,
                         )
 
@@ -242,16 +278,37 @@ class SchedulerService:
         Run mock client data generation for a specific maintenance.
 
         Generates random ClientRecord data based on latest records or MAC list.
+
+        注意：必須先設定 ArpSource 才會生成資料，
+        這與真實資料採集邏輯一致。
         """
         from sqlalchemy import select, func
 
         from app.db.base import get_session_context
-        from app.db.models import ClientRecord
+        from app.db.models import ClientRecord, ArpSource
         from app.core.enums import MaintenancePhase
 
         generator = get_mock_data_generator()
 
         async with get_session_context() as session:
+            from app.db.models import MaintenanceMacList
+
+            # 先檢查是否有設定 ArpSource
+            # 如果沒有設定，就不應該生成 ClientRecord 資料
+            arp_stmt = select(func.count()).select_from(ArpSource).where(
+                ArpSource.maintenance_id == maintenance_id
+            )
+            arp_count_result = await session.execute(arp_stmt)
+            arp_count = arp_count_result.scalar()
+
+            if arp_count == 0:
+                logger.warning(
+                    "No ArpSource configured for %s - skipping mock client generation. "
+                    "Please configure ARP sources first.",
+                    maintenance_id,
+                )
+                return
+
             # 取得最新的 NEW 階段記錄作為基準
             subquery = (
                 select(func.max(ClientRecord.collected_at))
@@ -270,7 +327,7 @@ class SchedulerService:
             result = await session.execute(stmt)
             latest_records = list(result.scalars().all())
 
-            # 生成新一批記錄
+            # 生成變化版本的記錄
             new_records = await generator.generate_client_records(
                 maintenance_id=maintenance_id,
                 phase=MaintenancePhase.NEW,
@@ -278,7 +335,36 @@ class SchedulerService:
                 base_records=latest_records if latest_records else None,
             )
 
-            # 儲存到資料庫
+            # 檢查是否有新加入 MaintenanceMacList 但尚未有記錄的 MAC
+            if latest_records:
+                existing_macs = {r.mac_address.upper() for r in new_records if r.mac_address}
+
+                # 查詢所有 MAC 清單
+                mac_list_stmt = select(MaintenanceMacList).where(
+                    MaintenanceMacList.maintenance_id == maintenance_id
+                )
+                mac_list_result = await session.execute(mac_list_stmt)
+                mac_list = mac_list_result.scalars().all()
+
+                # 獲取有效的交換機 hostname 列表
+                valid_hostnames = await generator._get_valid_switch_hostnames(
+                    maintenance_id, MaintenancePhase.NEW, session
+                )
+
+                # 為新加入的 MAC 創建記錄
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                for mac_entry in mac_list:
+                    mac_upper = mac_entry.mac_address.upper() if mac_entry.mac_address else ""
+                    if mac_upper and mac_upper not in existing_macs:
+                        new_record = generator._create_new_record(
+                            mac_entry, maintenance_id, MaintenancePhase.NEW, now,
+                            valid_hostnames,
+                        )
+                        new_records.append(new_record)
+                        logger.info("Added new MAC to mock data: %s", mac_upper)
+
+            # 儲存 ClientRecord 到資料庫
             for record in new_records:
                 session.add(record)
             await session.commit()
@@ -287,6 +373,54 @@ class SchedulerService:
                 logger.info(
                     "Mock client generation: %d records for %s",
                     len(new_records),
+                    maintenance_id,
+                )
+
+            # 更新 MaintenanceMacList.detection_status（根據生成的 mock 資料）
+            from sqlalchemy import update
+            from app.core.enums import ClientDetectionStatus
+
+            for record in new_records:
+                if not record.mac_address:
+                    continue
+
+                # 如果 ClientRecord 存在，表示該 MAC 已被偵測到
+                # detection_status 代表「是否被偵測到」，與 ping 是否成功無關
+                # ping_reachable 是另一個獨立的指標（Ping 連通性驗收）
+                status = ClientDetectionStatus.DETECTED
+
+                update_stmt = (
+                    update(MaintenanceMacList)
+                    .where(
+                        MaintenanceMacList.maintenance_id == maintenance_id,
+                        MaintenanceMacList.mac_address == record.mac_address,
+                    )
+                    .values(detection_status=status)
+                )
+                await session.execute(update_stmt)
+
+            await session.commit()
+            logger.info(
+                "Updated detection_status for %d MACs in %s",
+                len(new_records),
+                maintenance_id,
+            )
+
+            # 也生成 VersionRecord（設備版本資料）
+            version_records = await generator.generate_version_records(
+                maintenance_id=maintenance_id,
+                phase=MaintenancePhase.NEW,
+                session=session,
+            )
+
+            for record in version_records:
+                session.add(record)
+            await session.commit()
+
+            if version_records:
+                logger.info(
+                    "Mock version generation: %d records for %s",
+                    len(version_records),
                     maintenance_id,
                 )
 

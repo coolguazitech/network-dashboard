@@ -73,6 +73,12 @@ def serialize_device(d: MaintenanceDeviceList) -> dict:
         "new_vendor": d.new_vendor,
         "use_same_port": d.use_same_port,
         "tenant_group": d.tenant_group.value if d.tenant_group else TenantGroup.F18.value,
+        # 舊設備可達性
+        "old_is_reachable": d.old_is_reachable,
+        "old_last_check_at": (
+            d.old_last_check_at.isoformat() if d.old_last_check_at else None
+        ),
+        # 新設備可達性
         "is_reachable": d.is_reachable,
         "last_check_at": (
             d.last_check_at.isoformat() if d.last_check_at else None
@@ -109,12 +115,11 @@ async def validate_device_mapping(
 
     驗證規則：
     1. IP 格式驗證
-    2. old_hostname 唯一性（在整個表中只能出現一次）
-    3. new_hostname 唯一性（在整個表中只能出現一次）
-    4. 防止交叉對應（不能 A→B 且 B→A）
-    5. OLD IP 在所有 OLD 設備中唯一
-    6. NEW IP 在所有 NEW 設備中唯一
-    7. OLD 和 NEW 之間可以使用相同的 IP（舊 IP 給新設備重用）
+    2. old_hostname 唯一性（只檢查 old 欄位，可以出現在 new 欄位）
+    3. new_hostname 唯一性（只檢查 new 欄位，可以出現在 old 欄位）
+    4. OLD IP 在所有 OLD 設備中唯一
+    5. NEW IP 在所有 NEW 設備中唯一
+    6. OLD 和 NEW 之間可以使用相同的 IP（舊 IP 給新設備重用）
     """
     errors = []
 
@@ -129,15 +134,10 @@ async def validate_device_mapping(
     except ValueError:
         errors.append(f"新設備 IP 格式錯誤: {new_ip_address}")
 
-    from sqlalchemy import or_
-
-    # 2. old_hostname 唯一性檢查（不能在任何位置出現）
+    # 2. old_hostname 唯一性檢查（只檢查 old 欄位，可以出現在 new 欄位）
     stmt_old_hostname = select(MaintenanceDeviceList).where(
         MaintenanceDeviceList.maintenance_id == maintenance_id,
-        or_(
-            MaintenanceDeviceList.old_hostname == old_hostname,
-            MaintenanceDeviceList.new_hostname == old_hostname,
-        )
+        MaintenanceDeviceList.old_hostname == old_hostname,
     )
     if existing_device_id is not None:
         stmt_old_hostname = stmt_old_hostname.where(
@@ -147,21 +147,12 @@ async def validate_device_mapping(
     result = await session.execute(stmt_old_hostname)
     conflict_old = result.scalar_one_or_none()
     if conflict_old:
-        if conflict_old.old_hostname == old_hostname:
-            errors.append(f"設備 {old_hostname} 已作為舊設備存在")
-        else:
-            errors.append(
-                f"設備 {old_hostname} 已作為新設備存在 "
-                f"(在 {conflict_old.old_hostname} 的對應中)"
-            )
+        errors.append(f"舊設備 {old_hostname} 已存在")
 
-    # 3. new_hostname 唯一性檢查（不能在任何位置出現）
+    # 3. new_hostname 唯一性檢查（只檢查 new 欄位，可以出現在 old 欄位）
     stmt_new_hostname = select(MaintenanceDeviceList).where(
         MaintenanceDeviceList.maintenance_id == maintenance_id,
-        or_(
-            MaintenanceDeviceList.old_hostname == new_hostname,
-            MaintenanceDeviceList.new_hostname == new_hostname,
-        )
+        MaintenanceDeviceList.new_hostname == new_hostname,
     )
     if existing_device_id is not None:
         stmt_new_hostname = stmt_new_hostname.where(
@@ -171,32 +162,9 @@ async def validate_device_mapping(
     result2 = await session.execute(stmt_new_hostname)
     conflict_new = result2.scalar_one_or_none()
     if conflict_new:
-        if conflict_new.new_hostname == new_hostname:
-            errors.append(
-                f"設備 {new_hostname} 已作為新設備存在 "
-                f"(在 {conflict_new.old_hostname} 的對應中)"
-            )
-        else:
-            errors.append(f"設備 {new_hostname} 已作為舊設備存在")
-
-    # 4. 防止交叉對應（A→B 且 B→A）
-    # 檢查是否存在 new_hostname → old_hostname 的對應
-    stmt_cross = select(MaintenanceDeviceList).where(
-        MaintenanceDeviceList.maintenance_id == maintenance_id,
-        MaintenanceDeviceList.old_hostname == new_hostname,
-        MaintenanceDeviceList.new_hostname == old_hostname,
-    )
-    if existing_device_id is not None:
-        stmt_cross = stmt_cross.where(
-            MaintenanceDeviceList.id != existing_device_id
-        )
-
-    result_cross = await session.execute(stmt_cross)
-    cross_mapping = result_cross.scalar_one_or_none()
-    if cross_mapping:
         errors.append(
-            f"偵測到交叉對應: {old_hostname}→{new_hostname} 且 "
-            f"{new_hostname}→{old_hostname}，這是不允許的"
+            f"新設備 {new_hostname} 已存在 "
+            f"(在 {conflict_new.old_hostname} → {conflict_new.new_hostname} 的對應中)"
         )
 
     # 5. OLD IP 在所有 OLD 設備中唯一
@@ -260,7 +228,8 @@ async def get_tenant_group_options() -> dict[str, Any]:
 async def list_devices(
     maintenance_id: str,
     search: str | None = Query(None, description="搜尋 hostname 或 IP（支援多關鍵字，空格分隔）"),
-    is_reachable: bool | None = Query(None, description="篩選可達性"),
+    is_reachable: bool | None = Query(None, description="篩選新設備可達性（舊參數，建議用 reachability）"),
+    reachability: str | None = Query(None, description="篩選可達性：old_true/old_false/new_true/new_false/any_true/any_false"),
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
@@ -268,15 +237,24 @@ async def list_devices(
 
     搜尋邏輯：支援多關鍵字搜尋，空格分隔，所有關鍵字都必須匹配
     例如："SW 01 CORE" 會匹配 "SW-OLD-001-CORE"
+
+    reachability 篩選選項：
+    - old_true: 舊設備可達
+    - old_false: 舊設備不可達
+    - new_true: 新設備可達
+    - new_false: 新設備不可達
+    - any_true: 任一可達（舊或新）
+    - any_false: 任一不可達（舊或新）
     """
+    from sqlalchemy import or_, and_
+
     stmt = (
         select(MaintenanceDeviceList)
         .where(MaintenanceDeviceList.maintenance_id == maintenance_id)
     )
-    
+
     # 多關鍵字搜尋（空格分隔，所有關鍵字都必須在同一個欄位中匹配）
     if search:
-        from sqlalchemy import or_, and_
         keywords = search.strip().split()
 
         # 對每個欄位，檢查是否所有關鍵字都在該欄位中
@@ -286,6 +264,7 @@ async def list_devices(
             MaintenanceDeviceList.old_ip_address,
             MaintenanceDeviceList.new_hostname,
             MaintenanceDeviceList.new_ip_address,
+            MaintenanceDeviceList.description,
         ]:
             # 所有關鍵字都必須在這個欄位中
             field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
@@ -293,9 +272,29 @@ async def list_devices(
 
         # 只要有任何一個欄位滿足所有關鍵字，就匹配
         stmt = stmt.where(or_(*field_conditions))
-    
-    # 篩選可達性
-    if is_reachable is not None:
+
+    # 新的可達性篩選
+    if reachability:
+        if reachability == "old_true":
+            stmt = stmt.where(MaintenanceDeviceList.old_is_reachable == True)  # noqa: E712
+        elif reachability == "old_false":
+            stmt = stmt.where(MaintenanceDeviceList.old_is_reachable == False)  # noqa: E712
+        elif reachability == "new_true":
+            stmt = stmt.where(MaintenanceDeviceList.is_reachable == True)  # noqa: E712
+        elif reachability == "new_false":
+            stmt = stmt.where(MaintenanceDeviceList.is_reachable == False)  # noqa: E712
+        elif reachability == "any_true":
+            stmt = stmt.where(or_(
+                MaintenanceDeviceList.old_is_reachable == True,  # noqa: E712
+                MaintenanceDeviceList.is_reachable == True,  # noqa: E712
+            ))
+        elif reachability == "any_false":
+            stmt = stmt.where(or_(
+                MaintenanceDeviceList.old_is_reachable == False,  # noqa: E712
+                MaintenanceDeviceList.is_reachable == False,  # noqa: E712
+            ))
+    # 向後相容舊參數
+    elif is_reachable is not None:
         stmt = stmt.where(MaintenanceDeviceList.is_reachable == is_reachable)
     
     stmt = stmt.order_by(MaintenanceDeviceList.old_hostname)
@@ -621,7 +620,8 @@ async def import_csv(
     # ===== 階段 1: 驗證所有行並收集錯誤 =====
     errors = []
     rows_to_process = []  # 存儲待處理的行數據
-    used_hostnames_in_csv: set[str] = set()
+    used_old_hostnames_in_csv: set[str] = set()  # CSV 內部 OLD hostname 唯一性
+    used_new_hostnames_in_csv: set[str] = set()  # CSV 內部 NEW hostname 唯一性
     used_old_ips_in_csv: set[str] = set()  # CSV 內部 OLD IP 唯一性
     used_new_ips_in_csv: set[str] = set()  # CSV 內部 NEW IP 唯一性
 
@@ -668,14 +668,16 @@ async def import_csv(
             continue
 
         # 3. 檢查 CSV 內部重複（hostname）
-        if old_hostname in used_hostnames_in_csv:
+        # old_hostname 只檢查 old 欄位，可以出現在 new 欄位
+        if old_hostname in used_old_hostnames_in_csv:
             errors.append(
-                f"第 {row_num} 行：設備 {old_hostname} 在此 CSV 中重複"
+                f"第 {row_num} 行：舊設備 {old_hostname} 在此 CSV 中重複"
             )
             continue
-        if new_hostname in used_hostnames_in_csv:
+        # new_hostname 只檢查 new 欄位，可以出現在 old 欄位
+        if new_hostname in used_new_hostnames_in_csv:
             errors.append(
-                f"第 {row_num} 行：設備 {new_hostname} 在此 CSV 中重複"
+                f"第 {row_num} 行：新設備 {new_hostname} 在此 CSV 中重複"
             )
             continue
 
@@ -710,8 +712,8 @@ async def import_csv(
             )
             if is_identical:
                 # 完全相同，跳過不處理
-                used_hostnames_in_csv.add(old_hostname)
-                used_hostnames_in_csv.add(new_hostname)
+                used_old_hostnames_in_csv.add(old_hostname)
+                used_new_hostnames_in_csv.add(new_hostname)
                 used_old_ips_in_csv.add(old_ip)
                 used_new_ips_in_csv.add(new_ip)
                 continue
@@ -758,8 +760,8 @@ async def import_csv(
         })
 
         # 追蹤已使用的值
-        used_hostnames_in_csv.add(old_hostname)
-        used_hostnames_in_csv.add(new_hostname)
+        used_old_hostnames_in_csv.add(old_hostname)
+        used_new_hostnames_in_csv.add(new_hostname)
         used_old_ips_in_csv.add(old_ip)
         used_new_ips_in_csv.add(new_ip)
 
@@ -905,6 +907,7 @@ async def export_devices_csv(
             MaintenanceDeviceList.old_ip_address,
             MaintenanceDeviceList.new_hostname,
             MaintenanceDeviceList.new_ip_address,
+            MaintenanceDeviceList.description,
         ]:
             field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
             field_conditions.append(field_match)
@@ -1000,8 +1003,211 @@ async def batch_update_reachability(
             updated_count += 1
     
     await session.commit()
-    
+
     return {
         "success": True,
         "updated_count": updated_count,
+    }
+
+
+async def _ping_ip(api_client, site: str, ip_address: str, hostname: str = "") -> bool:
+    """執行單一 IP 的 ping 測試。"""
+    try:
+        raw_output = await api_client.fetch(
+            site=site,
+            function="ping",
+            switch_ip=ip_address,
+            switch_hostname=hostname,
+        )
+
+        if raw_output:
+            lower_output = raw_output.lower()
+            if "100% packet loss" in lower_output or "0 packets received" in lower_output:
+                return False
+            elif "bytes from" in lower_output or "ttl=" in lower_output:
+                return True
+            elif "packets received" in lower_output:
+                return "0 packets received" not in lower_output
+        return False
+    except Exception:
+        return False
+
+
+@router.post("/{maintenance_id}/{device_id}/test-reachability")
+async def test_device_reachability(
+    maintenance_id: str,
+    device_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """
+    測試單一設備的可達性。
+
+    使用 GNMS Ping API 測試新舊設備 IP 是否可達，並更新資料庫中的狀態。
+    """
+    import asyncio
+    from app.services.api_client import get_api_client
+
+    # 查詢設備
+    stmt = select(MaintenanceDeviceList).where(
+        MaintenanceDeviceList.maintenance_id == maintenance_id,
+        MaintenanceDeviceList.id == device_id,
+    )
+    result = await session.execute(stmt)
+    device = result.scalar_one_or_none()
+
+    if not device:
+        raise HTTPException(status_code=404, detail="找不到指定的設備")
+
+    # 使用 API client 進行 ping 測試
+    api_client = get_api_client()
+    site = f"{device.tenant_group.value.lower()}_site"
+
+    # 並行測試新舊設備
+    old_reachable, new_reachable = await asyncio.gather(
+        _ping_ip(api_client, site, device.old_ip_address),
+        _ping_ip(api_client, site, device.new_ip_address),
+    )
+
+    # 更新資料庫
+    now = datetime.now()
+    device.old_is_reachable = old_reachable
+    device.old_last_check_at = now
+    device.is_reachable = new_reachable
+    device.last_check_at = now
+    await session.commit()
+    await session.refresh(device)
+
+    return {
+        "success": True,
+        "device_id": device_id,
+        "old_ip_address": device.old_ip_address,
+        "old_is_reachable": old_reachable,
+        "new_ip_address": device.new_ip_address,
+        "is_reachable": new_reachable,
+        "last_check_at": device.last_check_at.isoformat() if device.last_check_at else None,
+    }
+
+
+@router.post("/{maintenance_id}/batch-test-reachability")
+async def batch_test_reachability(
+    maintenance_id: str,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """
+    批量測試所有設備的可達性。
+
+    對該歲修 ID 下的所有設備進行 GNMS Ping 測試（新舊設備都測試），
+    並更新資料庫中的狀態。使用 asyncio.gather 並行執行 ping 以加速測試。
+    """
+    import asyncio
+    from app.services.api_client import get_api_client
+
+    # 查詢所有設備
+    stmt = select(MaintenanceDeviceList).where(
+        MaintenanceDeviceList.maintenance_id == maintenance_id,
+    )
+    result = await session.execute(stmt)
+    devices = result.scalars().all()
+
+    if not devices:
+        return {
+            "success": True,
+            "total": 0,
+            "old_reachable": 0,
+            "old_unreachable": 0,
+            "new_reachable": 0,
+            "new_unreachable": 0,
+            "results": [],
+        }
+
+    api_client = get_api_client()
+    now = datetime.now()
+
+    # 先提取需要的資料，避免 SQLAlchemy session 問題
+    device_info = [
+        {
+            "id": d.id,
+            "old_hostname": d.old_hostname,
+            "old_ip_address": d.old_ip_address,
+            "new_hostname": d.new_hostname,
+            "new_ip_address": d.new_ip_address,
+            "tenant_group": d.tenant_group.value.lower() if d.tenant_group else "f18",
+        }
+        for d in devices
+    ]
+
+    # 建立 ID 到 device 的映射
+    device_map = {d.id: d for d in devices}
+
+    async def ping_device(info: dict) -> dict:
+        """測試單一設備的新舊 IP 可達性。"""
+        site = f"{info['tenant_group']}_site"
+
+        # 並行測試新舊設備（傳遞 hostname 讓 mock 判斷設備類型）
+        old_reachable, new_reachable = await asyncio.gather(
+            _ping_ip(api_client, site, info["old_ip_address"], info["old_hostname"]),
+            _ping_ip(api_client, site, info["new_ip_address"], info["new_hostname"]),
+        )
+
+        return {
+            "device_id": info["id"],
+            "old_hostname": info["old_hostname"],
+            "old_ip_address": info["old_ip_address"],
+            "old_is_reachable": old_reachable,
+            "new_hostname": info["new_hostname"],
+            "new_ip_address": info["new_ip_address"],
+            "is_reachable": new_reachable,
+        }
+
+    # 並行執行所有 ping 測試
+    ping_results = await asyncio.gather(
+        *[ping_device(info) for info in device_info],
+        return_exceptions=True,
+    )
+
+    # 處理結果並更新資料庫
+    results = []
+    old_reachable_count = 0
+    old_unreachable_count = 0
+    new_reachable_count = 0
+    new_unreachable_count = 0
+
+    for ping_result in ping_results:
+        if isinstance(ping_result, Exception):
+            continue
+
+        device_id = ping_result["device_id"]
+        old_is_reachable = ping_result["old_is_reachable"]
+        new_is_reachable = ping_result["is_reachable"]
+
+        # 更新資料庫中的設備
+        device = device_map.get(device_id)
+        if device:
+            device.old_is_reachable = old_is_reachable
+            device.old_last_check_at = now
+            device.is_reachable = new_is_reachable
+            device.last_check_at = now
+
+        if old_is_reachable:
+            old_reachable_count += 1
+        else:
+            old_unreachable_count += 1
+
+        if new_is_reachable:
+            new_reachable_count += 1
+        else:
+            new_unreachable_count += 1
+
+        results.append(ping_result)
+
+    await session.commit()
+
+    return {
+        "success": True,
+        "total": len(devices),
+        "old_reachable": old_reachable_count,
+        "old_unreachable": old_unreachable_count,
+        "new_reachable": new_reachable_count,
+        "new_unreachable": new_unreachable_count,
+        "results": results,
     }

@@ -19,6 +19,7 @@ from app.db.base import get_session_context
 from app.db.models import (
     MaintenanceMacList, ClientCategoryMember, ClientCategory,
 )
+from app.services.client_comparison_service import ClientComparisonService
 
 
 # MAC 地址格式驗證
@@ -38,7 +39,15 @@ class ClientCreate(BaseModel):
     ip_address: str
     tenant_group: TenantGroup = TenantGroup.F18
     description: str | None = None
-    category: str | None = None  # 分類名稱（若不存在會自動建立）
+    category_ids: list[int] | None = None  # 分類 ID 列表（必須是已存在的分類）
+
+
+class ClientUpdate(BaseModel):
+    """更新 Client 請求（不含分類，分類請用「分類」按鈕）。"""
+    mac_address: str | None = None
+    ip_address: str | None = None
+    tenant_group: TenantGroup | None = None
+    description: str | None = None
 
 
 class ClientResponse(BaseModel):
@@ -71,6 +80,45 @@ class ClientListStats(BaseModel):
 MacCreate = ClientCreate
 MacResponse = ClientResponse
 MacListStats = ClientListStats
+
+
+async def regenerate_comparisons(maintenance_id: str, session=None) -> None:
+    """
+    重新生成客戶端比較結果。
+
+    當 Client 清單變更時（新增、更新、刪除），自動更新比較結果
+    以確保客戶端比較頁面與 Client 清單保持同步。
+
+    注意：使用獨立的 session 來確保能看到最新的已提交資料。
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        # 使用新的 session 來確保能看到最新的已提交資料
+        async with get_session_context() as new_session:
+            service = ClientComparisonService()
+            comparisons = await service.generate_comparisons(
+                maintenance_id=maintenance_id,
+                session=new_session,
+            )
+            logger.info(
+                f"Generated {len(comparisons)} comparisons for {maintenance_id}"
+            )
+            await service.save_comparisons(
+                comparisons=comparisons,
+                session=new_session,
+            )
+            logger.info(
+                f"Saved {len(comparisons)} comparisons for {maintenance_id}"
+            )
+    except Exception as e:
+        # 比較生成失敗不應阻擋主要操作，但記錄錯誤
+        logger.error(
+            f"Failed to regenerate comparisons for {maintenance_id}: {e}"
+        )
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 def normalize_mac(mac: str) -> str:
@@ -155,29 +203,31 @@ async def list_clients(
             from sqlalchemy import and_, or_
             keywords = search.strip().split()
 
-            field_conditions = []
-            # MAC address field (需要轉大寫)
-            mac_match = and_(*[
-                MaintenanceMacList.mac_address.like(f"%{kw.upper()}%")
-                for kw in keywords
-            ])
-            field_conditions.append(mac_match)
+            # 空關鍵字列表時跳過搜尋條件（返回全部結果）
+            if keywords:
+                field_conditions = []
+                # MAC address field (需要轉大寫)
+                mac_match = and_(*[
+                    MaintenanceMacList.mac_address.like(f"%{kw.upper()}%")
+                    for kw in keywords
+                ])
+                field_conditions.append(mac_match)
 
-            # IP address field
-            ip_match = and_(*[
-                MaintenanceMacList.ip_address.like(f"%{kw}%")
-                for kw in keywords
-            ])
-            field_conditions.append(ip_match)
+                # IP address field
+                ip_match = and_(*[
+                    MaintenanceMacList.ip_address.like(f"%{kw}%")
+                    for kw in keywords
+                ])
+                field_conditions.append(ip_match)
 
-            # Description field
-            desc_match = and_(*[
-                MaintenanceMacList.description.like(f"%{kw}%")
-                for kw in keywords
-            ])
-            field_conditions.append(desc_match)
+                # Description field
+                desc_match = and_(*[
+                    MaintenanceMacList.description.like(f"%{kw}%")
+                    for kw in keywords
+                ])
+                field_conditions.append(desc_match)
 
-            stmt = stmt.where(or_(*field_conditions))
+                stmt = stmt.where(or_(*field_conditions))
 
         stmt = stmt.order_by(MaintenanceMacList.mac_address)
         stmt = stmt.offset(offset).limit(limit)
@@ -363,19 +413,39 @@ async def add_client(
         )
         session.add(entry)
 
-        # 如果指定了分類，自動建立並加入
-        category_id = None
-        category_name = None
-        if data.category:
-            category = await get_or_create_category(
-                session, maintenance_id, data.category.strip()
+        # 如果指定了分類 ID，驗證分類存在後加入（支援多選）
+        category_ids = []
+        category_names = []
+        if data.category_ids:
+            # 驗證所有分類 ID 都存在且屬於此歲修
+            cat_stmt = select(ClientCategory).where(
+                ClientCategory.maintenance_id == maintenance_id,
+                ClientCategory.id.in_(data.category_ids),
+                ClientCategory.is_active == True,  # noqa: E712
             )
-            category_id = category.id
-            category_name = category.name
-            await add_mac_to_category(session, mac, category.id)
+            cat_result = await session.execute(cat_stmt)
+            valid_categories = {c.id: c for c in cat_result.scalars().all()}
+
+            # 檢查是否有無效的分類 ID
+            invalid_ids = set(data.category_ids) - set(valid_categories.keys())
+            if invalid_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"分類 ID {list(invalid_ids)} 不存在或不屬於此歲修"
+                )
+
+            # 將 MAC 加入所有指定的分類
+            for cat_id in data.category_ids:
+                cat = valid_categories[cat_id]
+                await add_mac_to_category(session, mac, cat_id)
+                category_ids.append(cat_id)
+                category_names.append(cat.name)
 
         await session.commit()
         await session.refresh(entry)
+
+        # 自動重新生成比較結果
+        await regenerate_comparisons(maintenance_id, session)
 
         return {
             "id": entry.id,
@@ -385,8 +455,89 @@ async def add_client(
             "detection_status": entry.detection_status,
             "description": entry.description,
             "maintenance_id": entry.maintenance_id,
-            "category_id": category_id,
-            "category_name": category_name,
+            "category_id": category_ids[0] if category_ids else None,
+            "category_name": ";".join(category_names) if category_names else None,
+        }
+
+
+@router.put("/{maintenance_id}/{client_id}", response_model=ClientResponse)
+async def update_client(
+    maintenance_id: str,
+    client_id: int,
+    data: ClientUpdate,
+) -> dict[str, Any]:
+    """
+    更新單一 Client（IP + MAC）。
+
+    驗證邏輯：
+    - MAC 格式驗證（若提供）
+    - IP 格式驗證（若提供）
+    - MAC 唯一性檢查（若變更 MAC，確保新 MAC 不與其他 Client 重複）
+    """
+    async with get_session_context() as session:
+        # 查詢現有 Client
+        stmt = select(MaintenanceMacList).where(
+            MaintenanceMacList.maintenance_id == maintenance_id,
+            MaintenanceMacList.id == client_id,
+        )
+        result = await session.execute(stmt)
+        entry = result.scalar_one_or_none()
+
+        if not entry:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Client ID {client_id} 不存在"
+            )
+
+        # 驗證並更新 MAC（若提供）
+        if data.mac_address is not None:
+            new_mac = validate_mac(data.mac_address)
+
+            # 檢查 MAC 唯一性（若變更了 MAC）
+            if new_mac != entry.mac_address:
+                existing_stmt = select(MaintenanceMacList).where(
+                    MaintenanceMacList.maintenance_id == maintenance_id,
+                    MaintenanceMacList.mac_address == new_mac,
+                    MaintenanceMacList.id != client_id,  # 排除自己
+                )
+                existing = await session.execute(existing_stmt)
+                if existing.scalar_one_or_none():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"MAC {new_mac} 已存在於此歲修清單中"
+                    )
+                entry.mac_address = new_mac
+
+        # 驗證並更新 IP（若提供）
+        if data.ip_address is not None:
+            new_ip = validate_ip(data.ip_address)
+            entry.ip_address = new_ip
+
+        # 更新其他欄位（若提供）
+        if data.tenant_group is not None:
+            entry.tenant_group = data.tenant_group
+
+        if data.description is not None:
+            entry.description = data.description if data.description else None
+
+        # 注意：編輯功能不處理分類，請使用「分類」按鈕修改分類
+
+        await session.commit()
+        await session.refresh(entry)
+
+        # 自動重新生成比較結果（MAC 變更可能影響比較）
+        await regenerate_comparisons(maintenance_id, session)
+
+        return {
+            "id": entry.id,
+            "mac_address": entry.mac_address,
+            "ip_address": entry.ip_address,
+            "tenant_group": entry.tenant_group,
+            "detection_status": entry.detection_status,
+            "description": entry.description,
+            "maintenance_id": entry.maintenance_id,
+            "category_id": None,
+            "category_name": None,
         }
 
 
@@ -395,7 +546,7 @@ async def remove_mac(
     maintenance_id: str,
     mac_address: str,
 ) -> dict[str, str]:
-    """移除單一 MAC。"""
+    """移除單一 MAC（同時從所有分類中移除）。"""
     mac = normalize_mac(mac_address)
 
     async with get_session_context() as session:
@@ -409,8 +560,26 @@ async def remove_mac(
         if not entry:
             raise HTTPException(status_code=404, detail="MAC 不存在")
 
+        # 先從所有分類中移除此 MAC
+        cat_stmt = select(ClientCategory.id).where(
+            ClientCategory.maintenance_id == maintenance_id,
+            ClientCategory.is_active == True,  # noqa: E712
+        )
+        cat_result = await session.execute(cat_stmt)
+        cat_ids = [r[0] for r in cat_result.fetchall()]
+
+        if cat_ids:
+            del_member_stmt = delete(ClientCategoryMember).where(
+                ClientCategoryMember.category_id.in_(cat_ids),
+                ClientCategoryMember.mac_address == mac,
+            )
+            await session.execute(del_member_stmt)
+
         await session.delete(entry)
         await session.commit()
+
+        # 自動重新生成比較結果
+        await regenerate_comparisons(maintenance_id, session)
 
         return {"message": f"已移除 {mac}"}
 
@@ -420,7 +589,7 @@ async def batch_delete_macs(
     maintenance_id: str,
     mac_ids: list[int],
 ) -> dict[str, Any]:
-    """批量刪除 MAC 位址。"""
+    """批量刪除 MAC 位址（同時從所有分類中移除）。"""
     if not mac_ids:
         return {
             "success": True,
@@ -429,12 +598,41 @@ async def batch_delete_macs(
         }
 
     async with get_session_context() as session:
+        # 先查詢要刪除的 MAC 地址
+        mac_stmt = select(MaintenanceMacList.mac_address).where(
+            MaintenanceMacList.maintenance_id == maintenance_id,
+            MaintenanceMacList.id.in_(mac_ids),
+        )
+        mac_result = await session.execute(mac_stmt)
+        macs_to_delete = [r[0] for r in mac_result.fetchall()]
+
+        # 從分類中移除這些 MAC
+        if macs_to_delete:
+            cat_stmt = select(ClientCategory.id).where(
+                ClientCategory.maintenance_id == maintenance_id,
+                ClientCategory.is_active == True,  # noqa: E712
+            )
+            cat_result = await session.execute(cat_stmt)
+            cat_ids = [r[0] for r in cat_result.fetchall()]
+
+            if cat_ids:
+                del_member_stmt = delete(ClientCategoryMember).where(
+                    ClientCategoryMember.category_id.in_(cat_ids),
+                    ClientCategoryMember.mac_address.in_(macs_to_delete),
+                )
+                await session.execute(del_member_stmt)
+
+        # 刪除 MAC 記錄
         stmt = delete(MaintenanceMacList).where(
             MaintenanceMacList.maintenance_id == maintenance_id,
             MaintenanceMacList.id.in_(mac_ids),
         )
         result = await session.execute(stmt)
         await session.commit()
+
+        # 自動重新生成比較結果
+        if result.rowcount > 0:
+            await regenerate_comparisons(maintenance_id, session)
 
         return {
             "success": True,
@@ -452,6 +650,9 @@ async def clear_all(maintenance_id: str) -> dict[str, Any]:
         )
         result = await session.execute(stmt)
         await session.commit()
+
+        # 自動重新生成比較結果（清空後會是空的）
+        await regenerate_comparisons(maintenance_id, session)
 
         return {
             "message": f"已清空 {maintenance_id} 的 MAC 清單",
@@ -475,7 +676,7 @@ async def import_csv(
     - ip_address: 必填
     - tenant_group: 選填（預設 F18，有效值: F18/F6/AP/F14/F12）
     - description: 選填
-    - category: 選填（若不存在會自動建立）
+    - category: 選填（必須是已存在的分類名稱，可用分號分隔多個分類，如 "EQP;AMHS"）
     """
     async with get_session_context() as session:
         # 如果需要清空現有清單
@@ -484,6 +685,14 @@ async def import_csv(
                 MaintenanceMacList.maintenance_id == maintenance_id
             )
             await session.execute(del_stmt)
+
+        # 先載入所有現有分類（用於驗證）
+        cat_stmt = select(ClientCategory).where(
+            ClientCategory.maintenance_id == maintenance_id,
+            ClientCategory.is_active == True,  # noqa: E712
+        )
+        cat_result = await session.execute(cat_stmt)
+        existing_categories = {c.name: c for c in cat_result.scalars().all()}
 
         # 讀取 CSV
         content = await file.read()
@@ -497,7 +706,7 @@ async def import_csv(
         imported = 0
         skipped = 0
         errors = []
-        categories_created = set()
+        categories_used = set()
 
         valid_tenant_groups = {t.value for t in TenantGroup}
 
@@ -543,6 +752,27 @@ async def import_csv(
                 skipped += 1
                 continue
 
+            # 先驗證所有分類（必須全部存在才能匯入）
+            valid_cat_list = []
+            invalid_cats = []
+            if category_name:
+                cat_names = [
+                    name.strip() for name in category_name.split(";")
+                    if name.strip()
+                ]
+                for cat_name in cat_names:
+                    if cat_name in existing_categories:
+                        valid_cat_list.append(existing_categories[cat_name])
+                    else:
+                        invalid_cats.append(cat_name)
+
+            # 如果有任何無效分類，跳過整行
+            if invalid_cats:
+                errors.append(
+                    f"Row {row_num}: 分類 {invalid_cats} 不存在，整行已跳過"
+                )
+                continue
+
             # 新增 Client
             entry = MaintenanceMacList(
                 maintenance_id=maintenance_id,
@@ -554,27 +784,25 @@ async def import_csv(
             )
             session.add(entry)
 
-            # 處理分類
-            if category_name:
-                try:
-                    category = await get_or_create_category(
-                        session, maintenance_id, category_name
-                    )
-                    await add_mac_to_category(session, mac, category.id)
-                    categories_created.add(category_name)
-                except Exception as e:
-                    errors.append(f"Row {row_num}: 分類處理錯誤 ({e})")
+            # 將 MAC 加入所有有效分類
+            for category in valid_cat_list:
+                await add_mac_to_category(session, mac, category.id)
+                categories_used.add(category.name)
 
             imported += 1
 
         await session.commit()
 
+        # 自動重新生成比較結果
+        if imported > 0:
+            await regenerate_comparisons(maintenance_id, session)
+
         return {
             "imported": imported,
             "skipped": skipped,
-            "errors": errors[:10],
+            "errors": errors,  # 返回所有錯誤，讓前端顯示完整錯誤清單
             "total_errors": len(errors),
-            "categories_created": list(categories_created),
+            "categories_used": list(categories_used),
         }
 
 
@@ -602,26 +830,28 @@ async def list_clients_detailed(
             from sqlalchemy import and_, or_
             keywords = search.strip().split()
 
-            field_conditions = []
-            mac_match = and_(*[
-                MaintenanceMacList.mac_address.like(f"%{kw.upper()}%")
-                for kw in keywords
-            ])
-            field_conditions.append(mac_match)
+            # 空關鍵字列表時跳過搜尋條件（返回全部結果）
+            if keywords:
+                field_conditions = []
+                mac_match = and_(*[
+                    MaintenanceMacList.mac_address.like(f"%{kw.upper()}%")
+                    for kw in keywords
+                ])
+                field_conditions.append(mac_match)
 
-            ip_match = and_(*[
-                MaintenanceMacList.ip_address.like(f"%{kw}%")
-                for kw in keywords
-            ])
-            field_conditions.append(ip_match)
+                ip_match = and_(*[
+                    MaintenanceMacList.ip_address.like(f"%{kw}%")
+                    for kw in keywords
+                ])
+                field_conditions.append(ip_match)
 
-            desc_match = and_(*[
-                MaintenanceMacList.description.like(f"%{kw}%")
-                for kw in keywords
-            ])
-            field_conditions.append(desc_match)
+                desc_match = and_(*[
+                    MaintenanceMacList.description.like(f"%{kw}%")
+                    for kw in keywords
+                ])
+                field_conditions.append(desc_match)
 
-            stmt = stmt.where(or_(*field_conditions))
+                stmt = stmt.where(or_(*field_conditions))
 
         stmt = stmt.order_by(MaintenanceMacList.mac_address)
         result = await session.execute(stmt)
@@ -638,8 +868,8 @@ async def list_clients_detailed(
         categories = {c.id: c for c in cat_result.scalars().all()}
         cat_ids = list(categories.keys())
 
-        # 獲取 MAC 的分類歸屬
-        mac_categories = {}
+        # 獲取 MAC 的分類歸屬（支援多分類）
+        mac_categories: dict[str, list[dict]] = {}
         if cat_ids and mac_addresses:
             member_stmt = select(ClientCategoryMember).where(
                 ClientCategoryMember.category_id.in_(cat_ids),
@@ -649,15 +879,17 @@ async def list_clients_detailed(
             for member in member_result.scalars().all():
                 cat = categories.get(member.category_id)
                 if cat:
-                    mac_categories[member.mac_address] = {
+                    if member.mac_address not in mac_categories:
+                        mac_categories[member.mac_address] = []
+                    mac_categories[member.mac_address].append({
                         "id": cat.id,
                         "name": cat.name,
-                    }
+                    })
 
         # 組合結果
         results = []
         for c in clients:
-            cat_info = mac_categories.get(c.mac_address)
+            cat_list = mac_categories.get(c.mac_address, [])
             if c.detection_status:
                 status = c.detection_status.value
             else:
@@ -669,12 +901,17 @@ async def list_clients_detailed(
                     continue
 
             # 過濾條件 - 分類
-            if filter_category == "uncategorized" and cat_info:
+            if filter_category == "uncategorized" and cat_list:
                 continue
             if filter_category and filter_category.isdigit():
                 cat_id = int(filter_category)
-                if not cat_info or cat_info["id"] != cat_id:
+                cat_ids_in_list = [c["id"] for c in cat_list]
+                if cat_id not in cat_ids_in_list:
                     continue
+
+            # 多分類：用分號連接分類名稱
+            category_names = ";".join([c["name"] for c in cat_list])
+            category_ids = [c["id"] for c in cat_list]
 
             results.append({
                 "id": c.id,
@@ -684,8 +921,11 @@ async def list_clients_detailed(
                 "detection_status": c.detection_status,
                 "description": c.description,
                 "maintenance_id": c.maintenance_id,
-                "category_id": cat_info["id"] if cat_info else None,
-                "category_name": cat_info["name"] if cat_info else None,
+                # 保留舊欄位（第一個分類）供相容
+                "category_id": cat_list[0]["id"] if cat_list else None,
+                "category_name": category_names if category_names else None,
+                # 新增多分類欄位
+                "category_ids": category_ids,
             })
 
         # 分頁
@@ -696,8 +936,14 @@ async def list_clients_detailed(
 async def export_csv(
     maintenance_id: str,
     search: str | None = Query(None, description="搜尋過濾"),
+    filter_status: str | None = Query(
+        None, description="detected/mismatch/not_detected/not_checked/all"
+    ),
+    filter_category: str | None = Query(
+        None, description="uncategorized/category_id"
+    ),
 ):
-    """匯出 Client 清單為 CSV（支援搜尋過濾）。"""
+    """匯出 Client 清單為 CSV（支援搜尋及篩選）。"""
     from fastapi.responses import StreamingResponse
 
     async with get_session_context() as session:
@@ -711,48 +957,96 @@ async def export_csv(
             from sqlalchemy import and_, or_
             keywords = search.strip().split()
 
-            field_conditions = []
-            mac_match = and_(*[
-                MaintenanceMacList.mac_address.like(f"%{kw.upper()}%")
-                for kw in keywords
-            ])
-            field_conditions.append(mac_match)
+            # 空關鍵字列表時跳過搜尋條件（返回全部結果）
+            if keywords:
+                field_conditions = []
+                mac_match = and_(*[
+                    MaintenanceMacList.mac_address.like(f"%{kw.upper()}%")
+                    for kw in keywords
+                ])
+                field_conditions.append(mac_match)
 
-            ip_match = and_(*[
-                MaintenanceMacList.ip_address.like(f"%{kw}%")
-                for kw in keywords
-            ])
-            field_conditions.append(ip_match)
+                ip_match = and_(*[
+                    MaintenanceMacList.ip_address.like(f"%{kw}%")
+                    for kw in keywords
+                ])
+                field_conditions.append(ip_match)
 
-            desc_match = and_(*[
-                MaintenanceMacList.description.like(f"%{kw}%")
-                for kw in keywords
-            ])
-            field_conditions.append(desc_match)
+                desc_match = and_(*[
+                    MaintenanceMacList.description.like(f"%{kw}%")
+                    for kw in keywords
+                ])
+                field_conditions.append(desc_match)
 
-            stmt = stmt.where(or_(*field_conditions))
+                stmt = stmt.where(or_(*field_conditions))
 
         stmt = stmt.order_by(MaintenanceMacList.mac_address)
         result = await session.execute(stmt)
         clients = result.scalars().all()
 
-        # 生成 CSV
+        # 獲取分類資訊（支援多分類）
+        cat_stmt = select(ClientCategory).where(
+            ClientCategory.maintenance_id == maintenance_id,
+            ClientCategory.is_active == True,  # noqa: E712
+        )
+        cat_result = await session.execute(cat_stmt)
+        categories = {c.id: c for c in cat_result.scalars().all()}
+        cat_ids = list(categories.keys())
+
+        # 獲取 MAC 的分類歸屬（支援多分類）
+        mac_categories: dict[str, list[str]] = {}
+        mac_cat_ids: dict[str, list[int]] = {}
+        if cat_ids:
+            mac_addresses = [c.mac_address for c in clients]
+            if mac_addresses:
+                member_stmt = select(ClientCategoryMember).where(
+                    ClientCategoryMember.category_id.in_(cat_ids),
+                    ClientCategoryMember.mac_address.in_(mac_addresses),
+                )
+                member_result = await session.execute(member_stmt)
+                for member in member_result.scalars().all():
+                    cat = categories.get(member.category_id)
+                    if cat:
+                        if member.mac_address not in mac_categories:
+                            mac_categories[member.mac_address] = []
+                            mac_cat_ids[member.mac_address] = []
+                        mac_categories[member.mac_address].append(cat.name)
+                        mac_cat_ids[member.mac_address].append(cat.id)
+
+        # 過濾並生成 CSV
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow([
             "mac_address", "ip_address", "tenant_group",
-            "detection_status", "description"
+            "description", "category"
         ])
 
         for c in clients:
+            # 偵測狀態過濾
+            status = c.detection_status.value if c.detection_status else "not_checked"
+            if filter_status and filter_status != "all":
+                if status != filter_status:
+                    continue
+
+            # 分類過濾
+            cat_names = mac_categories.get(c.mac_address, [])
+            cat_id_list = mac_cat_ids.get(c.mac_address, [])
+            if filter_category == "uncategorized" and cat_names:
+                continue
+            if filter_category and filter_category.isdigit():
+                target_cat_id = int(filter_category)
+                if target_cat_id not in cat_id_list:
+                    continue
+
             tg = c.tenant_group.value if c.tenant_group else "F18"
-            ds = c.detection_status.value if c.detection_status else "not_checked"
+            # 多分類用分號連接
+            category_str = ";".join(cat_names) if cat_names else ""
             writer.writerow([
                 c.mac_address,
                 c.ip_address,
                 tg,
-                ds,
                 c.description or "",
+                category_str,
             ])
 
         output.seek(0)
@@ -770,7 +1064,7 @@ async def export_csv(
 
 
 @router.get("/{maintenance_id}/template-csv")
-async def download_template():
+async def download_template(maintenance_id: str):
     """下載 Client 清單 CSV 範本。"""
     from fastapi.responses import StreamingResponse
 
@@ -781,10 +1075,13 @@ async def download_template():
     ])
     # 範例資料
     writer.writerow([
-        "AA:BB:CC:DD:EE:01", "192.168.1.100", "F18", "測試機台1", "生產機台"
+        "AA:BB:CC:DD:EE:01", "192.168.1.100", "F18", "單一分類範例", "生產機台"
     ])
     writer.writerow([
-        "AA:BB:CC:DD:EE:02", "192.168.1.101", "F6", "測試機台2", ""
+        "AA:BB:CC:DD:EE:02", "192.168.1.101", "F6", "多分類範例(用分號分隔)", "EQP;AMHS"
+    ])
+    writer.writerow([
+        "AA:BB:CC:DD:EE:03", "192.168.1.102", "AP", "無分類範例", ""
     ])
 
     output.seek(0)
@@ -821,5 +1118,9 @@ async def detect_clients(maintenance_id: str) -> dict[str, Any]:
 
     service = get_client_collection_service()
     result = await service.detect_clients(maintenance_id)
+
+    # 偵測完成後自動重新生成比較結果
+    async with get_session_context() as session:
+        await regenerate_comparisons(maintenance_id, session)
 
     return result
