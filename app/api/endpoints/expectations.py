@@ -150,7 +150,7 @@ class UplinkExpectationCreate(BaseModel):
     hostname: str
     local_interface: str
     expected_neighbor: str
-    expected_interface: str | None = None
+    expected_interface: str
     description: str | None = None
 
 
@@ -168,7 +168,7 @@ class UplinkExpectationResponse(BaseModel):
     hostname: str
     local_interface: str
     expected_neighbor: str
-    expected_interface: str | None
+    expected_interface: str
     description: str | None
 
     class Config:
@@ -259,11 +259,11 @@ async def create_uplink_expectation(
     expected_neighbor = data.expected_neighbor.strip()
     expected_interface = data.expected_interface.strip() if data.expected_interface else None
 
-    # 驗證 hostname 和 expected_neighbor 都存在於設備清單（新設備或舊設備皆可）
-    await validate_hostname_in_device_list_any(
+    # 驗證 hostname 和 expected_neighbor 必須為新設備（Uplink 期望只允許新設備）
+    await validate_hostname_in_device_list(
         maintenance_id, hostname, session, "本地設備"
     )
-    await validate_hostname_in_device_list_any(
+    await validate_hostname_in_device_list(
         maintenance_id, expected_neighbor, session, "鄰居設備"
     )
 
@@ -386,13 +386,13 @@ async def update_uplink_expectation(
         else item.expected_neighbor
     )
 
-    # 驗證變更的 hostname 和 expected_neighbor 存在於設備清單（新設備或舊設備皆可）
+    # 驗證變更的 hostname 和 expected_neighbor 必須為新設備（Uplink 期望只允許新設備）
     if data.hostname is not None and new_hostname != item.hostname:
-        await validate_hostname_in_device_list_any(
+        await validate_hostname_in_device_list(
             maintenance_id, new_hostname, session, "本地設備"
         )
     if data.expected_neighbor is not None and new_neighbor != item.expected_neighbor:
-        await validate_hostname_in_device_list_any(
+        await validate_hostname_in_device_list(
             maintenance_id, new_neighbor, session, "鄰居設備"
         )
 
@@ -627,8 +627,8 @@ async def import_uplink_csv(
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
 
-    # 預先載入有效的設備 hostname（新設備 + 舊設備）
-    valid_hostnames = await get_valid_all_hostnames(maintenance_id, session)
+    # 預先載入有效的新設備 hostname（Uplink 期望只允許新設備）
+    valid_hostnames = await get_valid_new_hostnames(maintenance_id, session)
 
     imported = 0
     updated = 0
@@ -639,22 +639,22 @@ async def import_uplink_csv(
             hostname = row.get("hostname", "").strip()
             local_interface = row.get("local_interface", "").strip()
             expected_neighbor = row.get("expected_neighbor", "").strip()
-            expected_interface = row.get("expected_interface", "").strip() or None
+            expected_interface = row.get("expected_interface", "").strip()
             description = row.get("description", "").strip() or None
 
-            if not hostname or not local_interface or not expected_neighbor:
-                errors.append(f"Row {row_num}: 必填欄位不完整")
+            if not hostname or not local_interface or not expected_neighbor or not expected_interface:
+                errors.append(f"Row {row_num}: 必填欄位不完整 (hostname, local_interface, expected_neighbor, expected_interface)")
                 continue
 
-            # 驗證 hostname 和 expected_neighbor 存在於設備清單（新設備或舊設備）
+            # 驗證 hostname 和 expected_neighbor 必須為新設備
             if hostname not in valid_hostnames:
                 errors.append(
-                    f"Row {row_num}: 本地設備 '{hostname}' 不在設備清單中"
+                    f"Row {row_num}: 本地設備 '{hostname}' 不在新設備清單中（Uplink 期望只允許新設備）"
                 )
                 continue
             if expected_neighbor not in valid_hostnames:
                 errors.append(
-                    f"Row {row_num}: 鄰居設備 '{expected_neighbor}' 不在設備清單中"
+                    f"Row {row_num}: 鄰居設備 '{expected_neighbor}' 不在新設備清單中（Uplink 期望只允許新設備）"
                 )
                 continue
 
@@ -768,10 +768,10 @@ async def create_version_expectation(
             detail=f"版本期望設備 {hostname} 已存在"
         )
     
-    # 標準化版本格式（移除空白）
-    versions = ";".join(
+    # 標準化版本格式（移除空白、排序確保順序無關唯一性）
+    versions = ";".join(sorted(
         v.strip() for v in data.expected_versions.split(";") if v.strip()
-    )
+    ))
     
     item = VersionExpectation(
         maintenance_id=maintenance_id,
@@ -834,7 +834,7 @@ async def update_version_expectation(
     if data.hostname is not None:
         item.hostname = data.hostname.strip()
     if data.expected_versions is not None:
-        versions = ";".join(v.strip() for v in data.expected_versions.split(";") if v.strip())
+        versions = ";".join(sorted(v.strip() for v in data.expected_versions.split(";") if v.strip()))
         item.expected_versions = versions
     if data.description is not None:
         item.description = data.description.strip() if data.description else None
@@ -992,8 +992,8 @@ async def import_version_csv(
                 )
                 continue
 
-            # 標準化版本格式
-            versions = ";".join(v.strip() for v in expected_versions.split(";") if v.strip())
+            # 標準化版本格式（排序確保順序無關唯一性）
+            versions = ";".join(sorted(v.strip() for v in expected_versions.split(";") if v.strip()))
             
             # 檢查是否已存在（同一台設備只能有一筆）
             stmt = select(VersionExpectation).where(
@@ -1511,12 +1511,12 @@ async def create_port_channel_expectation(
             detail=f"已存在相同的 Port-Channel 期望: {hostname}:{port_channel}"
         )
     
-    # 標準化成員介面格式（移除空白）
-    members = ";".join(
+    # 標準化成員介面格式（移除空白、排序以確保順序無關的唯一性）
+    members = ";".join(sorted(
         m.strip()
         for m in data.member_interfaces.split(";")
         if m.strip()
-    )
+    ))
 
     item = PortChannelExpectation(
         maintenance_id=maintenance_id,
@@ -1594,11 +1594,11 @@ async def update_port_channel_expectation(
     if data.port_channel is not None:
         item.port_channel = data.port_channel.strip()
     if data.member_interfaces is not None:
-        members = ";".join(
+        members = ";".join(sorted(
             m.strip()
             for m in data.member_interfaces.split(";")
             if m.strip()
-        )
+        ))
         item.member_interfaces = members
     if data.description is not None:
         item.description = data.description.strip() if data.description else None
@@ -1762,12 +1762,12 @@ async def import_port_channel_csv(
                 )
                 continue
 
-            # 標準化成員介面格式
-            members = ";".join(
+            # 標準化成員介面格式（排序以確保順序無關的唯一性）
+            members = ";".join(sorted(
                 m.strip()
                 for m in member_interfaces.split(";")
                 if m.strip()
-            )
+            ))
 
             # 檢查是否已存在
             stmt = select(PortChannelExpectation).where(

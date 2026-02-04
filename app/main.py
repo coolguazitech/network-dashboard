@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 import yaml
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.db.base import close_db, init_db
@@ -120,6 +122,31 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Global exception handler for database integrity errors
+    @app.exception_handler(IntegrityError)
+    async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+        """
+        Handle database integrity errors (e.g., unique constraint violations).
+
+        Convert IntegrityError to user-friendly 400 Bad Request response.
+        """
+        error_msg = str(exc.orig) if exc.orig else str(exc)
+
+        # Parse common constraint violation patterns
+        if "Duplicate entry" in error_msg or "UNIQUE constraint" in error_msg:
+            detail = "資料重複：該記錄已存在"
+        elif "foreign key constraint" in error_msg.lower():
+            detail = "關聯錯誤：引用的資料不存在"
+        else:
+            detail = f"資料庫約束錯誤：{error_msg}"
+
+        logger.warning(f"IntegrityError on {request.url}: {error_msg}")
+
+        return JSONResponse(
+            status_code=400,
+            content={"detail": detail},
+        )
 
     # Import and include routers
     from app.api.routes import api_router

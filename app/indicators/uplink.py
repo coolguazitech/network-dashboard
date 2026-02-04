@@ -64,20 +64,26 @@ class UplinkIndicator(BaseIndicator):
         pass_count = 0
         failures = []
 
-        # 遍歷每台有期望的設備
-        for device_hostname, actual_neighbors in device_neighbors.items():
-            expected_neighbors = uplink_expectations.get(
-                device_hostname, []
-            )
-
+        # 遍歷每台有期望的設備（以期望值為主，而非收集到的資料）
+        for device_hostname, expected_neighbors in uplink_expectations.items():
             if not expected_neighbors:
                 continue
+
+            # 取得該設備的實際鄰居
+            actual_neighbors = device_neighbors.get(device_hostname, [])
 
             # 驗證每個期望的鄰居
             for expected_neighbor in expected_neighbors:
                 total_count += 1
 
-                if expected_neighbor in actual_neighbors:
+                if not actual_neighbors:
+                    # 沒有收集到資料 → 失敗
+                    failures.append({
+                        "device": device_hostname,
+                        "expected_neighbor": expected_neighbor,
+                        "reason": "無採集數據",
+                    })
+                elif expected_neighbor in actual_neighbors:
                     pass_count += 1
                 else:
                     failures.append({

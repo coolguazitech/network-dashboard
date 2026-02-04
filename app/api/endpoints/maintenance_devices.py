@@ -1022,6 +1022,14 @@ async def _ping_ip(api_client, site: str, ip_address: str, hostname: str = "") -
 
         if raw_output:
             lower_output = raw_output.lower()
+
+            # Mock API 返回 CSV 格式: "IP,Reachable\n192.168.1.1,true"
+            if ",true" in lower_output:
+                return True
+            if ",false" in lower_output:
+                return False
+
+            # Real API 返回真實 ping 輸出
             if "100% packet loss" in lower_output or "0 packets received" in lower_output:
                 return False
             elif "bytes from" in lower_output or "ttl=" in lower_output:

@@ -30,17 +30,6 @@ class PlatformType(str, Enum):
     ARUBA_CX = "aruba_cx"
 
 
-class SiteType(str, Enum):
-    """Site identifiers for external API."""
-
-    T_SITE = "t_site"
-    M_SITE = "m_site"
-    H_SITE = "h_site"
-    NJ = "nj"
-    JASM = "jasm"
-    AZ = "az"
-
-
 class IndicatorObjectType(str, Enum):
     """
     The smallest unit of observation for an indicator.
@@ -96,10 +85,14 @@ class CollectionStatus(str, Enum):
 
 class MaintenancePhase(str, Enum):
     """
-    Maintenance phases for comparison.
+    設備類別（非時間概念）。
 
-    - OLD: existing/old equipment
-    - NEW: replaced/new equipment
+    用於區分歲修期間操作的設備類型：
+    - OLD: 舊設備（被更換的設備）
+    - NEW: 新設備（替換上去的設備）
+
+    注意：這與時間軸上的「checkpoint 時間」vs「最新快照時間」是獨立的概念。
+    同一個 phase 的資料可能在不同時間點被採集多次。
     """
 
     OLD = "old"

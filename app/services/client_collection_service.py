@@ -24,8 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.enums import ClientDetectionStatus, MaintenancePhase, TenantGroup
 from app.db.base import get_session_context
+from app.core.types import SwitchInfo
 from app.db.models import (
-    ClientRecord, Switch, MaintenanceMacList, MaintenanceDeviceList, ArpSource,
+    ClientRecord, MaintenanceMacList, MaintenanceDeviceList, ArpSource,
 )
 from app.parsers.client_parsers import (
     AclParser,
@@ -140,9 +141,9 @@ class ClientCollectionService:
         self,
         maintenance_id: str,
         session: AsyncSession,
-    ) -> list[Switch]:
+    ) -> list[SwitchInfo]:
         """
-        從 MaintenanceDeviceList 載入設備清單，轉換為 Switch 物件。
+        從 MaintenanceDeviceList 載入設備清單，轉換為 SwitchInfo 物件。
 
         同時載入新舊設備，並以 IP 去重（如果 old_ip == new_ip 表示設備未更換）。
         這確保採集時可以從任一設備找到 MAC（因為 MAC 可能在舊或新設備上）。
@@ -152,10 +153,10 @@ class ClientCollectionService:
             session: DB session
 
         Returns:
-            Switch 物件列表（新舊設備合併，已去重）
+            SwitchInfo 物件列表（新舊設備合併，已去重）
         """
         from sqlalchemy import select
-        from app.core.enums import SiteType, VendorType, PlatformType
+        from app.core.enums import VendorType, PlatformType
 
         stmt = select(MaintenanceDeviceList).where(
             MaintenanceDeviceList.maintenance_id == maintenance_id
@@ -168,7 +169,7 @@ class ClientCollectionService:
         switches = []
 
         # 轉換函數
-        def _create_switch(hostname: str, ip: str, vendor_str: str) -> Switch | None:
+        def _create_switch(hostname: str, ip: str, vendor_str: str) -> SwitchInfo | None:
             if not ip or ip in seen_ips:
                 return None
             seen_ips.add(ip)
@@ -189,13 +190,11 @@ class ClientCollectionService:
             }
             platform = platform_map.get(vendor_str, PlatformType.HPE_COMWARE)
 
-            return Switch(
+            return SwitchInfo(
                 hostname=hostname,
                 ip_address=ip,
                 vendor=vendor,
                 platform=platform,
-                site=SiteType.T_SITE,  # 預設值
-                is_active=True,
             )
 
         skipped_unreachable = 0
@@ -277,9 +276,9 @@ class ClientCollectionService:
         self,
         maintenance_id: str,
         session: AsyncSession,
-    ) -> list[Switch]:
+    ) -> list[SwitchInfo]:
         """
-        從 ArpSource 設定載入 ARP 來源設備，轉換為 Switch 物件。
+        從 ArpSource 設定載入 ARP 來源設備，轉換為 SwitchInfo 物件。
 
         ArpSource 指定從哪些 Router/Gateway 獲取 ARP Table。
         這些設備必須存在於 MaintenanceDeviceList 中。
@@ -294,10 +293,10 @@ class ClientCollectionService:
             session: DB session
 
         Returns:
-            ARP 來源 Switch 物件列表（按 priority 排序）
+            ARP 來源 SwitchInfo 物件列表（按 priority 排序）
         """
         from sqlalchemy import select, or_
-        from app.core.enums import SiteType, VendorType, PlatformType
+        from app.core.enums import VendorType, PlatformType
 
         # 1. 載入 ArpSource 設定
         arp_stmt = select(ArpSource).where(
@@ -337,7 +336,7 @@ class ClientCollectionService:
             if device.old_hostname in arp_hostnames:
                 hostname_to_device[device.old_hostname] = device
 
-        # 5. 按 ArpSource 的 priority 順序轉換為 Switch 物件
+        # 5. 按 ArpSource 的 priority 順序轉換為 SwitchInfo 物件
         switches = []
         for arp_src in arp_sources:
             device = hostname_to_device.get(arp_src.hostname)
@@ -392,13 +391,11 @@ class ClientCollectionService:
             }
             platform = platform_map.get(vendor_str, PlatformType.HPE_COMWARE)
 
-            switches.append(Switch(
+            switches.append(SwitchInfo(
                 hostname=hostname,
                 ip_address=ip,
                 vendor=vendor,
                 platform=platform,
-                site=SiteType.T_SITE,
-                is_active=True,
             ))
 
         logger.info(
@@ -834,7 +831,7 @@ class ClientCollectionService:
 
     async def _fetch_arp_from_switches(
         self,
-        switches: list[Switch],
+        switches: list[SwitchInfo],
     ) -> dict[str, str]:
         """
         從設備即時取得 ARP 資料。
@@ -1037,7 +1034,7 @@ class ClientCollectionService:
 
     async def _collect_for_switch(
         self,
-        switch: Switch,
+        switch: SwitchInfo,
         maintenance_id: str,
         phase: MaintenancePhase,
         session: AsyncSession,
@@ -1191,7 +1188,7 @@ class ClientCollectionService:
 
     async def _phase1_parallel_fetch(
         self,
-        switch: Switch,
+        switch: SwitchInfo,
         source: str | None = None,
         brand: str | None = None,
         http: httpx.AsyncClient | None = None,
@@ -1260,7 +1257,7 @@ class ClientCollectionService:
 
     async def _phase2_dependent_fetch(
         self,
-        switch: Switch,
+        switch: SwitchInfo,
         intermediates: _ParsedIntermediates,
         matched_clients: list[MaintenanceMacList],
         tenant_group: TenantGroup,

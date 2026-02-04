@@ -671,10 +671,9 @@ class ClientComparisonService:
         session: AsyncSession,
         max_days: int = 7,
     ) -> list[dict[str, Any]]:
-        """獲取 NEW 階段的歷史時間點（限制在 max_days 天內）。
+        """獲取 NEW phase（新設備）的歷史採集時間點（限制在 max_days 天內）。
 
-        只返回 NEW phase 的時間點，確保統計圖表只顯示
-        有歲修後資料可比較的時間點。
+        只返回 NEW phase 的時間點，確保統計圖表只顯示新設備的採集時間點。
 
         Args:
             maintenance_id: 歲修 ID
@@ -1025,7 +1024,7 @@ class ClientComparisonService:
         mac_list_result = await session.execute(mac_list_stmt)
         mac_list = {m.upper() for m in mac_list_result.scalars().all()}
 
-        # 查詢 OLD 階段記錄（歲修前基線）
+        # 查詢 OLD phase（舊設備）在 before_time 時間點的記錄
         before_stmt = (
             select(ClientRecord)
             .where(
@@ -1050,8 +1049,8 @@ class ClientComparisonService:
             if mac_upper not in before_by_mac:
                 before_by_mac[mac_upper] = record
 
-        # 查詢 NEW 階段記錄（歲修後）
-        # 僅查詢 NEW phase，避免 OLD 記錄洩漏到 after 端
+        # 查詢 NEW phase（新設備）在 after_time 時間點的記錄
+        # 僅查詢 NEW phase，確保比較的是新設備資料
         if after_time:
             after_stmt = (
                 select(ClientRecord)

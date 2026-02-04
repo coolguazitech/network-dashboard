@@ -1,7 +1,6 @@
 """Database module - ORM models and database connection."""
 from .base import Base, get_async_session, engine, get_session_context
 from .models import (
-    Switch,
     CollectionBatch,
     IndicatorResult,
     ClientRecord,
@@ -12,7 +11,6 @@ __all__ = [
     "get_async_session",
     "engine",
     "get_session_context",
-    "Switch",
     "CollectionBatch",
     "IndicatorResult",
     "ClientRecord",

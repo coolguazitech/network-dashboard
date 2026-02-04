@@ -111,7 +111,7 @@
           </div>
           
           <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：hostname,local_interface,expected_neighbor,expected_interface,description
+            💡 CSV 格式：hostname*,local_interface*,expected_neighbor*,expected_interface*,description（* 為必填）
           </p>
         </div>
       </div>
@@ -305,10 +305,11 @@
     <div v-if="showAddUplinkModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="closeUplinkModal">
       <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[500px]">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingUplink ? '編輯 Uplink 期望' : '新增 Uplink 期望' }}</h3>
+        <p class="text-xs text-yellow-400 mb-4">注意：本地設備與鄰居設備都必須來自設備清單中的「新設備」</p>
         <div class="space-y-4">
           <div>
             <label class="block text-sm text-slate-400 mb-1">設備 Hostname <span class="text-red-400">*</span></label>
-            <input v-model="newUplink.hostname" type="text" placeholder="SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newUplink.hostname" type="text" placeholder="輸入新設備名稱" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">本地介面 <span class="text-red-400">*</span></label>
@@ -316,10 +317,10 @@
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">預期鄰居 <span class="text-red-400">*</span></label>
-            <input v-model="newUplink.expected_neighbor" type="text" placeholder="CORE-SW-01" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newUplink.expected_neighbor" type="text" placeholder="輸入新設備名稱" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
           </div>
           <div>
-            <label class="block text-sm text-slate-400 mb-1">鄰居介面（選填）</label>
+            <label class="block text-sm text-slate-400 mb-1">鄰居介面 <span class="text-red-400">*</span></label>
             <input v-model="newUplink.expected_interface" type="text" placeholder="Gi1/0/48" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
           </div>
           <div>
@@ -329,7 +330,7 @@
         </div>
         <div class="flex justify-end gap-2 mt-6">
           <button @click="closeUplinkModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">取消</button>
-          <button @click="saveUplink" :disabled="!newUplink.hostname || !newUplink.local_interface || !newUplink.expected_neighbor" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
+          <button @click="saveUplink" :disabled="!newUplink.hostname || !newUplink.local_interface || !newUplink.expected_neighbor || !newUplink.expected_interface" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
             {{ editingUplink ? '儲存' : '新增' }}
           </button>
         </div>
@@ -819,6 +820,7 @@ export default {
     },
     
     downloadUplinkTemplate() {
+      // 注意：本地設備與鄰居設備都必須來自設備清單中的「新設備」
       const csv = `hostname,local_interface,expected_neighbor,expected_interface,description
 SW-001,Gi1/0/1,CORE-SW-01,Gi1/0/48,上聯到核心
 SW-001,Gi1/0/2,CORE-SW-02,Gi1/0/48,備援上聯
@@ -896,16 +898,16 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
     },
     
     async saveUplink() {
-      if (!this.newUplink.hostname || !this.newUplink.local_interface || !this.newUplink.expected_neighbor || !this.selectedMaintenanceId) return;
+      if (!this.newUplink.hostname || !this.newUplink.local_interface || !this.newUplink.expected_neighbor || !this.newUplink.expected_interface || !this.selectedMaintenanceId) return;
 
-      // 驗證主機名稱
+      // 驗證主機名稱格式（後端會驗證是否在新設備清單中）
       const hostnameCheck = this.validateHostname(this.newUplink.hostname);
       if (!hostnameCheck.valid) {
         this.showMessage(hostnameCheck.error, 'error');
         return;
       }
 
-      // 驗證鄰居主機名稱
+      // 驗證鄰居主機名稱格式（後端會驗證是否在新設備清單中）
       const neighborCheck = this.validateHostname(this.newUplink.expected_neighbor);
       if (!neighborCheck.valid) {
         this.showMessage(`鄰居${neighborCheck.error}`, 'error');
@@ -916,7 +918,7 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
         hostname: this.newUplink.hostname.trim(),
         local_interface: this.newUplink.local_interface.trim(),
         expected_neighbor: this.newUplink.expected_neighbor.trim(),
-        expected_interface: this.newUplink.expected_interface?.trim() || null,
+        expected_interface: this.newUplink.expected_interface.trim(),
         description: this.newUplink.description?.trim() || null,
       };
 

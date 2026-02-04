@@ -4,7 +4,7 @@ Data Collection Service.
 Responsible for collecting raw data from external API and storing to DB.
 
 採集流程：
-1. 從設備清單獲取目標設備（switches 表或 MaintenanceDeviceList）
+1. 從 MaintenanceDeviceList 獲取目標設備
 2. 對每台設備呼叫外部 Fetcher 取得原始資料
 3. 使用 Parser 解析原始資料
 4. 存入 typed record 表供指標評估使用
@@ -20,11 +20,10 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.enums import MaintenancePhase, PlatformType, VendorType
 from app.db.base import get_session_context
-from app.db.models import Switch, MaintenanceDeviceList
+from app.db.models import MaintenanceDeviceList, UplinkExpectation
 from app.fetchers.base import FetchContext
 from app.fetchers.registry import fetcher_registry
 from app.parsers import parser_registry
-from app.repositories.switch import SwitchRepository
 from app.repositories.typed_records import (
     TypedRecordRepository,
     get_typed_repo,
@@ -32,19 +31,16 @@ from app.repositories.typed_records import (
 
 logger = logging.getLogger(__name__)
 
-# 需要從 MaintenanceDeviceList 取新設備的採集類型
-MAINTENANCE_DEVICE_COLLECTIONS = {"ping"}
-
 
 class DataCollectionService:
     """
     Service for collecting data from external API.
 
     Flow:
-    1. Get list of active switches
-    2. For each switch, call Fetcher to get raw data
+    1. Get list of devices from MaintenanceDeviceList
+    2. For each device, call Fetcher to get raw data
     3. Parse raw output using appropriate parser
-    4. Store parsed data to collection_records table
+    4. Store parsed data to typed record table
     """
 
     def __init__(self) -> None:
@@ -63,9 +59,7 @@ class DataCollectionService:
         """
         Collect data for a specific collection type.
 
-        根據 collection_type 決定設備來源：
-        - ping: 從 MaintenanceDeviceList 取新設備
-        - 其他: 從 switches 表取活躍設備
+        從 MaintenanceDeviceList 取設備進行採集。
 
         Args:
             collection_type: Data type (e.g., "transceiver", "ping", "mac-table")
@@ -78,81 +72,13 @@ class DataCollectionService:
         Returns:
             dict: Collection summary with success/fail counts
         """
-        # Ping 需要從 MaintenanceDeviceList 取新設備
-        if collection_type in MAINTENANCE_DEVICE_COLLECTIONS:
-            return await self._collect_for_maintenance_devices(
-                collection_type=collection_type,
-                phase=phase,
-                maintenance_id=maintenance_id,
-                source=source,
-                brand=brand,
-            )
-
-        # 其他從 switches 表取設備
-        return await self._collect_for_switches(
+        return await self._collect_for_maintenance_devices(
             collection_type=collection_type,
             phase=phase,
             maintenance_id=maintenance_id,
             source=source,
             brand=brand,
         )
-
-    async def _collect_for_switches(
-        self,
-        collection_type: str,
-        phase: MaintenancePhase,
-        maintenance_id: str | None,
-        source: str | None = None,
-        brand: str | None = None,
-    ) -> dict[str, Any]:
-        """從 switches 表採集資料。"""
-        results: dict[str, Any] = {
-            "collection_type": collection_type,
-            "phase": phase.value,
-            "total": 0,
-            "success": 0,
-            "failed": 0,
-            "errors": [],
-        }
-
-        async with httpx.AsyncClient() as http:
-            async with get_session_context() as session:
-                switch_repo = SwitchRepository(session)
-                typed_repo = get_typed_repo(
-                    collection_type, session,
-                )
-
-                switches = await switch_repo.get_active_switches()
-                results["total"] = len(switches)
-
-                for switch in switches:
-                    try:
-                        await self._collect_for_switch(
-                            switch=switch,
-                            collection_type=collection_type,
-                            phase=phase,
-                            maintenance_id=maintenance_id,
-                            typed_repo=typed_repo,
-                            source=source,
-                            brand=brand,
-                            http=http,
-                        )
-                        results["success"] += 1
-
-                    except Exception as e:
-                        results["failed"] += 1
-                        results["errors"].append({
-                            "switch": switch.hostname,
-                            "error": str(e),
-                        })
-                        logger.error(
-                            "Failed to collect %s from %s: %s",
-                            collection_type,
-                            switch.hostname,
-                            e,
-                        )
-
-        return results
 
     async def _collect_for_maintenance_devices(
         self,
@@ -163,9 +89,9 @@ class DataCollectionService:
         brand: str | None = None,
     ) -> dict[str, Any]:
         """
-        從 MaintenanceDeviceList 取新設備進行採集。
+        從 MaintenanceDeviceList 取設備進行採集。
 
-        用於 ping 等需要針對新設備採集的採集類型。
+        用於 ping 等需要針對設備採集的採集類型。
         """
         results: dict[str, Any] = {
             "collection_type": collection_type,
@@ -197,6 +123,13 @@ class DataCollectionService:
                 devices = result.scalars().all()
                 results["total"] = len(devices)
 
+                # 預先載入 uplink 期望值（供 MockUplinkFetcher 使用）
+                uplink_expectations: dict[str, list[dict[str, str]]] = {}
+                if collection_type == "uplink":
+                    uplink_expectations = await self._load_uplink_expectations(
+                        session, maintenance_id
+                    )
+
                 for device in devices:
                     try:
                         await self._collect_for_maintenance_device(
@@ -208,6 +141,9 @@ class DataCollectionService:
                             source=source,
                             brand=brand,
                             http=http,
+                            uplink_expectations=uplink_expectations.get(
+                                device.new_hostname, []
+                            ),
                         )
                         results["success"] += 1
 
@@ -236,6 +172,7 @@ class DataCollectionService:
         source: str | None = None,
         brand: str | None = None,
         http: httpx.AsyncClient | None = None,
+        uplink_expectations: list[dict[str, str]] | None = None,
     ) -> None:
         """
         對單一 MaintenanceDeviceList 設備進行採集。
@@ -249,6 +186,7 @@ class DataCollectionService:
             source: Data source identifier (FNA/DNA)
             brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
             http: HTTP client（由外層注入）
+            uplink_expectations: Uplink 期望值（供 MockUplinkFetcher 使用）
         """
         # 使用新設備的 vendor 決定 parser（處理 Cisco-IOS/Cisco-NXOS 等格式）
         vendor_str = (device.new_vendor or "").lower()
@@ -283,6 +221,12 @@ class DataCollectionService:
 
         # 透過 Fetcher 取得原始資料
         fetcher = fetcher_registry.get_or_raise(collection_type)
+
+        # 建立 params（包含 uplink 期望值供 MockFetcher 使用）
+        params: dict[str, Any] = {}
+        if uplink_expectations:
+            params["uplink_expectations"] = uplink_expectations
+
         ctx = FetchContext(
             switch_ip=device.new_ip_address,
             switch_hostname=device.new_hostname,
@@ -291,6 +235,7 @@ class DataCollectionService:
             brand=brand,
             vendor=vendor.value,
             platform=platform.value,
+            params=params,
             http=http,
             base_url=settings.external_api_server,
             timeout=settings.external_api_timeout,
@@ -368,157 +313,34 @@ class DataCollectionService:
                     e,
                 )
 
-    async def _collect_for_switch(
+    async def _load_uplink_expectations(
         self,
-        switch: Switch,
-        collection_type: str,
-        phase: MaintenancePhase,
-        maintenance_id: str | None,
-        typed_repo: TypedRecordRepository,  # type: ignore[type-arg]
-        source: str | None = None,
-        brand: str | None = None,
-        http: httpx.AsyncClient | None = None,
-    ) -> None:
+        session: Any,
+        maintenance_id: str,
+    ) -> dict[str, list[dict[str, str]]]:
         """
-        Collect data for a single switch.
-
-        Args:
-            switch: Switch model instance
-            collection_type: Collection type (e.g. "transceiver")
-            phase: Maintenance phase
-            maintenance_id: Maintenance job ID
-            typed_repo: Typed record repository
-            source: Data source identifier (FNA/DNA)
-            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
-            http: HTTP client（由外層注入）
-        """
-        # Get appropriate parser
-        parser = parser_registry.get(
-            vendor=switch.vendor,
-            platform=switch.platform,
-            indicator_type=collection_type,
-        )
-
-        if parser is None:
-            raise ValueError(
-                f"No parser found for {switch.vendor}/"
-                f"{switch.platform}/{collection_type}"
-            )
-
-        # Fetch raw data via Fetcher
-        fetcher = fetcher_registry.get_or_raise(collection_type)
-        ctx = FetchContext(
-            switch_ip=switch.ip_address,
-            switch_hostname=switch.hostname,
-            site=switch.site.value,
-            source=source,
-            brand=brand,
-            vendor=switch.vendor.value,
-            platform=switch.platform.value,
-            http=http,
-            base_url=settings.external_api_server,
-            timeout=settings.external_api_timeout,
-        )
-        result = await fetcher.fetch(ctx)
-        if not result.success:
-            raise RuntimeError(
-                f"Fetch failed for {collection_type} on "
-                f"{switch.hostname}: {result.error}"
-            )
-        raw_output = result.raw_output
-
-        # Parse raw output
-        parsed_items = parser.parse(raw_output)
-
-        # Save to typed table
-        await typed_repo.save_batch(
-            switch_hostname=switch.hostname,
-            raw_data=raw_output,
-            parsed_items=parsed_items,
-            phase=phase,
-            maintenance_id=maintenance_id or "",
-        )
-
-        logger.info(
-            "Collected %s from %s: %d items",
-            collection_type,
-            switch.hostname,
-            len(parsed_items),
-        )
-
-    async def collect_for_specific_switches(
-        self,
-        switch_hostnames: list[str],
-        collection_type: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
-        maintenance_id: str | None = None,
-        source: str | None = None,
-        brand: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Collect data for specific switches only.
-
-        Args:
-            switch_hostnames: List of switch hostnames
-            collection_type: Collection type
-            phase: Maintenance phase
-            maintenance_id: Maintenance job ID
-            source: Data source (FNA/DNA)
-            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
+        載入 Uplink 期望值，按 hostname 分組。
 
         Returns:
-            dict: Collection summary
+            dict: hostname -> list of {local_interface, expected_neighbor, expected_interface}
         """
-        results: dict[str, Any] = {
-            "collection_type": collection_type,
-            "phase": phase.value,
-            "total": len(switch_hostnames),
-            "success": 0,
-            "failed": 0,
-            "errors": [],
-        }
+        from collections import defaultdict
 
-        async with httpx.AsyncClient() as http:
-            async with get_session_context() as session:
-                switch_repo = SwitchRepository(session)
-                typed_repo = get_typed_repo(
-                    collection_type, session,
-                )
+        stmt = select(UplinkExpectation).where(
+            UplinkExpectation.maintenance_id == maintenance_id
+        )
+        result = await session.execute(stmt)
+        expectations = result.scalars().all()
 
-                for hostname in switch_hostnames:
-                    switch = await switch_repo.get_by_hostname(
-                        hostname,
-                    )
+        grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
+        for exp in expectations:
+            grouped[exp.hostname].append({
+                "local_interface": exp.local_interface,
+                "expected_neighbor": exp.expected_neighbor,
+                "expected_interface": exp.expected_interface,
+            })
 
-                    if switch is None:
-                        results["failed"] += 1
-                        results["errors"].append({
-                            "switch": hostname,
-                            "error": "Switch not found",
-                        })
-                        continue
-
-                    try:
-                        await self._collect_for_switch(
-                            switch=switch,
-                            collection_type=collection_type,
-                            phase=phase,
-                            maintenance_id=maintenance_id,
-                            typed_repo=typed_repo,
-                            source=source,
-                            brand=brand,
-                            http=http,
-                        )
-                        results["success"] += 1
-
-                    except Exception as e:
-                        results["failed"] += 1
-                        results["errors"].append({
-                            "switch": hostname,
-                            "error": str(e),
-                        })
-
-        return results
+        return dict(grouped)
 
 
 # Singleton instance

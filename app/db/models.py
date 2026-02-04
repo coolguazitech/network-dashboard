@@ -20,91 +20,9 @@ from sqlalchemy import (
 from app.core.enums import (
     ClientDetectionStatus,
     MaintenancePhase,
-    PlatformType,
-    SiteType,
     TenantGroup,
-    VendorType,
 )
 from app.db.base import Base
-
-
-class Switch(Base):
-    """Switch device model."""
-
-    __tablename__ = "switches"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    hostname: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    ip_address: Mapped[str] = mapped_column(String(45), index=True)
-    vendor: Mapped[VendorType] = mapped_column(Enum(VendorType))
-    platform: Mapped[PlatformType] = mapped_column(Enum(PlatformType))
-    site: Mapped[SiteType] = mapped_column(Enum(SiteType))
-    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_active: Mapped[bool] = mapped_column(default=True)
-    extra_config: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON,
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-    # Relationships
-    interfaces: Mapped[list["Interface"]] = relationship(
-        "Interface",
-        back_populates="switch",
-        cascade="all, delete-orphan",
-    )
-
-    def __repr__(self) -> str:
-        return f"<Switch {self.hostname}>"
-
-
-class Interface(Base):
-    """Network interface model."""
-
-    __tablename__ = "interfaces"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    switch_id: Mapped[int] = mapped_column(
-        ForeignKey("switches.id", ondelete="CASCADE"),
-        index=True,
-    )
-    name: Mapped[str] = mapped_column(String(100), index=True)
-    interface_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    admin_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    oper_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    speed: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    has_transceiver: Mapped[bool] = mapped_column(default=False)
-    transceiver_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-    # Relationships
-    switch: Mapped["Switch"] = relationship("Switch", back_populates="interfaces")
-
-    __table_args__ = (
-        UniqueConstraint("switch_id", "name", name="uq_interface_switch_name"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<Interface {self.name}>"
 
 
 class UplinkExpectation(Base):
@@ -115,6 +33,12 @@ class UplinkExpectation(Base):
     """
 
     __tablename__ = "uplink_expectations"
+    __table_args__ = (
+        UniqueConstraint(
+            'maintenance_id', 'hostname', 'local_interface',
+            name='uk_uplink_expectation'
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(
@@ -132,10 +56,10 @@ class UplinkExpectation(Base):
         String(255),
         comment="Expected neighbor hostname",
     )
-    expected_interface: Mapped[str | None] = mapped_column(
+    expected_interface: Mapped[str] = mapped_column(
         String(100),
-        nullable=True,
-        comment="Expected neighbor interface (optional)",
+        nullable=False,
+        comment="Expected neighbor interface",
     )
     description: Mapped[str | None] = mapped_column(
         Text,
@@ -162,9 +86,17 @@ class VersionExpectation(Base):
 
     Stores user-defined expected firmware/software versions.
     Multiple versions can be specified using semicolon separator.
+
+    注意：expected_versions 存儲時會自動排序，確保順序無關的唯一性。
     """
 
     __tablename__ = "version_expectations"
+    __table_args__ = (
+        UniqueConstraint(
+            'maintenance_id', 'hostname',
+            name='uk_version_expectation'
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(
@@ -176,7 +108,7 @@ class VersionExpectation(Base):
     expected_versions: Mapped[str] = mapped_column(
         Text,
         nullable=False,
-        comment="Expected versions, semicolon-separated (e.g. 16.10.1;16.10.2)",
+        comment="Expected versions, semicolon-separated, stored sorted (e.g. 16.10.1;16.10.2)",
     )
     description: Mapped[str | None] = mapped_column(
         Text,
@@ -205,6 +137,12 @@ class ArpSource(Base):
     """
 
     __tablename__ = "arp_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            'maintenance_id', 'hostname',
+            name='uk_arp_source'
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(
@@ -243,9 +181,17 @@ class PortChannelExpectation(Base):
 
     設定指定設備的 Port-Channel 應包含哪些成員介面。
     檢查邏輯：驗證 Port-Channel 是否包含所有指定的實體介面。
+
+    注意：member_interfaces 存儲時會自動排序，確保順序無關的唯一性。
     """
 
     __tablename__ = "port_channel_expectations"
+    __table_args__ = (
+        UniqueConstraint(
+            'maintenance_id', 'hostname', 'port_channel',
+            name='uk_port_channel_expectation'
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(
@@ -262,7 +208,7 @@ class PortChannelExpectation(Base):
     member_interfaces: Mapped[str] = mapped_column(
         Text,
         nullable=False,
-        comment="Expected member interfaces, semicolon-separated (e.g. Gi1/0/1;Gi1/0/2)",
+        comment="Expected member interfaces, semicolon-separated, stored sorted (e.g. Gi1/0/1;Gi1/0/2)",
     )
     description: Mapped[str | None] = mapped_column(
         Text,
@@ -620,22 +566,23 @@ class ClientRecord(Base):
 
 class ClientComparison(Base):
     """
-    客戶端歲修前後的比較結果。
-    
-    記錄同一個 MAC 地址在歲修前（old）與歲修後（new）設備的變化情況。
+    客戶端在新舊設備間的比較結果。
+
+    記錄同一個 MAC 地址在 OLD phase（舊設備）與 NEW phase（新設備）的變化情況。
+    注意：old/new 指的是設備類別，不是時間先後。
     """
     __tablename__ = "client_comparisons"
 
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # 基本信息
     maintenance_id = Column(String(50), index=True)
     collected_at = Column(DateTime, default=datetime.utcnow, index=True)
-    
+
     # 客戶端識別
     mac_address = Column(String(17), index=True)  # AA:BB:CC:DD:EE:FF
-    
-    # OLD 階段數據快照（歲修前/舊設備）
+
+    # OLD phase 數據快照（舊設備）
     old_ip_address = Column(String(15), nullable=True)
     old_switch_hostname = Column(String(100), nullable=True)
     old_interface_name = Column(String(50), nullable=True)
@@ -645,8 +592,8 @@ class ClientComparison(Base):
     old_link_status = Column(String(20), nullable=True)
     old_ping_reachable = Column(Boolean, nullable=True)
     old_acl_passes = Column(Boolean, nullable=True)
-    
-    # NEW 階段數據快照（歲修後/新設備）
+
+    # NEW phase 數據快照（新設備）
     new_ip_address = Column(String(15), nullable=True)
     new_switch_hostname = Column(String(100), nullable=True)
     new_interface_name = Column(String(50), nullable=True)

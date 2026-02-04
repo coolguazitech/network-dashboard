@@ -16,7 +16,6 @@ from app.api.endpoints import (
     mac_list,
     maintenance,
     maintenance_devices,
-    switches,
 )
 
 api_router = APIRouter()
@@ -26,12 +25,6 @@ api_router.include_router(
     dashboard.router,
     prefix="/dashboard",
     tags=["Dashboard"],
-)
-
-api_router.include_router(
-    switches.router,
-    prefix="/switches",
-    tags=["Switches"],
 )
 
 api_router.include_router(

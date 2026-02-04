@@ -43,7 +43,7 @@ from app.db.models import (
     ClientComparison,
 )
 from app.core.enums import (
-    ClientDetectionStatus, VendorType, PlatformType, SiteType, TenantGroup,
+    ClientDetectionStatus, VendorType, PlatformType, TenantGroup,
 )
 
 # Import shared device configuration
@@ -298,7 +298,6 @@ async def create_switches(session):
                 ip_address=old_ip,
                 vendor=VendorType.HPE,
                 platform=PlatformType.HPE_COMWARE,
-                site=SiteType.T_SITE,
                 model="HPE FlexFabric 5710" if device_type not in ["CORE", "AGG"] else "HPE FlexFabric 5930",
                 location=f"{device_type} Area",
                 description=f"OLD {device_type} switch {num}",
@@ -315,7 +314,6 @@ async def create_switches(session):
                 ip_address=new_ip,
                 vendor=VendorType.HPE,
                 platform=PlatformType.HPE_COMWARE,
-                site=SiteType.T_SITE,
                 model="HPE FlexFabric 5710" if device_type not in ["CORE", "AGG"] else "HPE FlexFabric 5930",
                 location=f"{device_type} Area",
                 description=f"NEW {device_type} switch {num}",

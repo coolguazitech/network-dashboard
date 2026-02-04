@@ -344,43 +344,72 @@ class MockApiClient(BaseApiClient):
 
         Format parsed by HpePingParser (generic ping format).
 
-        統一收斂邏輯（基於 hostname 判斷設備類型）：
-        - 使用 hostname 中的 -OLD/-NEW 判斷設備類型
-        - 收斂時間點 = MOCK_PING_CONVERGE_TIME / 2
-        - 收斂前：OLD 設備可達，NEW 設備不可達
-        - 收斂後：OLD 設備不可達，NEW 設備可達
+        歲修模擬邏輯（Sigmoid 曲線收斂）：
+        - 舊設備 (OLD): 成功率從 ~100% 下降到 ~0%（t=0 可達，t=2T 不可達）
+        - 新設備 (NEW): 成功率從 ~0% 上升到 ~100%（t=0 不可達，t=2T 可達）
 
-        This simulates a maintenance scenario where:
-        1. PRE phase: Old devices online, new devices offline
-        2. Transition at converge_time/2
-        3. POST phase: Old devices offline, new devices online
+        設備判斷支援的命名模式：
+        - 包含 'old'/'new'（如 SW-OLD-01, SW-NEW-01）
+        - 以 '-o'/'-n' 或 '_o'/'_n' 結尾
+        - 以 'o'/'n' 結尾（如 SWO, SWN）
         """
-        hostname_upper = switch_hostname.upper()
-        is_old_device = "-OLD" in hostname_upper
-        is_new_device = "-NEW" in hostname_upper
+        import math
+        import random
 
-        # Calculate time-based convergence
+        h = switch_hostname.lower()
+
+        # 判斷設備類型（與 mock.py 邏輯一致）
+        def is_old(hostname: str) -> bool:
+            if "old" in hostname:
+                return True
+            if hostname.endswith(("-o", "_o")):
+                return True
+            if hostname.endswith("o") and not hostname.endswith("new"):
+                return True
+            return False
+
+        def is_new(hostname: str) -> bool:
+            if "new" in hostname:
+                return True
+            if hostname.endswith(("-n", "_n")):
+                return True
+            if hostname.endswith("n") and not hostname.endswith("old"):
+                return True
+            return False
+
+        is_old_device = is_old(h)
+        is_new_device = is_new(h)
+
+        # Calculate time-based convergence using sigmoid curve
         elapsed = time.time() - _SESSION_START_TIME
         converge_time = settings.mock_ping_converge_time
 
         if converge_time <= 0:
-            # Instant convergence
-            has_converged = True
+            # Instant convergence: OLD fails, NEW succeeds
+            if is_old_device:
+                success_rate = 0.02
+            elif is_new_device:
+                success_rate = 0.98
+            else:
+                success_rate = 0.98
         else:
-            # 統一收斂時間點 = converge_time / 2
-            switch_time = converge_time / 2
-            has_converged = elapsed >= switch_time
+            # Sigmoid curve: smooth transition from 0 to 1
+            # At t=T: progress = 0.5, at t=2T: progress ≈ 0.98
+            t = elapsed / converge_time
+            progress = 1.0 / (1.0 + math.exp(-4.0 * (t - 1.0)))
 
-        # 根據設備類型和收斂狀態決定可達性
-        if is_old_device:
-            # OLD 設備：收斂前可達，收斂後不可達
-            is_reachable = not has_converged
-        elif is_new_device:
-            # NEW 設備：收斂前不可達，收斂後可達
-            is_reachable = has_converged
-        else:
-            # 其他設備：始終可達
-            is_reachable = True
+            if is_old_device:
+                # OLD: success rate decreases over time
+                success_rate = 1.0 - progress
+            elif is_new_device:
+                # NEW: success rate increases over time
+                success_rate = progress
+            else:
+                # Other devices: always reachable
+                success_rate = 0.98
+
+        # Determine reachability based on success rate
+        is_reachable = random.random() < success_rate
 
         # Generate ping output
         if is_reachable:

@@ -1,7 +1,7 @@
 """
 Client comparison endpoints.
 
-客戶端歲修前後比較的 API 端點。
+客戶端新舊設備比較、時間點快照比較的 API 端點。
 """
 from __future__ import annotations
 
