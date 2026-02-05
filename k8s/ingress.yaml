@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: network-dashboard
+  namespace: network-dashboard
+  labels:
+    app: network-dashboard
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # 如需要大檔案上傳
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  tls:
+    - hosts:
+        - network-dashboard.your-company.com
+      secretName: network-dashboard-tls
+  rules:
+    - host: network-dashboard.your-company.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: network-dashboard
+                port:
+                  number: 80

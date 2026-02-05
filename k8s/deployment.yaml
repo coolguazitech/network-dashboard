@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: network-dashboard
+  namespace: network-dashboard
+  labels:
+    app: network-dashboard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: network-dashboard
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: network-dashboard
+      annotations:
+        # =============================================================================
+        # Vault Agent Injector 設定
+        # =============================================================================
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-inject-status: "update"
+        vault.hashicorp.com/role: "network-dashboard"
+
+        # 資料庫認證
+        vault.hashicorp.com/agent-inject-secret-db: "secret/data/network-dashboard/db"
+        vault.hashicorp.com/agent-inject-template-db: |
+          {{- with secret "secret/data/network-dashboard/db" -}}
+          DB_USER={{ .Data.data.username }}
+          DB_PASSWORD={{ .Data.data.password }}
+          {{- end }}
+
+        # API 金鑰
+        vault.hashicorp.com/agent-inject-secret-api: "secret/data/network-dashboard/api"
+        vault.hashicorp.com/agent-inject-template-api: |
+          {{- with secret "secret/data/network-dashboard/api" -}}
+          DNA_API_KEY={{ .Data.data.dna_api_key }}
+          FNA_API_KEY={{ .Data.data.fna_api_key }}
+          GNMS_API_KEY={{ .Data.data.gnms_api_key }}
+          {{- end }}
+
+        # JWT 秘鑰
+        vault.hashicorp.com/agent-inject-secret-jwt: "secret/data/network-dashboard/jwt"
+        vault.hashicorp.com/agent-inject-template-jwt: |
+          {{- with secret "secret/data/network-dashboard/jwt" -}}
+          JWT_SECRET_KEY={{ .Data.data.secret_key }}
+          {{- end }}
+
+    spec:
+      serviceAccountName: network-dashboard
+
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: network-dashboard
+          # 替換為實際的公司 Registry 位址
+          image: your-company-registry.com/network-dashboard:v1.0.0
+          imagePullPolicy: Always
+
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          # 從 ConfigMap 載入非敏感設定
+          envFrom:
+            - configMapRef:
+                name: network-dashboard-config
+
+          # 自訂啟動指令：載入 Vault 秘密後啟動應用程式
+          command:
+            - /bin/bash
+            - -c
+            - |
+              # 載入 Vault 注入的秘密
+              if [ -f /vault/secrets/db ]; then
+                export $(cat /vault/secrets/db | xargs)
+              fi
+              if [ -f /vault/secrets/api ]; then
+                export $(cat /vault/secrets/api | xargs)
+              fi
+              if [ -f /vault/secrets/jwt ]; then
+                export $(cat /vault/secrets/jwt | xargs)
+              fi
+              # 啟動應用程式
+              exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          volumeMounts:
+            - name: config-volume
+              mountPath: /app/config
+              readOnly: true
+
+      volumes:
+        - name: config-volume
+          configMap:
+            name: network-dashboard-config
+
+      # 公司私有 Registry 的認證 Secret
+      imagePullSecrets:
+        - name: company-registry-secret

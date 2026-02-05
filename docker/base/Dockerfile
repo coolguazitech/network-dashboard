@@ -1,0 +1,146 @@
+# =============================================================================
+# 基礎映像檔：Python 3.11 + Node.js 18 + 依賴套件
+# 平台：linux/amd64 (x86_64)
+#
+# 建構指令：
+#   docker buildx build --platform linux/amd64 \
+#       -f docker/base/Dockerfile \
+#       -t network-dashboard-base:v1.0.0-local \
+#       --load .
+# =============================================================================
+
+# 目標平台參數
+ARG TARGETPLATFORM=linux/amd64
+
+# -----------------------------------------------------------------------------
+# Stage 1: Node.js 建構前端
+# -----------------------------------------------------------------------------
+FROM --platform=$TARGETPLATFORM node:18-bookworm-slim AS frontend-builder
+
+WORKDIR /app/frontend
+
+# 複製 package.json 先安裝依賴（利用 Docker 快取）
+COPY frontend/package*.json ./
+
+# 安裝所有 npm 依賴（包含 devDependencies，vite 是建構工具）
+RUN npm ci && \
+    npm cache clean --force
+
+# 複製前端原始碼並建構
+COPY frontend/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 2: Python 依賴安裝
+# -----------------------------------------------------------------------------
+FROM --platform=$TARGETPLATFORM python:3.11-slim-bookworm AS python-deps
+
+# 設定環境變數
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# 安裝編譯依賴
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    default-libmysqlclient-dev \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 複製依賴定義檔
+COPY pyproject.toml ./
+
+# 建立虛擬環境並安裝依賴
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install .
+
+# -----------------------------------------------------------------------------
+# Stage 3: 最終基礎映像檔
+# -----------------------------------------------------------------------------
+FROM --platform=$TARGETPLATFORM python:3.11-slim-bookworm AS final
+
+# 標籤資訊
+LABEL maintainer="network-dashboard@example.com" \
+      version="1.0.0" \
+      description="Network Dashboard Base Image - Python 3.11 + Dependencies"
+
+# 設定環境變數
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
+    APP_HOME=/app \
+    USE_MOCK=false \
+    PATH="/opt/venv/bin:$PATH"
+
+# 安裝執行時期必要的系統函式庫
+RUN apt-get update && \
+    # 升級所有套件以修復 CVE
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+    default-libmysqlclient-dev \
+    libpq-dev \
+    curl \
+    tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    # 建立非 root 使用者
+    && groupadd --gid 1000 appgroup \
+    && useradd --uid 1000 --gid appgroup --shell /bin/bash --create-home appuser
+
+# 從 python-deps 階段複製虛擬環境
+COPY --from=python-deps /opt/venv /opt/venv
+
+WORKDIR $APP_HOME
+
+# 複製應用程式核心檔案
+# 注意：fetchers 和 parsers 的具體實作會在公司端加入
+COPY --chown=appuser:appgroup app/__init__.py app/
+COPY --chown=appuser:appgroup app/core/ app/core/
+COPY --chown=appuser:appgroup app/db/ app/db/
+COPY --chown=appuser:appgroup app/api/ app/api/
+COPY --chown=appuser:appgroup app/schemas/ app/schemas/
+COPY --chown=appuser:appgroup app/repositories/ app/repositories/
+COPY --chown=appuser:appgroup app/services/ app/services/
+COPY --chown=appuser:appgroup app/indicators/ app/indicators/
+COPY --chown=appuser:appgroup app/main.py app/
+
+# 複製 fetchers 和 parsers 的基礎結構（不含實作）
+COPY --chown=appuser:appgroup app/fetchers/__init__.py app/fetchers/
+COPY --chown=appuser:appgroup app/fetchers/base.py app/fetchers/
+COPY --chown=appuser:appgroup app/fetchers/registry.py app/fetchers/
+COPY --chown=appuser:appgroup app/fetchers/convergence.py app/fetchers/
+COPY --chown=appuser:appgroup app/parsers/__init__.py app/parsers/
+COPY --chown=appuser:appgroup app/parsers/registry.py app/parsers/
+COPY --chown=appuser:appgroup app/parsers/protocols.py app/parsers/
+
+# 複製設定檔
+COPY --chown=appuser:appgroup config/ config/
+
+# 從前端建構階段複製靜態檔案
+COPY --from=frontend-builder --chown=appuser:appgroup /app/frontend/dist /app/static
+
+# 建立必要目錄
+RUN mkdir -p /app/logs /app/data /app/test_data && \
+    chown -R appuser:appgroup /app
+
+# 切換到非 root 使用者
+USER appuser
+
+# 健康檢查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# 暴露埠號
+EXPOSE 8000
+
+# 使用 tini 作為 init 程序
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# 啟動指令
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
