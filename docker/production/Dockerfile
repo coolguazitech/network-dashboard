@@ -18,7 +18,7 @@
 
 # 參數定義
 ARG DOCKERHUB_USER=coolguazi
-ARG BASE_VERSION=v1.0.0
+ARG BASE_VERSION=v1.0.2
 
 # 使用從 DockerHub 拉取的基礎映像檔
 FROM ${DOCKERHUB_USER}/network-dashboard-base:${BASE_VERSION}
@@ -46,6 +46,9 @@ RUN chown -R appuser:appgroup /app
 USER appuser
 
 # 驗證模組可正常載入
-RUN python -c "from app.fetchers.registry import FetcherRegistry; from app.parsers.registry import get_parser; print('All modules loaded successfully')"
+RUN python -c "\
+from app.fetchers.registry import FetcherRegistry; \
+from app.parsers.registry import get_parser; \
+print('All modules loaded successfully')"
 
 # 繼承基礎映像檔的 ENTRYPOINT 和 CMD
