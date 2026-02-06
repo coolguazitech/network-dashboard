@@ -737,7 +737,9 @@ class ClientCollectionService:
                 arp_mac_to_ip = {}
             else:
                 # 3. 從 ArpSource 設備取得 ARP 資料
-                arp_mac_to_ip = await self._fetch_arp_from_switches(arp_source_switches)
+                arp_mac_to_ip = await self._fetch_arp_from_switches(
+                    arp_source_switches, maintenance_id
+                )
                 logger.info(
                     "Fetched ARP data from %d ArpSource switches: %d entries",
                     len(arp_source_switches), len(arp_mac_to_ip),
@@ -786,7 +788,7 @@ class ClientCollectionService:
 
                 try:
                     reachable_ips = await self._ping_client_ips(
-                        client_ips, tenant_group,
+                        client_ips, tenant_group, maintenance_id,
                     )
 
                     # 更新偵測狀態
@@ -832,6 +834,7 @@ class ClientCollectionService:
     async def _fetch_arp_from_switches(
         self,
         switches: list[SwitchInfo],
+        maintenance_id: str,
     ) -> dict[str, str]:
         """
         從設備即時取得 ARP 資料。
@@ -840,6 +843,7 @@ class ClientCollectionService:
 
         Args:
             switches: 設備清單
+            maintenance_id: 歲修 ID（用於 Mock Fetcher 計算收斂時間）
 
         Returns:
             {MAC_ADDRESS: IP_ADDRESS} 對應表（MAC 為大寫）
@@ -862,6 +866,7 @@ class ClientCollectionService:
                 http=None,
                 base_url=settings.external_api_server,
                 timeout=settings.external_api_timeout,
+                maintenance_id=maintenance_id,
             )
 
             try:
@@ -941,6 +946,7 @@ class ClientCollectionService:
         self,
         client_ips: list[str],
         tenant_group: TenantGroup,
+        maintenance_id: str,
     ) -> set[str]:
         """
         使用 GNMS Ping 檢查客戶端 IP 可達性。
@@ -948,6 +954,7 @@ class ClientCollectionService:
         Args:
             client_ips: 要 ping 的客戶端 IP 列表
             tenant_group: Tenant group
+            maintenance_id: 歲修 ID（用於 Mock Fetcher 時間追蹤）
 
         Returns:
             可達的 IP 集合
@@ -968,6 +975,7 @@ class ClientCollectionService:
             http=None,
             base_url=settings.external_api_server,
             timeout=settings.external_api_timeout,
+            maintenance_id=maintenance_id,
             params={
                 "switch_ips": client_ips,  # 這裡傳的是 client IPs
                 "tenant_group": tenant_group,

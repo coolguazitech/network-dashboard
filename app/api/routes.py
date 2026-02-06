@@ -8,19 +8,30 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.endpoints import (
+    auth,
     categories,
     comparisons,
+    contacts,
     dashboard,
     expectations,
     indicators,
     mac_list,
     maintenance,
     maintenance_devices,
+    meals,
+    reports,
+    users,
 )
 
 api_router = APIRouter()
 
 # Include routers
+api_router.include_router(
+    auth.router,
+    prefix="",
+    tags=["Auth"],
+)
+
 api_router.include_router(
     dashboard.router,
     prefix="/dashboard",
@@ -67,4 +78,28 @@ api_router.include_router(
     indicators.router,
     prefix="/indicators",
     tags=["Indicators"],
+)
+
+api_router.include_router(
+    meals.router,
+    prefix="",
+    tags=["Meals"],
+)
+
+api_router.include_router(
+    contacts.router,
+    prefix="",
+    tags=["Contacts"],
+)
+
+api_router.include_router(
+    reports.router,
+    prefix="",
+    tags=["Reports"],
+)
+
+api_router.include_router(
+    users.router,
+    prefix="",
+    tags=["Users"],
 )

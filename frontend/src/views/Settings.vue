@@ -341,6 +341,7 @@
     <div v-if="showAddVersionModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="closeVersionModal">
       <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[500px]">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingVersion ? '編輯版本期望' : '新增版本期望' }}</h3>
+        <p class="text-xs text-yellow-400 mb-4">注意：設備 Hostname 必須來自設備清單中的「新設備」</p>
         <div class="space-y-4">
           <div>
             <label class="block text-sm text-slate-400 mb-1">設備 Hostname <span class="text-red-400">*</span></label>
@@ -369,6 +370,7 @@
     <div v-if="showAddPortChannelModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="closePortChannelModal">
       <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[500px]">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingPortChannel ? '編輯 Port Channel 期望' : '新增 Port Channel 期望' }}</h3>
+        <p class="text-xs text-yellow-400 mb-4">注意：設備 Hostname 必須來自設備清單中的「新設備」</p>
         <div class="space-y-4">
           <div>
             <label class="block text-sm text-slate-400 mb-1">設備 Hostname <span class="text-red-400">*</span></label>
@@ -450,6 +452,7 @@
 
 <script>
 import { apiFetch, formatErrorMessage, ErrorType } from '../utils/api.js';
+import { getAuthHeaders } from '@/utils/auth';
 
 export default {
   name: 'Settings',
@@ -608,7 +611,9 @@ export default {
     // 歲修管理
     async loadMaintenanceList() {
       try {
-        const res = await fetch('/api/v1/maintenance');
+        const res = await fetch('/api/v1/maintenance', {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           this.maintenanceList = await res.json();
         }
@@ -638,7 +643,7 @@ export default {
       try {
         const res = await fetch('/api/v1/maintenance', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ id: idValue, name: nameValue }),
         });
         
@@ -681,6 +686,7 @@ export default {
       try {
         const res = await fetch(`/api/v1/maintenance/${encodeURIComponent(this.deleteTarget.id)}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
         
         if (res.ok) {
@@ -721,7 +727,9 @@ export default {
     async loadDevices() {
       this.loading = true;
       try {
-        const res = await fetch('/api/v1/switches');
+        const res = await fetch('/api/v1/switches', {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           this.devices = await res.json();
         }
@@ -738,7 +746,9 @@ export default {
       this.loading = true;
       try {
         // 載入設備對應
-        const mappingRes = await fetch(`/api/v1/device-mappings/${this.selectedMaintenanceId}`);
+        const mappingRes = await fetch(`/api/v1/device-mappings/${this.selectedMaintenanceId}`, {
+          headers: getAuthHeaders()
+        });
         if (mappingRes.ok) {
           const data = await mappingRes.json();
           this.deviceMappings = data.mappings || [];
@@ -779,6 +789,7 @@ export default {
       try {
         const res = await fetch(`/api/v1/device-mappings/${this.selectedMaintenanceId}/${mapping.id}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
         if (res.ok) {
           await this.loadMaintenanceData();
@@ -803,7 +814,9 @@ export default {
         let url = `/api/v1/expectations/uplink/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           const data = await res.json();
           this.uplinkExpectations = data.items || [];
@@ -854,6 +867,7 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
         const res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/import-csv`, {
           method: 'POST',
           body: formData,
+          headers: getAuthHeaders()
         });
         const data = await res.json();
 
@@ -928,13 +942,13 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
         if (this.editingUplink && this.newUplink.id) {
           res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/${this.newUplink.id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(payload),
           });
         } else {
           res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(payload),
           });
         }
@@ -965,6 +979,7 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
       try {
         const res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/${uplink.id}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
         if (res.ok) {
           await this.loadUplinkList();
@@ -1001,7 +1016,7 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
       try {
         const res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(this.selectedUplinks),
         });
 
@@ -1042,7 +1057,9 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
         let url = `/api/v1/expectations/version/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           const data = await res.json();
           this.versionExpectations = data.items || [];
@@ -1092,6 +1109,7 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         const res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}/import-csv`, {
           method: 'POST',
           body: formData,
+          headers: getAuthHeaders()
         });
         const data = await res.json();
 
@@ -1109,7 +1127,7 @@ CORE-SW-01,9.4(1),NX-OS版本`;
       }
       event.target.value = '';
     },
-    
+
     openAddVersion() {
       this.editingVersion = null;
       this.newVersion = { hostname: '', expected_versions: '', description: '' };
@@ -1147,13 +1165,13 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         if (this.editingVersion && this.newVersion.id) {
           res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}/${this.newVersion.id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(payload),
           });
         } else {
           res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(payload),
           });
         }
@@ -1180,6 +1198,7 @@ CORE-SW-01,9.4(1),NX-OS版本`;
       try {
         const res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}/${ver.id}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
         if (res.ok) {
           await this.loadVersionList();
@@ -1216,7 +1235,7 @@ CORE-SW-01,9.4(1),NX-OS版本`;
       try {
         const res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(this.selectedVersions),
         });
 
@@ -1257,7 +1276,9 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         let url = `/api/v1/expectations/port-channel/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           const data = await res.json();
           this.portChannelExpectations = data.items || [];
@@ -1307,6 +1328,7 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
         const res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/import-csv`, {
           method: 'POST',
           body: formData,
+          headers: getAuthHeaders()
         });
         const data = await res.json();
 
@@ -1324,7 +1346,7 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
       }
       event.target.value = '';
     },
-    
+
     openAddPortChannel() {
       this.editingPortChannel = null;
       this.newPortChannel = { hostname: '', port_channel: '', member_interfaces: '', description: '' };
@@ -1364,13 +1386,13 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
         if (this.editingPortChannel && this.newPortChannel.id) {
           res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/${this.newPortChannel.id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(payload),
           });
         } else {
           res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(payload),
           });
         }
@@ -1397,6 +1419,7 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
       try {
         const res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/${pc.id}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
         if (res.ok) {
           await this.loadPortChannelList();
@@ -1433,7 +1456,7 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
       try {
         const res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(this.selectedPortChannels),
         });
 

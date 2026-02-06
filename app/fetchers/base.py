@@ -51,6 +51,7 @@ class FetchContext:
     http: httpx.AsyncClient | None = None
     base_url: str = ""
     timeout: int = 30
+    maintenance_id: str | None = None
 
 
 @dataclass

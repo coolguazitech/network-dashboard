@@ -2,6 +2,44 @@
  * API 工具函式
  * 統一處理 API 請求和錯誤分類
  */
+import axios from 'axios'
+
+// 建立 axios 實例
+const api = axios.create({
+  baseURL: '/api/v1',
+  timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+})
+
+// 請求攔截器 - 自動附加 token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('auth_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// 回應攔截器 - 處理 401 錯誤
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('auth_token')
+      localStorage.removeItem('auth_user')
+      // 避免在登入頁面無限重定向
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/login'
+      }
+    }
+    return Promise.reject(error)
+  }
+)
+
+// 導出 axios 實例作為 default
+export default api
 
 /**
  * API 錯誤類別
@@ -129,9 +167,19 @@ export async function apiFetch(url, options = {}, timeout = 30000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
+  // 自動加入認證 token
+  const token = localStorage.getItem('auth_token');
+  const headers = {
+    ...options.headers,
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   try {
     const response = await fetch(url, {
       ...options,
+      headers,
       signal: controller.signal,
     });
 

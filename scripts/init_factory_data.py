@@ -28,7 +28,6 @@ sys.path.insert(0, str(project_root))
 from sqlalchemy import delete, select
 from app.db.base import get_session_context
 from app.db.models import (
-    Switch,
     MaintenanceDeviceList,
     MaintenanceMacList,
     ClientCategory,
@@ -41,6 +40,7 @@ from app.db.models import (
     IndicatorResult,
     ClientRecord,
     ClientComparison,
+    MaintenanceConfig,
 )
 from app.core.enums import (
     ClientDetectionStatus, VendorType, PlatformType, TenantGroup,
@@ -170,6 +170,7 @@ async def cleanup_database(session):
         ClientCategory,
         MaintenanceDeviceList,
         MaintenanceMacList,
+        MaintenanceConfig,
     ]
 
     for table in tables_with_maintenance_id:
@@ -212,24 +213,25 @@ async def cleanup_database(session):
         print(f"  - Cleared {result.rowcount} rows from "
               f"{table.__tablename__}")
 
-    # Remove old test switches (including short-name remnants)
-    print("\nRemoving old test switches...")
-    stmt = delete(Switch).where(
-        (Switch.hostname.like("switch-%")) |
-        (Switch.hostname.like("SW-OLD-%")) |
-        (Switch.hostname.like("SW-NEW-%")) |
-        (Switch.hostname.like("CORE-%")) |
-        (Switch.hostname.like("AGG-%")) |
-        (Switch.hostname.like("EQP-%")) |
-        (Switch.hostname.like("AMHS-%")) |
-        (Switch.hostname.like("SNR-%")) |
-        (Switch.hostname.like("OTHERS-%"))
-    )
-    result = await session.execute(stmt)
-    print(f"  - Deleted {result.rowcount} old switches")
-
     await session.commit()
     print("✓ Database cleanup complete")
+
+
+async def create_maintenance_config(session):
+    """Create MaintenanceConfig entry."""
+    print("\n=== Phase 1.5: Creating Maintenance Config ===")
+
+    from datetime import datetime, timezone
+
+    config = MaintenanceConfig(
+        maintenance_id=MAINTENANCE_ID,
+        name="Factory Test Maintenance",
+        start_date=datetime.now(timezone.utc),
+        is_active=True,
+    )
+    session.add(config)
+    await session.commit()
+    print(f"✓ Created MaintenanceConfig for {MAINTENANCE_ID}")
 
 
 async def create_categories(session):
@@ -273,57 +275,6 @@ async def create_categories(session):
 
     await session.commit()
     print("✓ Categories created")
-
-
-async def create_switches(session):
-    """Create ALL switches (both OLD and NEW devices)."""
-    print("\n=== Phase 3: Creating Switches ===")
-
-    switches = []
-    device_mappings = get_device_mappings()
-
-    # Track created hostnames to avoid duplicates
-    created_hostnames = set()
-
-    for old_h, old_ip, new_h, new_ip in device_mappings:
-        device_type = old_h.split("-")[-1]
-        num = int(old_h.split("-")[2])
-
-        # Create OLD device
-        # OLD replaced switches are inactive; un-replaced OLD switches stay active
-        old_is_active = (num in DEVICES_NOT_REPLACED)
-        if old_h not in created_hostnames:
-            old_switch = Switch(
-                hostname=old_h,
-                ip_address=old_ip,
-                vendor=VendorType.HPE,
-                platform=PlatformType.HPE_COMWARE,
-                model="HPE FlexFabric 5710" if device_type not in ["CORE", "AGG"] else "HPE FlexFabric 5930",
-                location=f"{device_type} Area",
-                description=f"OLD {device_type} switch {num}",
-                is_active=old_is_active,
-            )
-            switches.append(old_switch)
-            session.add(old_switch)
-            created_hostnames.add(old_h)
-
-        # Create NEW device (if different from OLD)
-        if new_h != old_h and new_h not in created_hostnames:
-            new_switch = Switch(
-                hostname=new_h,
-                ip_address=new_ip,
-                vendor=VendorType.HPE,
-                platform=PlatformType.HPE_COMWARE,
-                model="HPE FlexFabric 5710" if device_type not in ["CORE", "AGG"] else "HPE FlexFabric 5930",
-                location=f"{device_type} Area",
-                description=f"NEW {device_type} switch {num}",
-            )
-            switches.append(new_switch)
-            session.add(new_switch)
-            created_hostnames.add(new_h)
-
-    await session.commit()
-    print(f"✓ Total {len(switches)} switches created (including OLD and NEW)")
 
 
 async def create_maintenance_device_list(session):
@@ -480,23 +431,21 @@ async def create_arp_sources_db(session):
 
     arp_sources = []
     for idx, (old_h, old_ip, new_h, new_ip) in enumerate(core_mappings):
-        # Add OLD CORE IP
+        # Add OLD CORE
         arp_old = ArpSource(
             maintenance_id=MAINTENANCE_ID,
             hostname=old_h,
-            ip_address=old_ip,
             priority=(idx + 1) * 10,
             description="OLD CORE device"
         )
         session.add(arp_old)
         arp_sources.append(arp_old)
 
-        # Add NEW CORE IP (if different)
+        # Add NEW CORE (if different)
         if new_h != old_h:
             arp_new = ArpSource(
                 maintenance_id=MAINTENANCE_ID,
                 hostname=new_h,
-                ip_address=new_ip,
                 priority=(idx + 1) * 10 + 5,
                 description="NEW CORE device"
             )
@@ -530,15 +479,6 @@ async def print_summary(session):
     result = await session.execute(stmt)
     clients = result.scalars().all()
     print(f"\nClients (IP+MAC): {len(clients)}")
-
-    # Switches
-    stmt = select(Switch).where(
-        (Switch.hostname.like("SW-OLD-%")) |
-        (Switch.hostname.like("SW-NEW-%"))
-    )
-    result = await session.execute(stmt)
-    switches = result.scalars().all()
-    print(f"\nSwitches: {len(switches)} (including OLD and NEW)")
 
     # Maintenance Device List
     stmt = select(MaintenanceDeviceList).where(
@@ -600,8 +540,8 @@ async def main():
     async with get_session_context() as session:
         try:
             await cleanup_database(session)
+            await create_maintenance_config(session)
             await create_categories(session)
-            await create_switches(session)
             await create_maintenance_device_list(session)
             await create_mac_list(session)
             await create_uplink_expectations_db(session)

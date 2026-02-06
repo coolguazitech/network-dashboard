@@ -239,6 +239,7 @@ class DataCollectionService:
             http=http,
             base_url=settings.external_api_server,
             timeout=settings.external_api_timeout,
+            maintenance_id=maintenance_id,
         )
         result = await fetcher.fetch(ctx)
         if not result.success:
@@ -293,6 +294,7 @@ class DataCollectionService:
                 http=http,
                 base_url=settings.external_api_server,
                 timeout=settings.external_api_timeout,
+                maintenance_id=maintenance_id,
             )
             try:
                 old_result = await old_fetcher.fetch(old_ctx)

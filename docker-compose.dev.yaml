@@ -1,0 +1,106 @@
+# =============================================================================
+# 本地開發用 Docker Compose
+#
+# 使用方式：
+#   1. 建立 base image:
+#      docker buildx build --platform linux/amd64 -f docker/base/Dockerfile \
+#        -t network-dashboard-base:alpine --load .
+#
+#   2. 啟動服務:
+#      docker compose -f docker-compose.dev.yaml up -d
+#
+#   3. 查看 logs:
+#      docker compose -f docker-compose.dev.yaml logs -f app
+#
+#   4. 停止服務:
+#      docker compose -f docker-compose.dev.yaml down
+# =============================================================================
+
+services:
+  # MariaDB 資料庫
+  db:
+    image: mariadb:10.11
+    container_name: network_dashboard_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-admin}
+      MYSQL_DATABASE: ${DB_NAME:-network_dashboard}
+      MYSQL_USER: ${DB_USER:-admin}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-admin}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - dashboard_net
+
+  # phpMyAdmin (選用)
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    container_name: network_dashboard_pma
+    restart: unless-stopped
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "${PMA_PORT:-8080}:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - dashboard_net
+
+  # 主應用程式 (Backend + Frontend)
+  app:
+    # 使用 Alpine 以避免 Critical CVE（預設）
+    # 也可改用 :dev 標籤使用 Debian 版本
+    image: ${APP_IMAGE:-network-dashboard-base:alpine}
+    container_name: network_dashboard_app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 資料庫連線（覆寫 .env 中的設定，使用 docker 網路）
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-network_dashboard}
+      DB_USER: ${DB_USER:-admin}
+      DB_PASSWORD: ${DB_PASSWORD:-admin}
+      # 應用程式設定
+      APP_DEBUG: "true"
+      APP_ENV: development
+      USE_MOCK_API: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - dashboard_net
+    volumes:
+      # 掛載設定檔（方便開發時修改）
+      - ./config:/app/config:ro
+      # 掛載測試資料
+      - ./test_data:/app/test_data:ro
+
+volumes:
+  db_data:
+    name: network_dashboard_db_data
+
+networks:
+  dashboard_net:
+    name: network_dashboard_net
+    driver: bridge

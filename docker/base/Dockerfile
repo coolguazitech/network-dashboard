@@ -41,11 +41,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# 安裝編譯依賴
+# 安裝編譯依賴（包含 bcrypt 需要的 libffi）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     default-libmysqlclient-dev \
     libpq-dev \
+    libffi-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -58,7 +60,9 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install .
+    pip install . && \
+    # 驗證關鍵模組安裝成功
+    python -c "import bcrypt; import jwt; print('bcrypt and jwt OK')"
 
 # -----------------------------------------------------------------------------
 # Stage 3: 最終基礎映像檔
@@ -78,13 +82,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     USE_MOCK=false \
     PATH="/opt/venv/bin:$PATH"
 
-# 安裝執行時期必要的系統函式庫
+# 安裝執行時期必要的系統函式庫（僅 runtime，不含 dev）
 RUN apt-get update && \
     # 升級所有套件以修復 CVE
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-    default-libmysqlclient-dev \
-    libpq-dev \
+    # MySQL/MariaDB client runtime library（不是 -dev）
+    libmariadb3 \
+    # PostgreSQL client runtime library（不是 -dev）
+    libpq5 \
     curl \
     tini \
     && rm -rf /var/lib/apt/lists/* \
@@ -110,17 +116,22 @@ COPY --chown=appuser:appgroup app/services/ app/services/
 COPY --chown=appuser:appgroup app/indicators/ app/indicators/
 COPY --chown=appuser:appgroup app/main.py app/
 
-# 複製 fetchers 和 parsers 的基礎結構（不含實作）
+# 複製 fetchers 基礎結構（實際 API 實作由公司端加入）
 COPY --chown=appuser:appgroup app/fetchers/__init__.py app/fetchers/
 COPY --chown=appuser:appgroup app/fetchers/base.py app/fetchers/
 COPY --chown=appuser:appgroup app/fetchers/registry.py app/fetchers/
 COPY --chown=appuser:appgroup app/fetchers/convergence.py app/fetchers/
-COPY --chown=appuser:appgroup app/parsers/__init__.py app/parsers/
-COPY --chown=appuser:appgroup app/parsers/registry.py app/parsers/
-COPY --chown=appuser:appgroup app/parsers/protocols.py app/parsers/
+COPY --chown=appuser:appgroup app/fetchers/mock.py app/fetchers/
+
+# 複製 parsers（包含所有 plugins，因為它們是公開的解析邏輯）
+COPY --chown=appuser:appgroup app/parsers/ app/parsers/
 
 # 複製設定檔
 COPY --chown=appuser:appgroup config/ config/
+
+# 複製 Alembic 遷移檔
+COPY --chown=appuser:appgroup alembic.ini ./
+COPY --chown=appuser:appgroup alembic/ alembic/
 
 # 從前端建構階段複製靜態檔案
 COPY --from=frontend-builder --chown=appuser:appgroup /app/frontend/dist /app/static
@@ -132,8 +143,11 @@ RUN mkdir -p /app/logs /app/data /app/test_data && \
 # 切換到非 root 使用者
 USER appuser
 
+# 驗證關鍵模組可正常載入
+RUN python -c "import bcrypt; import jwt; from app.core.config import settings; print('All modules OK')"
+
 # 健康檢查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # 暴露埠號

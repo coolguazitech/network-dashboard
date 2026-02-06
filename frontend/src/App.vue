@@ -1,84 +1,156 @@
 <template>
-  <div class="min-h-screen bg-slate-900">
-    <!-- 頂部導航 -->
-    <nav class="bg-slate-800 border-b border-slate-700">
+  <div class="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950" @click="isAuthenticated && closeUserMenu($event)">
+    <!-- 頂部導航（登入後才顯示） -->
+    <nav v-if="isAuthenticated && route.name !== 'Login'" class="bg-slate-900/80 backdrop-blur-sm border-b border-cyan-500/10">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex justify-between h-16">
-          <div class="flex">
-            <div class="flex-shrink-0 flex items-center">
-              <h1 class="text-xl font-bold text-slate-100">
-                🌐 Network Dashboard
-              </h1>
-            </div>
-            <div class="hidden sm:ml-6 sm:flex sm:space-x-8">
+        <div class="flex justify-between h-14">
+          <!-- 左側：Logo + 導航 -->
+          <div class="flex items-center">
+            <router-link to="/" class="flex-shrink-0 flex items-center mr-8 ml-2 cursor-pointer hover:opacity-80 transition">
+              <div class="pt-0.5 text-center">
+                <div class="text-xl font-black tracking-[0.12em] leading-none logo-wrapper">
+                  <span class="logo-text bg-gradient-to-r from-cyan-400 via-blue-500 via-purple-400 to-cyan-300 bg-clip-text text-transparent">NETORA</span>
+                  <span class="logo-glow" aria-hidden="true">
+                    <span class="glow-letter glow-1">N</span>
+                    <span class="glow-letter glow-2">E</span>
+                    <span class="glow-letter glow-3">T</span>
+                    <span class="glow-letter glow-4">O</span>
+                    <span class="glow-letter glow-5">R</span>
+                    <span class="glow-letter glow-6">A</span>
+                  </span>
+                </div>
+                <div class="text-[9px] text-cyan-500/50 tracking-[0.18em] mt-0.5">CHANGE MONITOR</div>
+              </div>
+            </router-link>
+            <div class="hidden sm:flex sm:space-x-1">
               <router-link
                 to="/"
                 class="nav-link"
-                :class="{ active: $route.path === '/' }"
+                :class="{ active: route.path === '/' }"
               >
-                Dashboard
+                總覽
               </router-link>
               <router-link
                 to="/comparison"
                 class="nav-link"
-                :class="{ active: $route.path === '/comparison' }"
+                :class="{ active: route.path === '/comparison' }"
               >
-                Compare
+                比對
               </router-link>
               <router-link
                 to="/devices"
                 class="nav-link"
-                :class="{ active: $route.path === '/devices' }"
+                :class="{ active: route.path === '/devices' }"
               >
-                Devices
+                設備
+              </router-link>
+              <router-link
+                to="/contacts"
+                class="nav-link"
+                :class="{ active: route.path === '/contacts' }"
+              >
+                通訊錄
               </router-link>
               <router-link
                 to="/settings"
                 class="nav-link"
-                :class="{ active: $route.path === '/settings' }"
+                :class="{ active: route.path === '/settings' }"
               >
-                Configuration
+                設定
+              </router-link>
+              <router-link
+                v-if="isRoot"
+                to="/users"
+                class="nav-link"
+                :class="{ active: route.path === '/users' }"
+              >
+                使用者
               </router-link>
             </div>
           </div>
-          <div class="flex items-center space-x-4">
-            <!-- 全局 Maintenance ID 選擇器 -->
-            <div class="flex items-center space-x-2">
-              <label class="text-xs font-medium text-slate-400">歲修 ID:</label>
-              <select
-                v-model="selectedMaintenanceId"
-                @change="onMaintenanceIdChange"
-                class="px-3 py-1 text-sm bg-slate-700 border border-slate-600 text-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-cyan-500 max-w-[200px] truncate"
+          <!-- 右側：歲修選擇器 + 使用者 -->
+          <div class="flex items-center space-x-3">
+            <select
+              v-model="selectedMaintenanceId"
+              @change="onMaintenanceIdChange"
+              :disabled="!isRoot"
+              class="px-2 py-1 text-sm bg-slate-700 border border-slate-600 text-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-cyan-500 max-w-[160px] truncate disabled:opacity-60 disabled:cursor-not-allowed"
+              :title="isRoot ? '選擇歲修' : '您只能查看被指派的歲修'"
+            >
+              <option value="">選擇歲修</option>
+              <option
+                v-for="m in maintenanceList"
+                :key="m.id"
+                :value="m.id"
               >
-                <option value="">-- 請選擇 --</option>
-                <option
-                  v-for="m in maintenanceList"
-                  :key="m.id"
-                  :value="m.id"
-                >
-                  {{ m.name && m.name !== m.id ? m.name : m.id }}
-                </option>
-              </select>
-              <button 
-                @click="showMaintenanceModal = true"
-                class="text-cyan-400 hover:text-cyan-300 text-sm px-2 py-1 border border-cyan-600 rounded hover:bg-cyan-900/30 transition"
-                title="管理歲修"
+                {{ m.name && m.name !== m.id ? m.name : m.id }}
+              </option>
+            </select>
+            <button
+              v-if="isRoot"
+              @click="showMaintenanceModal = true"
+              class="text-slate-400 hover:text-cyan-400 p-1.5 rounded hover:bg-slate-700 transition"
+              title="管理歲修"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+
+            <!-- 分隔線 -->
+            <div class="h-6 w-px bg-slate-700"></div>
+
+            <!-- 使用者選單 -->
+            <div class="relative user-menu-container">
+              <button
+                @click.stop="showUserMenu = !showUserMenu"
+                class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-700/50 transition"
               >
-                ⚙️ 管理
+                <div class="w-7 h-7 rounded-full bg-cyan-600 flex items-center justify-center text-white text-xs font-medium">
+                  {{ displayName.charAt(0).toUpperCase() }}
+                </div>
+                <span class="text-sm text-slate-300 hidden md:block">{{ displayName }}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
               </button>
+
+              <!-- 下拉選單 -->
+              <div
+                v-if="showUserMenu"
+                class="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 z-50"
+              >
+                <div class="px-3 py-2 border-b border-slate-700">
+                  <div class="text-sm font-medium text-white">{{ displayName }}</div>
+                  <div class="text-xs text-slate-400">{{ currentUser?.username }}</div>
+                  <div v-if="isRoot" class="mt-1">
+                    <span class="px-1.5 py-0.5 bg-amber-600/30 text-amber-400 text-xs rounded">ROOT</span>
+                  </div>
+                </div>
+                <button
+                  @click="handleLogout"
+                  class="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-slate-700/50 transition flex items-center gap-2"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  登出
+                </button>
+              </div>
             </div>
-            <span class="text-sm text-slate-500">
-              最後更新: {{ lastUpdate }}
-            </span>
           </div>
         </div>
       </div>
     </nav>
 
     <!-- 主內容區 -->
-    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+    <main :class="isAuthenticated && route.name !== 'Login' ? 'max-w-7xl mx-auto py-6 sm:px-6 lg:px-8' : ''">
       <router-view />
     </main>
+
+    <!-- 右側固定餐點狀態欄 -->
+    <MealStatus v-if="isAuthenticated && selectedMaintenanceId && route.name !== 'Login'" />
 
     <!-- 歲修管理 Modal -->
     <div 
@@ -204,13 +276,38 @@
 </template>
 
 <script setup>
-import { ref, onMounted, provide } from 'vue'
+import { ref, onMounted, provide, computed, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
+import MealStatus from '@/components/MealStatus.vue'
+import { isAuthenticated, currentUser, isRoot, logout as authLogout, getAuthHeaders } from '@/utils/auth'
 
 dayjs.extend(utc)
 
-const lastUpdate = ref('--')
+const router = useRouter()
+const route = useRoute()
+
+// 使用者選單
+const showUserMenu = ref(false)
+
+const displayName = computed(() => {
+  return currentUser.value?.display_name || currentUser.value?.username || '使用者'
+})
+
+const handleLogout = () => {
+  showUserMenu.value = false
+  authLogout()
+  router.push('/login')
+}
+
+// 點擊外部關閉選單
+const closeUserMenu = (e) => {
+  if (!e.target.closest('.user-menu-container')) {
+    showUserMenu.value = false
+  }
+}
+
 const selectedMaintenanceId = ref('')
 const maintenanceList = ref([])
 
@@ -223,10 +320,6 @@ const showDeleteModal = ref(false)
 const deleteTarget = ref(null)
 const deleteConfirmInput = ref('')
 
-const updateTime = () => {
-  lastUpdate.value = dayjs().format('YYYY-MM-DD HH:mm:ss')
-}
-
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
   // 後端回傳 UTC 時間，需轉換為本地時間
@@ -235,16 +328,25 @@ const formatDate = (dateStr) => {
 
 const loadMaintenanceList = async () => {
   try {
-    const res = await fetch('/api/v1/maintenance')
+    const res = await fetch('/api/v1/maintenance', {
+      headers: getAuthHeaders(),
+    })
     if (res.ok) {
       maintenanceList.value = await res.json()
       
       // 如果當前選中的不在列表中，重置選擇
       if (selectedMaintenanceId.value) {
         const found = maintenanceList.value.find(m => m.id === selectedMaintenanceId.value)
-        if (!found && maintenanceList.value.length > 0) {
-          selectedMaintenanceId.value = maintenanceList.value[0].id
-          onMaintenanceIdChange()
+        if (!found) {
+          if (maintenanceList.value.length > 0) {
+            // 選擇第一個
+            selectedMaintenanceId.value = maintenanceList.value[0].id
+            onMaintenanceIdChange()
+          } else {
+            // 列表為空，清除選擇
+            selectedMaintenanceId.value = ''
+            localStorage.removeItem('selectedMaintenanceId')
+          }
         }
       } else if (maintenanceList.value.length > 0) {
         // 沒有選擇時，選擇第一個
@@ -275,7 +377,7 @@ const createMaintenance = async () => {
   try {
     const res = await fetch('/api/v1/maintenance', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify(newMaintenance.value),
     })
     
@@ -315,6 +417,7 @@ const confirmDelete = async () => {
   try {
     const res = await fetch(`/api/v1/maintenance/${encodeURIComponent(deleteTarget.value.id)}`, {
       method: 'DELETE',
+      headers: getAuthHeaders(),
     })
     
     if (res.ok) {
@@ -336,16 +439,34 @@ const confirmDelete = async () => {
 provide('maintenanceId', selectedMaintenanceId)
 provide('refreshMaintenanceList', loadMaintenanceList)
 
+// 當打開歲修管理 Modal 時重新載入列表
+watch(showMaintenanceModal, async (isOpen) => {
+  if (isOpen && isAuthenticated.value) {
+    await loadMaintenanceList()
+  }
+})
+
+// 當登入狀態改變時重新載入列表
+watch(isAuthenticated, async (authenticated) => {
+  if (authenticated) {
+    const savedId = localStorage.getItem('selectedMaintenanceId')
+    if (savedId) {
+      selectedMaintenanceId.value = savedId
+    }
+    await loadMaintenanceList()
+  }
+})
+
 onMounted(async () => {
-  updateTime()
-  setInterval(updateTime, 60000)
-  
+  // 僅在已登入時載入資料
+  if (!isAuthenticated.value) return
+
   // 從 localStorage 恢復之前的選擇
   const savedId = localStorage.getItem('selectedMaintenanceId')
   if (savedId) {
     selectedMaintenanceId.value = savedId
   }
-  
+
   // 載入歲修列表
   await loadMaintenanceList()
 })
@@ -353,10 +474,112 @@ onMounted(async () => {
 
 <style>
 .nav-link {
-  @apply inline-flex items-center px-1 pt-1 border-b-2 border-transparent text-sm font-medium text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors;
+  @apply inline-flex items-center px-3 py-1.5 rounded text-sm font-medium text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 transition-all duration-200;
 }
 
 .nav-link.active {
-  @apply border-cyan-500 text-slate-100;
+  @apply bg-cyan-500/15 text-cyan-400 shadow-sm shadow-cyan-500/20;
+}
+
+/* Logo 字母發光動畫 */
+.logo-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.logo-text {
+  position: relative;
+  z-index: 1;
+}
+
+.logo-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  pointer-events: none;
+  display: inline-flex;
+}
+
+.glow-letter {
+  color: transparent;
+  text-shadow:
+    0 0 12px rgba(255, 255, 255, 1),
+    0 0 28px rgba(255, 255, 255, 0.9),
+    0 0 55px rgba(255, 255, 255, 0.6),
+    0 0 90px rgba(250, 252, 255, 0.4);
+  opacity: 0;
+  animation: glow 20s ease-in-out infinite;
+}
+
+/* 動畫順序 N→E→T→O→R→A，純白核心 + 彩虹邊緣 */
+.glow-1 {
+  animation-delay: 0s;
+  text-shadow:
+    0 0 15px rgba(255, 255, 255, 1),
+    0 0 35px rgba(255, 255, 255, 0.95),
+    0 0 60px rgba(255, 220, 220, 0.6),
+    0 0 90px rgba(255, 100, 100, 0.35),
+    0 0 120px rgba(255, 50, 50, 0.2);
+}
+.glow-2 {
+  animation-delay: 0.3s;
+  text-shadow:
+    0 0 15px rgba(255, 255, 255, 1),
+    0 0 35px rgba(255, 255, 255, 0.95),
+    0 0 60px rgba(255, 240, 200, 0.6),
+    0 0 90px rgba(255, 180, 50, 0.35),
+    0 0 120px rgba(255, 150, 0, 0.2);
+}
+.glow-3 {
+  animation-delay: 0.6s;
+  text-shadow:
+    0 0 15px rgba(255, 255, 255, 1),
+    0 0 35px rgba(255, 255, 255, 0.95),
+    0 0 60px rgba(220, 255, 220, 0.6),
+    0 0 90px rgba(100, 255, 100, 0.35),
+    0 0 120px rgba(0, 220, 100, 0.2);
+}
+.glow-4 {
+  animation-delay: 0.9s;
+  text-shadow:
+    0 0 15px rgba(255, 255, 255, 1),
+    0 0 35px rgba(255, 255, 255, 0.95),
+    0 0 60px rgba(200, 240, 255, 0.6),
+    0 0 90px rgba(50, 200, 255, 0.35),
+    0 0 120px rgba(0, 180, 255, 0.2);
+}
+.glow-5 {
+  animation-delay: 1.2s;
+  text-shadow:
+    0 0 15px rgba(255, 255, 255, 1),
+    0 0 35px rgba(255, 255, 255, 0.95),
+    0 0 60px rgba(220, 220, 255, 0.6),
+    0 0 90px rgba(100, 100, 255, 0.35),
+    0 0 120px rgba(80, 50, 255, 0.2);
+}
+.glow-6 {
+  animation-delay: 1.5s;
+  text-shadow:
+    0 0 15px rgba(255, 255, 255, 1),
+    0 0 35px rgba(255, 255, 255, 0.95),
+    0 0 60px rgba(255, 220, 255, 0.6),
+    0 0 90px rgba(255, 100, 255, 0.35),
+    0 0 120px rgba(220, 50, 255, 0.2);
+}
+
+@keyframes glow {
+  0% {
+    opacity: 0;
+  }
+  4% {
+    opacity: 1;
+  }
+  10% {
+    opacity: 0.75;
+  }
+  18%, 100% {
+    opacity: 0;
+  }
 }
 </style>

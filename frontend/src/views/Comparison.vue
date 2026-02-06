@@ -384,6 +384,7 @@
 
 <script>
 import CategoryModal from '../components/CategoryModal.vue';
+import { getAuthHeaders } from '@/utils/auth';
 
 export default {
   name: "Comparison",
@@ -428,6 +429,7 @@ export default {
 
       // Polling
       pollingInterval: null,
+      pollingIntervalMs: 60000, // 預設 60 秒，會從後端 config 更新
     };
   },
   computed: {
@@ -649,6 +651,9 @@ export default {
     async initialize() {
       this.loading = true;
       try {
+        // 先載入前端配置
+        await this.loadFrontendConfig();
+
         await Promise.all([
           this.loadCategories(),
           this.loadCheckpoints(),
@@ -679,12 +684,25 @@ export default {
       }
     },
 
+    // ===== Config =====
+    async loadFrontendConfig() {
+      try {
+        const res = await apiFetch('/api/v1/config/frontend');
+        if (res.ok) {
+          const config = await res.json();
+          this.pollingIntervalMs = (config.polling_interval_seconds || 60) * 1000;
+        }
+      } catch (e) {
+        console.warn('Failed to load frontend config, using defaults:', e);
+      }
+    },
+
     // ===== Polling =====
     startPolling() {
       this.stopPolling(); // 確保沒有重複的 interval
       this.pollingInterval = setInterval(() => {
         this.refreshData();
-      }, 15000); // 15 秒
+      }, this.pollingIntervalMs);
     },
 
     stopPolling() {
@@ -711,7 +729,9 @@ export default {
     async loadCheckpoints() {
       if (!this.selectedMaintenanceId) return;
       try {
-        const res = await fetch(`/api/v1/comparisons/checkpoints/${this.selectedMaintenanceId}`);
+        const res = await fetch(`/api/v1/comparisons/checkpoints/${this.selectedMaintenanceId}`, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           const data = await res.json();
           this.checkpoints = data.checkpoints || [];
@@ -726,7 +746,9 @@ export default {
       if (!this.selectedMaintenanceId) return;
       try {
         // 加入 include_categories=true 以取得類別分組統計（用於折線圖）
-        const res = await fetch(`/api/v1/comparisons/checkpoints/${this.selectedMaintenanceId}/summaries?include_categories=true`);
+        const res = await fetch(`/api/v1/comparisons/checkpoints/${this.selectedMaintenanceId}/summaries?include_categories=true`, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           const data = await res.json();
           this.checkpointSummaries = data.summaries || {};
@@ -844,7 +866,9 @@ export default {
         const params = new URLSearchParams();
         params.append('checkpoint', this.selectedCheckpoint);
 
-        const res = await fetch(`/api/v1/comparisons/diff/${this.selectedMaintenanceId}?${params}`);
+        const res = await fetch(`/api/v1/comparisons/diff/${this.selectedMaintenanceId}?${params}`, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           const data = await res.json();
           this.currentTime = data.current_time;
@@ -864,14 +888,18 @@ export default {
       if (!this.selectedMaintenanceId) return;
       try {
         // 查詢該歲修專屬的分類
-        const res = await fetch(`/api/v1/categories?maintenance_id=${encodeURIComponent(this.selectedMaintenanceId)}`);
+        const res = await fetch(`/api/v1/categories?maintenance_id=${encodeURIComponent(this.selectedMaintenanceId)}`, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           this.categories = await res.json();
 
           // 重新載入成員對應（一對多：一個 MAC 可屬於多個分類）
           this.categoryMembers = {};
           for (const cat of this.categories) {
-            const memberRes = await fetch(`/api/v1/categories/${cat.id}/members`);
+            const memberRes = await fetch(`/api/v1/categories/${cat.id}/members`, {
+              headers: getAuthHeaders()
+            });
             if (memberRes.ok) {
               const members = await memberRes.json();
               members.forEach(m => {
@@ -899,7 +927,9 @@ export default {
           params.append('before_time', this.selectedCheckpoint);
         }
         const url = `/api/v1/categories/stats/${this.selectedMaintenanceId}?${params}`;
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           this.categoryStats = await res.json();
         }
@@ -1204,7 +1234,7 @@ export default {
       try {
         const res = await fetch(`/api/v1/comparisons/overrides/${this.selectedMaintenanceId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({
             mac_address: mac,
             override_severity: severity,
@@ -1240,6 +1270,7 @@ export default {
       try {
         const res = await fetch(`/api/v1/comparisons/overrides/${this.selectedMaintenanceId}/${encodeURIComponent(mac)}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
 
         if (res.ok) {

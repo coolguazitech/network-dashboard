@@ -5,6 +5,7 @@ Client comparison endpoints.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,10 +13,35 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.db.base import get_async_session
 from app.db.models import SeverityOverride
 from app.services.client_comparison_service import ClientComparisonService
 from app.core.enums import MaintenancePhase
+
+
+def _get_checkpoint_time_bucket(
+    dt: datetime,
+    interval_minutes: int,
+) -> str:
+    """
+    根據 checkpoint 間隔計算時間桶的 key。
+
+    Args:
+        dt: 時間點
+        interval_minutes: checkpoint 間隔（分鐘）
+
+    Returns:
+        時間桶的 key（用於分組）
+
+    Examples:
+        interval=60: 12:00, 12:30, 12:45 都會變成 "2024-01-01-12-00"
+        interval=30: 12:00 -> "2024-01-01-12-00", 12:30 -> "2024-01-01-12-30"
+        interval=15: 12:00 -> "2024-01-01-12-00", 12:15 -> "2024-01-01-12-15"
+    """
+    # 計算該時間點落在哪個時間桶
+    bucket_minute = (dt.minute // interval_minutes) * interval_minutes
+    return f"{dt.strftime('%Y-%m-%d-%H')}-{bucket_minute:02d}"
 
 
 class SeverityOverrideCreate(BaseModel):
@@ -82,14 +108,14 @@ async def get_checkpoints(
     result = await session.execute(stmt)
     all_timepoints = result.scalars().all()
 
-    # 篩選整點時間（每小時取最後一筆作為 Checkpoint）
-    hourly_checkpoints: dict[str, datetime] = {}
+    # 根據設定的 checkpoint 間隔篩選時間桶（每個時間桶取最後一筆）
+    interval_minutes = settings.checkpoint_interval_minutes
+    time_bucket_checkpoints: dict[str, datetime] = {}
     for tp in all_timepoints:
-        # 取整點 key（年-月-日-時）
-        hour_key = tp.strftime("%Y-%m-%d-%H")
-        hourly_checkpoints[hour_key] = tp  # 該小時最後一筆
+        bucket_key = _get_checkpoint_time_bucket(tp, interval_minutes)
+        time_bucket_checkpoints[bucket_key] = tp  # 該時間桶最後一筆
 
-    checkpoints = sorted(hourly_checkpoints.values())
+    checkpoints = sorted(time_bucket_checkpoints.values())
 
     # 台灣時區 (UTC+8)
     tw_tz = timezone(timedelta(hours=8))
@@ -152,13 +178,14 @@ async def get_checkpoint_summaries(
     result = await session.execute(stmt)
     all_timepoints = result.scalars().all()
 
-    # 篩選整點時間
-    hourly_checkpoints: dict[str, datetime] = {}
+    # 根據設定的 checkpoint 間隔篩選時間桶
+    interval_minutes = settings.checkpoint_interval_minutes
+    time_bucket_checkpoints: dict[str, datetime] = {}
     for tp in all_timepoints:
-        hour_key = tp.strftime("%Y-%m-%d-%H")
-        hourly_checkpoints[hour_key] = tp
+        bucket_key = _get_checkpoint_time_bucket(tp, interval_minutes)
+        time_bucket_checkpoints[bucket_key] = tp
 
-    checkpoints = sorted(hourly_checkpoints.values())
+    checkpoints = sorted(time_bucket_checkpoints.values())
 
     if not checkpoints:
         return {
@@ -491,180 +518,6 @@ async def get_diff(
         "by_category": list(by_category.values()),
         "results": results,
     }
-
-
-@router.get("/timepoints/{maintenance_id}")
-async def get_timepoints(
-    maintenance_id: str,
-    max_days: int = Query(
-        default=7,
-        ge=1,
-        le=30,
-        description="時間範圍（天），預設 7 天",
-    ),
-    session: AsyncSession = Depends(get_async_session),
-) -> dict[str, Any]:
-    """
-    獲取指定維護 ID 的歷史時間點（限制在 max_days 天內）。
-
-    回傳採集資料的時間點列表，用於時間選擇器和圖表。
-    """
-    timepoints = await comparison_service.get_timepoints(
-        maintenance_id=maintenance_id,
-        session=session,
-        max_days=max_days,
-    )
-    return {
-        "maintenance_id": maintenance_id,
-        "max_days": max_days,
-        "timepoints": timepoints,
-    }
-
-
-@router.get("/statistics/{maintenance_id}")
-async def get_statistics(
-    maintenance_id: str,
-    max_days: int = Query(
-        default=7,
-        ge=1,
-        le=30,
-        description="時間範圍（天），預設 7 天",
-    ),
-    hourly_sampling: bool = Query(
-        default=True,
-        description="是否每小時採樣（預設 True，最多 7×24=168 個時間點）",
-    ),
-    session: AsyncSession = Depends(get_async_session),
-) -> dict[str, Any]:
-    """
-    獲取每個時間點的統計資料，用於趨勢圖表。
-
-    回傳每個時間點的客戶端數量統計，包括：
-    - 全部客戶端數量
-    - 有異常的客戶端數量
-    - 嚴重問題數量
-    - 警告數量
-
-    使用 max_days 參數控制時間範圍（預設 7 天）。
-    使用 hourly_sampling=True 時，每小時只保留最後一筆資料點。
-    """
-    statistics = await comparison_service.get_statistics(
-        maintenance_id=maintenance_id,
-        session=session,
-        max_days=max_days,
-        hourly_sampling=hourly_sampling,
-    )
-    return {
-        "maintenance_id": maintenance_id,
-        "max_days": max_days,
-        "hourly_sampling": hourly_sampling,
-        "statistics": statistics,
-    }
-
-
-@router.get("/debug/{maintenance_id}")
-async def debug_comparison_data(
-    maintenance_id: str,
-    session: AsyncSession = Depends(get_async_session),
-) -> dict[str, Any]:
-    """
-    除錯用：查看比較相關的資料狀態。
-    """
-    from app.db.models import MaintenanceMacList, ClientRecord, ClientComparison
-    from sqlalchemy import func
-
-    # 查詢各表的資料數量
-    mac_list_count = await session.execute(
-        select(func.count()).select_from(MaintenanceMacList).where(
-            MaintenanceMacList.maintenance_id == maintenance_id
-        )
-    )
-    mac_count = mac_list_count.scalar() or 0
-
-    # 查詢 MAC 清單內容
-    mac_list_stmt = select(MaintenanceMacList.mac_address).where(
-        MaintenanceMacList.maintenance_id == maintenance_id
-    )
-    mac_list_result = await session.execute(mac_list_stmt)
-    mac_addresses = [m for m in mac_list_result.scalars().all()]
-
-    # ClientRecord 數量
-    client_record_count = await session.execute(
-        select(func.count()).select_from(ClientRecord).where(
-            ClientRecord.maintenance_id == maintenance_id
-        )
-    )
-    record_count = client_record_count.scalar() or 0
-
-    # ClientComparison 數量
-    comparison_count = await session.execute(
-        select(func.count()).select_from(ClientComparison).where(
-            ClientComparison.maintenance_id == maintenance_id
-        )
-    )
-    comp_count = comparison_count.scalar() or 0
-
-    return {
-        "maintenance_id": maintenance_id,
-        "mac_list_count": mac_count,
-        "mac_addresses": mac_addresses[:20],  # 最多顯示 20 筆
-        "client_record_count": record_count,
-        "client_comparison_count": comp_count,
-    }
-
-
-@router.post("/generate/{maintenance_id}")
-async def generate_comparisons(
-    maintenance_id: str,
-    session: AsyncSession = Depends(get_async_session),
-) -> dict[str, Any]:
-    """
-    生成客戶端比較結果。
-
-    比較指定維護 ID 下，所有客戶端在 OLD 和 NEW 階段的變化。
-    """
-    from app.db.models import MaintenanceMacList
-    from sqlalchemy import func
-
-    try:
-        # 先查詢 MAC 清單數量用於除錯
-        mac_count_result = await session.execute(
-            select(func.count()).select_from(MaintenanceMacList).where(
-                MaintenanceMacList.maintenance_id == maintenance_id
-            )
-        )
-        mac_list_count = mac_count_result.scalar() or 0
-
-        # 生成比較結果
-        comparisons = await comparison_service.generate_comparisons(
-            maintenance_id=maintenance_id,
-            session=session,
-        )
-
-        # 保存到資料庫
-        await comparison_service.save_comparisons(
-            comparisons=comparisons,
-            session=session,
-        )
-
-        # 生成摘要
-        summary = await comparison_service.get_comparison_summary(
-            maintenance_id=maintenance_id,
-            session=session,
-        )
-
-        return {
-            "success": True,
-            "maintenance_id": maintenance_id,
-            "mac_list_count": mac_list_count,  # 新增：顯示 MAC 清單數量
-            "comparisons_count": len(comparisons),
-            "summary": summary,
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"生成比較結果失敗: {str(e)}",
-        )
 
 
 @router.get("/summary/{maintenance_id}")

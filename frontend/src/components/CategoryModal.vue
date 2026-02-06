@@ -258,6 +258,8 @@
 </template>
 
 <script>
+import { getAuthHeaders } from '@/utils/auth'
+
 export default {
   name: 'CategoryModal',
   props: {
@@ -316,7 +318,9 @@ export default {
 
     async loadMembers(categoryId) {
       try {
-        const res = await fetch(`/api/v1/categories/${categoryId}/members`);
+        const res = await fetch(`/api/v1/categories/${categoryId}/members`, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           const members = await res.json();
           this.categoryMembers[categoryId] = members;
@@ -348,7 +352,7 @@ export default {
         };
         const res = await fetch('/api/v1/categories', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(payload),
         });
         if (res.ok) {
@@ -389,7 +393,7 @@ export default {
       try {
         const res = await fetch(`/api/v1/categories/${categoryId}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ name: name, color: this.editForm.color }),
         });
         if (res.ok) {
@@ -420,6 +424,7 @@ export default {
       try {
         const res = await fetch(`/api/v1/categories/${cat.id}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
         if (res.ok) {
           this.$emit('refresh');
@@ -450,6 +455,7 @@ export default {
         const encodedMac = encodeURIComponent(macAddress);
         const res = await fetch(`/api/v1/categories/${categoryId}/members/${encodedMac}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
         if (res.ok) {
           await this.loadMembers(categoryId);

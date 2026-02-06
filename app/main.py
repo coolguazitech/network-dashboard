@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 import yaml
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
@@ -60,12 +61,14 @@ def load_scheduler_config() -> dict[str, Any]:
             logger.info(f"Skipping disabled job: {job_name}")
             continue
 
+        # 使用 env 設定的預設值，或 scheduler.yaml 中指定的值
+        default_interval = settings.collection_interval_seconds
         jobs.append({
             "name": job_name,
             "url": job_config.get("url"),
             "source": job_config.get("source"),
             "brand": job_config.get("brand"),
-            "interval": job_config.get("interval", 30),
+            "interval": job_config.get("interval", default_interval),
             "description": job_config.get("description", ""),
         })
 
@@ -164,6 +167,59 @@ def create_app() -> FastAPI:
             "scheduler_running": scheduler.is_running(),
             "scheduled_jobs": len(scheduler.get_jobs()),
         }
+
+    # Mount static files (for production - built frontend)
+    # 靜態檔案路徑：Docker 內為 /app/static，本地開發為 frontend/dist
+    static_paths = [
+        Path("/app/static"),           # Docker 容器內
+        Path("static"),                # 本地 static 目錄
+        Path("frontend/dist"),         # 本地開發 build 後
+    ]
+
+    static_dir = None
+    for path in static_paths:
+        if path.exists() and path.is_dir():
+            static_dir = path
+            break
+
+    if static_dir:
+        # Serve static assets (js, css, images) - only if assets dir exists
+        assets_dir = static_dir / "assets"
+        if assets_dir.exists() and assets_dir.is_dir():
+            app.mount(
+                "/assets",
+                StaticFiles(directory=assets_dir),
+                name="assets",
+            )
+
+        # Serve index.html for root and SPA routes
+        @app.get("/")
+        async def serve_root() -> FileResponse:
+            """Serve frontend index.html."""
+            return FileResponse(static_dir / "index.html")
+
+        # Catch-all for SPA routing (must be after API routes)
+        @app.get("/{path:path}")
+        async def serve_spa(path: str) -> FileResponse:
+            """Serve index.html for SPA client-side routing."""
+            # 如果是 API 或已知路徑，返回 404
+            if path.startswith("api/") or path == "health":
+                raise HTTPException(status_code=404, detail="Not found")
+
+            # 檢查是否為靜態檔案
+            file_path = static_dir / path
+            if file_path.exists() and file_path.is_file():
+                return FileResponse(file_path)
+
+            # 否則返回 index.html (SPA routing)
+            return FileResponse(static_dir / "index.html")
+
+        logger.info(f"Static files mounted from: {static_dir}")
+    else:
+        logger.warning(
+            "No static directory found. Frontend will not be served. "
+            "Run 'npm run build' in frontend/ or use Docker image."
+        )
 
     return app
 

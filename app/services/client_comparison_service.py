@@ -368,6 +368,29 @@ class ClientComparisonService:
         # 無法解析，返回 None
         return None
 
+    def _normalize_duplex(self, duplex: str | None) -> str | None:
+        """將雙工值標準化為小寫，用於比較。
+
+        支援的格式（不區分大小寫）：
+        - "full", "Full", "FULL" → "full"
+        - "half", "Half", "HALF" → "half"
+        - "auto", "Auto", "AUTO" → "auto"
+        """
+        if duplex is None:
+            return None
+        return duplex.strip().lower() or None
+
+    def _normalize_link_status(self, status: str | None) -> str | None:
+        """將連接狀態標準化為小寫，用於比較。
+
+        支援的格式（不區分大小寫）：
+        - "up", "Up", "UP" → "up"
+        - "down", "Down", "DOWN" → "down"
+        """
+        if status is None:
+            return None
+        return status.strip().lower() or None
+
     def _find_differences(self, comparison: ClientComparison) -> dict[str, Any]:
         """找出比較記錄中的差異。"""
         differences: dict[str, Any] = {}
@@ -395,6 +418,32 @@ class ClientComparisonService:
                 new_normalized = self._normalize_speed(new_value)
 
                 # 只有都有值且標準化後不同才算變化
+                if old_normalized is not None and new_normalized is not None:
+                    if old_normalized != new_normalized:
+                        differences[field_name] = {
+                            "old": old_value,
+                            "new": new_value,
+                        }
+                continue
+
+            # 對於 duplex 欄位，使用標準化比較（full == FULL）
+            if field_name == "duplex":
+                old_normalized = self._normalize_duplex(old_value)
+                new_normalized = self._normalize_duplex(new_value)
+
+                if old_normalized is not None and new_normalized is not None:
+                    if old_normalized != new_normalized:
+                        differences[field_name] = {
+                            "old": old_value,
+                            "new": new_value,
+                        }
+                continue
+
+            # 對於 link_status 欄位，使用標準化比較（up == UP）
+            if field_name == "link_status":
+                old_normalized = self._normalize_link_status(old_value)
+                new_normalized = self._normalize_link_status(new_value)
+
                 if old_normalized is not None and new_normalized is not None:
                     if old_normalized != new_normalized:
                         differences[field_name] = {
@@ -664,332 +713,7 @@ class ClientComparisonService:
             "warning": warning,
             "info": total - critical - warning - unchanged,
         }
-    
-    async def get_timepoints(
-        self,
-        maintenance_id: str,
-        session: AsyncSession,
-        max_days: int = 7,
-    ) -> list[dict[str, Any]]:
-        """獲取 NEW phase（新設備）的歷史採集時間點（限制在 max_days 天內）。
 
-        只返回 NEW phase 的時間點，確保統計圖表只顯示新設備的採集時間點。
-
-        Args:
-            maintenance_id: 歲修 ID
-            session: DB session
-            max_days: 最大天數限制（預設 7 天）
-        """
-        from sqlalchemy import func
-        from datetime import timedelta, timezone
-
-        # 計算截止時間（max_days 天前）
-        cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
-
-        stmt = (
-            select(
-                func.distinct(ClientRecord.collected_at)
-                .label('timepoint')
-            )
-            .where(
-                ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.NEW,
-                ClientRecord.collected_at >= cutoff,  # 限制在 max_days 天內
-            )
-            .order_by('timepoint')
-        )
-
-        result = await session.execute(stmt)
-        timepoints = result.scalars().all()
-
-        return [
-            {
-                "timestamp": tp.isoformat(),
-                "label": tp.strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            for tp in timepoints
-        ]
-    
-    async def get_statistics(
-        self,
-        maintenance_id: str,
-        session: AsyncSession,
-        max_days: int = 7,
-        hourly_sampling: bool = True,
-    ) -> list[dict[str, Any]]:
-        """獲取每個時間點的統計資料。
-
-        用於時間軸圖表顯示趨勢。按使用者自訂分類統計異常數。
-        如果沒有 ClientRecord，則使用 ClientComparison 生成靜態統計。
-
-        已優化：預先載入所有資料，避免 N+1 查詢問題。
-
-        Args:
-            maintenance_id: 歲修 ID
-            session: DB session
-            max_days: 最大天數限制（預設 7 天，最多 168 個小時點）
-            hourly_sampling: 是否每小時採樣（預設 True，每小時取最後一筆）
-        """
-        from sqlalchemy import func
-        from datetime import timedelta, timezone
-        from app.db.models import ClientCategory, ClientCategoryMember, MaintenanceDeviceList
-
-        # 計算截止時間（max_days 天前）
-        cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
-
-        # 檢查是否有 ClientRecord 資料（在時間範圍內）
-        record_count_stmt = (
-            select(func.count())
-            .select_from(ClientRecord)
-            .where(
-                ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.collected_at >= cutoff,
-            )
-        )
-        record_count_result = await session.execute(record_count_stmt)
-        record_count = record_count_result.scalar() or 0
-
-        # 如果沒有 ClientRecord，使用 ClientComparison 生成靜態統計
-        if record_count == 0:
-            return await self._get_static_statistics(maintenance_id, session)
-
-        # === 預先載入所有資料（一次性查詢，避免 N+1） ===
-
-        # 0. 載入 MaintenanceMacList 作為 MAC 清單基準
-        from app.db.models import MaintenanceMacList
-        mac_list_stmt = select(MaintenanceMacList.mac_address).where(
-            MaintenanceMacList.maintenance_id == maintenance_id
-        )
-        mac_list_result = await session.execute(mac_list_stmt)
-        mac_list = {m.upper() for m in mac_list_result.scalars().all()}
-
-        # 1. 載入設備對應
-        dev_stmt = select(MaintenanceDeviceList).where(
-            MaintenanceDeviceList.maintenance_id == maintenance_id
-        )
-        dev_result = await session.execute(dev_stmt)
-        device_mappings_list = dev_result.scalars().all()
-        device_mappings: dict[str, str] = {}
-        for dm in device_mappings_list:
-            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
-
-        # 2. 載入所有 OLD 階段記錄（按 MAC 分組，只保留最新）
-        old_stmt = (
-            select(ClientRecord)
-            .where(
-                ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.OLD,
-            )
-            .order_by(ClientRecord.mac_address, ClientRecord.collected_at.desc())
-        )
-        old_result = await session.execute(old_stmt)
-        old_records = old_result.scalars().all()
-
-        old_by_mac: dict[str, ClientRecord] = {}
-        for record in old_records:
-            mac_upper = record.mac_address.upper() if record.mac_address else ""
-            if not mac_upper or mac_upper == SNAPSHOT_MARKER_MAC:
-                continue  # 跳過空值和快照標記
-            if mac_upper not in old_by_mac:
-                old_by_mac[mac_upper] = record
-
-        # 3. 載入所有 NEW 階段記錄（按 MAC+時間排序，限制在 cutoff 之後）
-        new_stmt = (
-            select(ClientRecord)
-            .where(
-                ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.NEW,
-                ClientRecord.collected_at >= cutoff,  # 限制在 max_days 天內
-            )
-            .order_by(ClientRecord.collected_at, ClientRecord.mac_address)
-        )
-        new_result = await session.execute(new_stmt)
-        all_new_records = new_result.scalars().all()
-
-        # 4. 獲取所有時間點（從已載入的 NEW 記錄）
-        timepoints_set: set[datetime] = set()
-        for record in all_new_records:
-            if record.collected_at:
-                timepoints_set.add(record.collected_at)
-        all_timepoints_dt = sorted(timepoints_set)
-
-        if not all_timepoints_dt:
-            return await self._get_static_statistics(maintenance_id, session)
-
-        # 採樣策略
-        if hourly_sampling:
-            # 每小時取最後一筆（最多 7*24=168 個時間點）
-            hourly_buckets: dict[str, datetime] = {}
-            for tp in all_timepoints_dt:
-                bucket_key = tp.strftime("%Y-%m-%d-%H")  # 年-月-日-時
-                hourly_buckets[bucket_key] = tp  # 保留該小時最後一筆
-            sampled_timepoints = sorted(hourly_buckets.values())
-        else:
-            # 不採樣，使用所有時間點
-            sampled_timepoints = all_timepoints_dt
-
-        # 5. 獲取使用者自訂分類和成員（只取該歲修的分類或全域分類）
-        cat_stmt = select(ClientCategory).where(
-            ClientCategory.is_active == True,  # noqa: E712
-            (ClientCategory.maintenance_id == maintenance_id)
-            | (ClientCategory.maintenance_id.is_(None))
-        )
-        cat_result = await session.execute(cat_stmt)
-        categories = cat_result.scalars().all()
-
-        active_cat_ids = [c.id for c in categories]
-        if active_cat_ids:
-            member_stmt = (
-                select(ClientCategoryMember)
-                .where(ClientCategoryMember.category_id.in_(active_cat_ids))
-            )
-            member_result = await session.execute(member_stmt)
-            members = member_result.scalars().all()
-        else:
-            members = []
-
-        # 建立 MAC -> category_ids 對照
-        mac_to_categories: dict[str, list[int]] = {}
-        for m in members:
-            normalized_mac = m.mac_address.upper() if m.mac_address else ""
-            if normalized_mac:
-                if normalized_mac not in mac_to_categories:
-                    mac_to_categories[normalized_mac] = []
-                mac_to_categories[normalized_mac].append(m.category_id)
-
-        # 分類資訊
-        category_info = {cat.id: {"name": cat.name, "color": cat.color} for cat in categories}
-
-        # === 為每個時間點計算統計（使用預載入的資料） ===
-        statistics = []
-
-        for tp in sampled_timepoints:
-            # 篩選該時間點的 NEW 記錄（collected_at <= tp）
-            # 按 MAC 分組，只保留最新的
-            new_by_mac: dict[str, ClientRecord] = {}
-            for record in all_new_records:
-                if record.collected_at and record.collected_at <= tp:
-                    mac_upper = record.mac_address.upper() if record.mac_address else ""
-                    if mac_upper and mac_upper != SNAPSHOT_MARKER_MAC:
-                        # 因為已按時間排序，後面的會覆蓋前面的（保留最新）
-                        new_by_mac[mac_upper] = record
-
-            # 生成比較結果（在記憶體中處理）
-            # 優先使用 MaintenanceMacList，確保刪除的 MAC 不再顯示
-            if mac_list:
-                all_macs = mac_list
-            else:
-                all_macs = set(old_by_mac.keys()) | set(new_by_mac.keys())
-            comparisons = []
-
-            for mac in all_macs:
-                old_record = old_by_mac.get(mac)
-                new_record = new_by_mac.get(mac)
-
-                comparison = ClientComparison(
-                    maintenance_id=maintenance_id,
-                    collected_at=tp,
-                    mac_address=mac,
-                )
-
-                if old_record:
-                    comparison.old_ip_address = old_record.ip_address
-                    comparison.old_switch_hostname = old_record.switch_hostname
-                    comparison.old_interface_name = old_record.interface_name
-                    comparison.old_vlan_id = old_record.vlan_id
-                    comparison.old_speed = old_record.speed
-                    comparison.old_duplex = old_record.duplex
-                    comparison.old_link_status = old_record.link_status
-                    comparison.old_ping_reachable = old_record.ping_reachable
-                    comparison.old_acl_passes = old_record.acl_passes
-
-                if new_record:
-                    comparison.new_ip_address = new_record.ip_address
-                    comparison.new_switch_hostname = new_record.switch_hostname
-                    comparison.new_interface_name = new_record.interface_name
-                    comparison.new_vlan_id = new_record.vlan_id
-                    comparison.new_speed = new_record.speed
-                    comparison.new_duplex = new_record.duplex
-                    comparison.new_link_status = new_record.link_status
-                    comparison.new_ping_reachable = new_record.ping_reachable
-                    comparison.new_acl_passes = new_record.acl_passes
-
-                comparison = self._compare_records(comparison, device_mappings)
-                comparisons.append(comparison)
-
-            # 計算統計
-            # 異常包括：有變化的 + 未偵測的（severity="undetected"）
-            total = len(comparisons)
-            has_issues = sum(
-                1 for c in comparisons
-                if c.is_changed or c.severity == "undetected"
-            )
-            critical = sum(1 for c in comparisons if c.severity == "critical")
-            warning = sum(1 for c in comparisons if c.severity == "warning")
-            undetected = sum(1 for c in comparisons if c.severity == "undetected")
-
-            # 按使用者分類統計
-            by_user_category: dict[str, dict[str, Any]] = {}
-
-            for cat_id, cat_data in category_info.items():
-                by_user_category[str(cat_id)] = {
-                    "name": cat_data["name"],
-                    "color": cat_data["color"],
-                    "total": 0,
-                    "has_issues": 0,
-                    "undetected": 0,
-                }
-            by_user_category["null"] = {
-                "name": "未分類",
-                "color": "#6B7280",
-                "total": 0,
-                "has_issues": 0,
-                "undetected": 0,
-            }
-
-            detected_macs = {c.mac_address.upper() for c in comparisons if c.mac_address}
-
-            for comp in comparisons:
-                normalized_mac = comp.mac_address.upper() if comp.mac_address else ""
-                cat_ids = mac_to_categories.get(normalized_mac, [])
-                if not cat_ids:
-                    cat_ids = [None]
-                for cat_id in cat_ids:
-                    cat_key = str(cat_id) if cat_id else "null"
-                    if cat_key not in by_user_category:
-                        cat_key = "null"
-                    by_user_category[cat_key]["total"] += 1
-                    # 異常包括：有變化的 + 未偵測的
-                    if comp.is_changed or comp.severity == "undetected":
-                        by_user_category[cat_key]["has_issues"] += 1
-                    if comp.severity == "undetected":
-                        by_user_category[cat_key]["undetected"] += 1
-
-            for mac, cat_ids in mac_to_categories.items():
-                if mac not in detected_macs:
-                    for cat_id in cat_ids:
-                        cat_key = str(cat_id) if cat_id else "null"
-                        if cat_key in by_user_category:
-                            by_user_category[cat_key]["total"] += 1
-                            by_user_category[cat_key]["undetected"] += 1
-                            by_user_category[cat_key]["has_issues"] += 1
-
-            for cat_key in by_user_category:
-                cat_data = by_user_category[cat_key]
-                cat_data["normal"] = cat_data["total"] - cat_data["has_issues"]
-
-            statistics.append({
-                "timestamp": tp.isoformat(),
-                "label": tp.strftime("%Y-%m-%d %H:%M:%S"),
-                "total": total,
-                "has_issues": has_issues,
-                "critical": critical,
-                "warning": warning,
-                "by_user_category": by_user_category,
-            })
-
-        return statistics
-    
     async def _generate_comparisons_at_time(
         self,
         maintenance_id: str,
@@ -1367,147 +1091,6 @@ class ClientComparisonService:
             if value is not None and value != "":
                 return True
         return False
-
-    async def _get_static_statistics(
-        self,
-        maintenance_id: str,
-        session: AsyncSession,
-    ) -> list[dict[str, Any]]:
-        """
-        當沒有 ClientRecord 時，使用 ClientComparison 生成靜態統計。
-
-        只生成一個時間點的統計資料（當前快照）。
-        """
-        from sqlalchemy import func
-        from app.db.models import ClientCategory, ClientCategoryMember
-        
-        # 獲取所有比較結果
-        comp_stmt = (
-            select(ClientComparison)
-            .where(ClientComparison.maintenance_id == maintenance_id)
-        )
-        comp_result = await session.execute(comp_stmt)
-        comparisons = comp_result.scalars().all()
-        
-        if not comparisons:
-            return []
-        
-        # 獲取最早時間點作為標籤
-        min_time = min(
-            (c.collected_at for c in comparisons if c.collected_at),
-            default=datetime.utcnow()
-        )
-        max_time = max(
-            (c.collected_at for c in comparisons if c.collected_at),
-            default=datetime.utcnow()
-        )
-        
-        # 獲取使用者自訂分類和成員（只取該歲修的分類或全域分類）
-        cat_stmt = select(ClientCategory).where(
-            ClientCategory.is_active == True,  # noqa: E712
-            (ClientCategory.maintenance_id == maintenance_id)
-            | (ClientCategory.maintenance_id.is_(None))
-        )
-        cat_result = await session.execute(cat_stmt)
-        categories = cat_result.scalars().all()
-
-        active_cat_ids = [c.id for c in categories]
-        member_stmt = (
-            select(ClientCategoryMember)
-            .where(ClientCategoryMember.category_id.in_(active_cat_ids))
-        )
-        member_result = await session.execute(member_stmt)
-        members = member_result.scalars().all()
-        
-        # 建立 MAC -> category_ids 對照
-        mac_to_categories: dict[str, list[int]] = {}
-        for m in members:
-            normalized_mac = m.mac_address.upper() if m.mac_address else ""
-            if normalized_mac:
-                if normalized_mac not in mac_to_categories:
-                    mac_to_categories[normalized_mac] = []
-                mac_to_categories[normalized_mac].append(m.category_id)
-        
-        # 分類資訊
-        category_info = {
-            cat.id: {"name": cat.name, "color": cat.color}
-            for cat in categories
-        }
-        
-        # 初始化分類統計
-        by_user_category: dict[str, dict[str, Any]] = {}
-        for cat_id, cat_data in category_info.items():
-            by_user_category[str(cat_id)] = {
-                "name": cat_data["name"],
-                "color": cat_data["color"],
-                "total": 0,
-                "has_issues": 0,
-                "undetected": 0,
-                "normal": 0,
-            }
-        by_user_category["null"] = {
-            "name": "未分類",
-            "color": "#6B7280",
-            "total": 0,
-            "has_issues": 0,
-            "undetected": 0,
-            "normal": 0,
-        }
-        
-        # 統計每個比較結果
-        total = len(comparisons)
-        has_issues = 0
-        critical = 0
-        warning = 0
-        
-        for comp in comparisons:
-            normalized_mac = comp.mac_address.upper() if comp.mac_address else ""
-            cat_ids = mac_to_categories.get(normalized_mac, [])
-            
-            if not cat_ids:
-                cat_ids = [None]
-            
-            for cat_id in cat_ids:
-                cat_key = str(cat_id) if cat_id else "null"
-                if cat_key not in by_user_category:
-                    cat_key = "null"
-                by_user_category[cat_key]["total"] += 1
-                if comp.is_changed:
-                    by_user_category[cat_key]["has_issues"] += 1
-            
-            if comp.is_changed:
-                has_issues += 1
-                if comp.severity == "critical":
-                    critical += 1
-                elif comp.severity == "warning":
-                    warning += 1
-        
-        # 計算 normal
-        for cat_key in by_user_category:
-            cat_data = by_user_category[cat_key]
-            cat_data["normal"] = cat_data["total"] - cat_data["has_issues"]
-        
-        # 回傳兩個時間點（起點和終點），讓圖表能顯示
-        return [
-            {
-                "timestamp": min_time.isoformat(),
-                "label": min_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "total": total,
-                "has_issues": has_issues,
-                "critical": critical,
-                "warning": warning,
-                "by_user_category": by_user_category,
-            },
-            {
-                "timestamp": max_time.isoformat(),
-                "label": max_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "total": total,
-                "has_issues": has_issues,
-                "critical": critical,
-                "warning": warning,
-                "by_user_category": by_user_category,
-            },
-        ]
 
 
 async def cleanup_old_client_records(

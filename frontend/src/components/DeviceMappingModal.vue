@@ -191,6 +191,8 @@
 </template>
 
 <script>
+import { getAuthHeaders } from '@/utils/auth'
+
 export default {
   name: 'DeviceMappingModal',
   props: {
@@ -246,7 +248,9 @@ export default {
     
     async loadDeviceMappings() {
       try {
-        const res = await fetch(`/api/v1/device-mappings/${this.maintenanceId}`);
+        const res = await fetch(`/api/v1/device-mappings/${this.maintenanceId}`, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           const data = await res.json();
           this.deviceMappings = data.mappings || [];
@@ -259,10 +263,10 @@ export default {
       try {
         const res = await fetch(`/api/v1/device-mappings/${this.maintenanceId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            ...this.newDevice, 
-            maintenance_id: this.maintenanceId 
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({
+            ...this.newDevice,
+            maintenance_id: this.maintenanceId
           }),
         });
         if (res.ok) {
@@ -294,7 +298,7 @@ export default {
       try {
         const res = await fetch(`/api/v1/device-mappings/${this.maintenanceId}/${this.editingDevice.id}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({
             old_hostname: this.editingDevice.old_hostname,
             new_hostname: this.editingDevice.new_hostname,
@@ -326,7 +330,7 @@ export default {
     
     async deleteDevice(m) {
       try {
-        const res = await fetch(`/api/v1/device-mappings/${this.maintenanceId}/${m.id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/v1/device-mappings/${this.maintenanceId}/${m.id}`, { method: 'DELETE', headers: getAuthHeaders() });
         if (res.ok) {
           await this.loadDeviceMappings();
           this.$emit('refresh');
@@ -339,7 +343,7 @@ export default {
       const confirmed = await this.showConfirm(`確定要清除所有 ${this.deviceMappings.length} 筆設備對應嗎？`);
       if (!confirmed) return;
       try {
-        await fetch(`/api/v1/device-mappings/${this.maintenanceId}`, { method: 'DELETE' });
+        await fetch(`/api/v1/device-mappings/${this.maintenanceId}`, { method: 'DELETE', headers: getAuthHeaders() });
         await this.loadDeviceMappings();
         this.$emit('refresh');
         this.showToast('success', '已清除全部');
@@ -365,7 +369,7 @@ SW-OLD-03,SW-NEW-03,Cisco-NXOS,false`;
       formData.append('file', file);
       try {
         const res = await fetch(`/api/v1/device-mappings/${this.maintenanceId}/import-csv`, {
-          method: 'POST', body: formData,
+          method: 'POST', body: formData, headers: getAuthHeaders()
         });
         const data = await res.json();
         if (res.ok) {

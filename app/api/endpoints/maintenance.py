@@ -14,6 +14,9 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_async_session
+from app.api.endpoints.auth import require_root, get_current_user, check_maintenance_access
+from app.core.enums import UserRole
+from typing import Annotated
 from sqlalchemy import text
 
 from app.db.models import (
@@ -47,6 +50,11 @@ from app.db.models import (
     # Maintenance Lists
     MaintenanceMacList,
     MaintenanceDeviceList,
+    # Contacts (通訊錄)
+    Contact,
+    ContactCategory,
+    # Meals (餐點)
+    MealZone,
 )
 
 
@@ -112,18 +120,38 @@ class MaintenanceConfigUpdate(BaseModel):
 
 @router.get("", response_model=list[MaintenanceResponse])
 async def list_maintenances(
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> list[dict]:
-    """取得所有歲修 ID 列表。"""
-    
-    stmt = select(MaintenanceConfig).order_by(MaintenanceConfig.created_at.desc())
+    """
+    取得歲修 ID 列表。
+
+    權限控制：
+    - ROOT: 可看到所有歲修
+    - PM/GUEST: 只能看到被指派的歲修
+    """
+    user_role = user.get("role")
+    user_maintenance_id = user.get("maintenance_id")
+
+    if user_role == UserRole.ROOT.value:
+        # ROOT 可以看到所有歲修
+        stmt = select(MaintenanceConfig).order_by(MaintenanceConfig.created_at.desc())
+    else:
+        # PM/GUEST 只能看到被指派的歲修
+        if not user_maintenance_id:
+            # 未被指派任何歲修，回傳空列表
+            return []
+        stmt = select(MaintenanceConfig).where(
+            MaintenanceConfig.maintenance_id == user_maintenance_id
+        )
+
     result = await session.execute(stmt)
     configs = result.scalars().all()
-    
+
     return [
         {
             "id": c.maintenance_id,
-            "name": c.config_data.get("name") if c.config_data else None,
+            "name": c.config_data.get("name") or None if c.config_data else None,
             "is_active": c.config_data.get("is_active", True) if c.config_data else True,
             "created_at": c.created_at,
         }
@@ -135,8 +163,9 @@ async def list_maintenances(
 async def create_maintenance(
     maintenance: MaintenanceCreate,
     session: AsyncSession = Depends(get_async_session),
+    _: None = Depends(require_root),
 ) -> dict:
-    """建立新的歲修 ID。"""
+    """建立新的歲修 ID。僅限 ROOT 使用者。"""
     
     # 檢查是否已存在
     stmt = select(MaintenanceConfig).where(
@@ -172,8 +201,9 @@ async def create_maintenance(
 async def delete_maintenance(
     maintenance_id: str,
     session: AsyncSession = Depends(get_async_session),
+    _: None = Depends(require_root),
 ) -> dict:
-    """刪除歲修 ID 及所有相關數據。"""
+    """刪除歲修 ID 及所有相關數據。僅限 ROOT 使用者。"""
     # 查找歲修配置
     stmt = select(MaintenanceConfig).where(
         MaintenanceConfig.maintenance_id == maintenance_id
@@ -334,11 +364,59 @@ async def delete_maintenance(
     )
     deleted_counts["indicator_results"] = result.rowcount
 
-    # === 7. 最後刪除歲修配置本身 ===
+    # === 7. 刪除通訊錄 (Contacts) ===
+    # 先刪除聯絡人（FK 依賴 contact_categories）
+    contact_cat_stmt = select(ContactCategory.id).where(
+        ContactCategory.maintenance_id == maintenance_id
+    )
+    contact_cat_result = await session.execute(contact_cat_stmt)
+    contact_category_ids = [row[0] for row in contact_cat_result.fetchall()]
+
+    if contact_category_ids:
+        result = await session.execute(
+            delete(Contact).where(
+                Contact.category_id.in_(contact_category_ids)
+            )
+        )
+        deleted_counts["contacts"] = result.rowcount
+    else:
+        deleted_counts["contacts"] = 0
+
+    result = await session.execute(
+        delete(ContactCategory).where(
+            ContactCategory.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["contact_categories"] = result.rowcount
+
+    # === 8. 刪除餐點狀態 (Meals) ===
+    result = await session.execute(
+        delete(MealZone).where(
+            MealZone.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["meal_zones"] = result.rowcount
+
+    # === 9. 刪除該歲修的非 ROOT 使用者 ===
+    # 每個歲修的使用者是一次性的，歲修結束後一併刪除
+    from app.db.models import User
+    result = await session.execute(
+        delete(User).where(
+            User.maintenance_id == maintenance_id,
+            User.role != UserRole.ROOT.value,
+        )
+    )
+    deleted_counts["users_deleted"] = result.rowcount
+
+    # === 10. 最後刪除歲修配置本身 ===
     await session.delete(config)
-    
+
     await session.commit()
-    
+
+    # === 11. 清除 MockTimeTracker 快取（避免重建歲修時用到舊的起始時間）===
+    from app.fetchers.convergence import MockTimeTracker
+    MockTimeTracker.clear_maintenance_cache(maintenance_id)
+
     return {
         "message": f"歲修 {maintenance_id} 及相關資料已刪除",
         "deleted_counts": deleted_counts,
@@ -380,17 +458,19 @@ async def create_checkpoint(
 @router.get("/checkpoints/{maintenance_id}", response_model=list[CheckpointResponse])
 async def get_checkpoints(
     maintenance_id: str,
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> list[dict]:
     """取得指定歲修的所有 checkpoints。"""
-    
+    check_maintenance_access(user, maintenance_id)
+
     stmt = select(Checkpoint).where(
         Checkpoint.maintenance_id == maintenance_id
     ).order_by(Checkpoint.checkpoint_time)
-    
+
     result = await session.execute(stmt)
     checkpoints = result.scalars().all()
-    
+
     return [cp.__dict__ for cp in checkpoints]
 
 
@@ -420,9 +500,11 @@ async def delete_checkpoint(
 @router.get("/{maintenance_id}/reference-clients", response_model=list[ReferenceClientResponse])
 async def get_reference_clients(
     maintenance_id: str,
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> list[dict]:
     """取得指定歲修的所有不斷電機台。"""
+    check_maintenance_access(user, maintenance_id)
 
     stmt = select(ReferenceClient).where(
         ReferenceClient.maintenance_id == maintenance_id,
@@ -449,9 +531,11 @@ async def get_reference_clients(
 async def create_reference_client(
     maintenance_id: str,
     client: ReferenceClientCreate,
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """新增不斷電機台到指定歲修。"""
+    check_maintenance_access(user, maintenance_id)
 
     # 檢查是否已存在相同 MAC
     existing_stmt = select(ReferenceClient).where(
@@ -492,9 +576,11 @@ async def create_reference_client(
 async def delete_reference_client(
     maintenance_id: str,
     client_id: int,
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """刪除指定歲修的不斷電機台。"""
+    check_maintenance_access(user, maintenance_id)
 
     stmt = select(ReferenceClient).where(
         ReferenceClient.maintenance_id == maintenance_id,
@@ -517,19 +603,21 @@ async def delete_reference_client(
 @router.get("/config/{maintenance_id}")
 async def get_maintenance_config(
     maintenance_id: str,
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """取得歲修配置（包含 anchor_time）。"""
-    
+    check_maintenance_access(user, maintenance_id)
+
     stmt = select(MaintenanceConfig).where(
         MaintenanceConfig.maintenance_id == maintenance_id
     )
     result = await session.execute(stmt)
     config = result.scalar_one_or_none()
-    
+
     if not config:
         return {"maintenance_id": maintenance_id, "anchor_time": None}
-    
+
     return config.__dict__
 
 
@@ -537,9 +625,11 @@ async def get_maintenance_config(
 async def update_maintenance_config(
     maintenance_id: str,
     config_update: MaintenanceConfigUpdate,
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """更新歲修配置。"""
+    check_maintenance_access(user, maintenance_id)
     
     stmt = select(MaintenanceConfig).where(
         MaintenanceConfig.maintenance_id == maintenance_id
@@ -559,8 +649,56 @@ async def update_maintenance_config(
     
     await session.commit()
     await session.refresh(config)
-    
+
     return config.__dict__
+
+
+@router.post("/{maintenance_id}/reset-convergence")
+async def reset_convergence_timer(
+    maintenance_id: str,
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    session: AsyncSession = Depends(get_async_session),
+) -> dict:
+    """
+    重置歲修的收斂計時器。
+
+    將 created_at 設為現在時間，並清除 MockTimeTracker 快取。
+    用於測試收斂過程。
+    """
+    from datetime import datetime, timezone
+    from app.fetchers.convergence import MockTimeTracker
+
+    check_maintenance_access(user, maintenance_id)
+
+    # 更新資料庫中的 created_at
+    now_utc = datetime.now(timezone.utc)
+    stmt = select(MaintenanceConfig).where(
+        MaintenanceConfig.maintenance_id == maintenance_id
+    )
+    result = await session.execute(stmt)
+    config = result.scalar_one_or_none()
+
+    if not config:
+        raise HTTPException(status_code=404, detail="找不到歲修配置")
+
+    config.created_at = now_utc
+    await session.commit()
+
+    # 清除 MockTimeTracker 快取
+    MockTimeTracker.clear_maintenance_cache(maintenance_id)
+
+    return {
+        "success": True,
+        "message": "收斂計時器已重置",
+        "maintenance_id": maintenance_id,
+        "new_created_at": now_utc.isoformat(),
+        "converge_schedule": {
+            "switch_point_seconds": 150,
+            "full_converge_seconds": 300,
+            "switch_point_description": "2.5 分鐘後 NEW 設備開始可達",
+            "full_converge_description": "5 分鐘後完全收斂",
+        }
+    }
 
 
 # ===== Helper Functions =====

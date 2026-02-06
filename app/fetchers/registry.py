@@ -78,7 +78,7 @@ def setup_fetchers(use_mock: bool) -> None:
         from app.fetchers.convergence import MockTimeTracker
         from app.fetchers.mock import register_mock_fetchers
 
-        MockTimeTracker.reset()  # 重置計時器，開始收斂
+        MockTimeTracker.reset()  # 重置計時器，收斂時間來自 settings
         register_mock_fetchers()
         logger.info(
             "Registered %d mock fetchers: %s",

@@ -20,6 +20,8 @@ import io
 from app.db.base import get_async_session
 from app.db.models import MaintenanceDeviceList, DEVICE_VENDOR_OPTIONS
 from app.core.enums import TenantGroup
+from app.api.endpoints.auth import require_write
+from typing import Annotated, Any
 import ipaddress
 
 
@@ -375,9 +377,10 @@ async def get_stats(
 async def create_device(
     maintenance_id: str,
     data: DeviceCreate,
+    _: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
-    """新增設備對應。"""
+    """新增設備對應。需要 device:write 權限。"""
     old_hostname = data.old_hostname.strip()
     old_ip_address = data.old_ip_address.strip()
     new_hostname = data.new_hostname.strip()
@@ -441,9 +444,10 @@ async def update_device(
     maintenance_id: str,
     device_id: int,
     data: DeviceUpdate,
+    _: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
-    """更新設備對應。"""
+    """更新設備對應。需要 device:write 權限。"""
     stmt = select(MaintenanceDeviceList).where(
         MaintenanceDeviceList.id == device_id,
         MaintenanceDeviceList.maintenance_id == maintenance_id,
@@ -556,9 +560,10 @@ async def update_device(
 async def delete_device(
     maintenance_id: str,
     device_id: int,
+    _: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
-    """刪除設備對應。"""
+    """刪除設備對應。需要 device:write 權限。"""
     stmt = select(MaintenanceDeviceList).where(
         MaintenanceDeviceList.id == device_id,
         MaintenanceDeviceList.maintenance_id == maintenance_id,
@@ -581,6 +586,7 @@ async def delete_device(
 @router.post("/{maintenance_id}/import-csv")
 async def import_csv(
     maintenance_id: str,
+    _: Annotated[dict[str, Any], Depends(require_write())],
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
@@ -825,9 +831,10 @@ async def import_csv(
 @router.delete("/{maintenance_id}")
 async def clear_all(
     maintenance_id: str,
+    _: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
-    """清除該歲修的所有設備對應。"""
+    """清除該歲修的所有設備對應。需要 device:write 權限。"""
     stmt = delete(MaintenanceDeviceList).where(
         MaintenanceDeviceList.maintenance_id == maintenance_id
     )
@@ -845,6 +852,7 @@ async def clear_all(
 async def batch_delete_devices(
     maintenance_id: str,
     device_ids: list[int],
+    _: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """

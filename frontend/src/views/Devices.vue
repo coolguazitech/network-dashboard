@@ -30,17 +30,17 @@
         <div class="flex justify-between items-center">
           <h3 class="text-white font-semibold">Client 清單</h3>
           <div class="flex gap-2">
-            <button @click="showCategoryModal = true" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="showCategoryModal = true" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-sm rounded transition">
               🏷️ 管理分類
             </button>
             <button @click="downloadMacTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
               📄 下載範本
             </button>
-            <label class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importMacList" />
             </label>
-            <button @click="showAddMacModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="showAddMacModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
               ➕ 新增 Client
             </button>
           </div>
@@ -119,7 +119,7 @@
               <button @click="openBatchCategory" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-sm rounded transition">
                 📁 批量分類
               </button>
-              <button @click="batchDeleteMacs" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
+              <button v-if="userCanWrite" @click="batchDeleteMacs" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
                 🗑️ 批量刪除
               </button>
               <button @click="clearSelection" class="px-2 py-1.5 text-slate-400 hover:text-white text-sm">
@@ -167,9 +167,9 @@
                   </td>
                   <td class="px-3 py-2 text-slate-400 text-xs">{{ mac.description || '-' }}</td>
                   <td class="px-3 py-2 text-xs whitespace-nowrap">
-                    <button @click="editClient(mac)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
-                    <button @click="openSetCategory(mac)" class="text-slate-400 hover:text-slate-300 mr-2">分類</button>
-                    <button @click="deleteMac(mac)" class="text-red-400 hover:text-red-300">刪除</button>
+                    <button v-if="userCanWrite" @click="editClient(mac)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
+                    <button v-if="userCanWrite" @click="openSetCategory(mac)" class="text-slate-400 hover:text-slate-300 mr-2">分類</button>
+                    <button v-if="userCanWrite" @click="deleteMac(mac)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
                 </tr>
                 <tr v-if="macList.length === 0">
@@ -196,11 +196,11 @@
             <button @click="downloadDeviceTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
               📄 下載範本
             </button>
-            <label class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importDeviceList" />
             </label>
-            <button @click="showAddDeviceModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="showAddDeviceModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
               ➕ 新增設備
             </button>
           </div>
@@ -263,7 +263,7 @@
           <!-- 批量操作 -->
           <div v-if="selectedDevices.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
             <span class="text-sm text-cyan-300">已選 {{ selectedDevices.length }} 筆</span>
-            <button @click="batchDeleteDevices" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="batchDeleteDevices" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
               🗑️ 批量刪除
             </button>
             <button @click="clearDeviceSelection" class="px-2 py-1 text-slate-400 hover:text-white text-sm">
@@ -336,8 +336,8 @@
                     {{ device.description || '-' }}
                   </td>
                   <td class="px-2 py-2 text-xs whitespace-nowrap">
-                    <button @click="editDeviceItem(device)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
-                    <button @click="deleteDeviceItem(device)" class="text-red-400 hover:text-red-300">刪除</button>
+                    <button v-if="userCanWrite" @click="editDeviceItem(device)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
+                    <button v-if="userCanWrite" @click="deleteDeviceItem(device)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
                 </tr>
                 <tr v-if="deviceList.length === 0">
@@ -364,7 +364,7 @@
             <button @click="downloadArpTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
               📄 下載範本
             </button>
-            <label class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importArpList" />
             </label>
@@ -400,7 +400,7 @@
           <!-- 批量操作 -->
           <div v-if="selectedArps.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
             <span class="text-sm text-cyan-300">已選 {{ selectedArps.length }} 筆</span>
-            <button @click="batchDeleteArps" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="batchDeleteArps" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
               🗑️ 批量刪除
             </button>
             <button @click="clearArpSelection" class="px-2 py-1 text-slate-400 hover:text-white text-sm">
@@ -430,8 +430,8 @@
                   <td class="px-3 py-2 text-slate-300 text-xs">{{ arp.priority }}</td>
                   <td class="px-3 py-2 text-slate-400 text-xs">{{ arp.description || '-' }}</td>
                   <td class="px-3 py-2 text-xs whitespace-nowrap">
-                    <button @click="editArp(arp)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
-                    <button @click="deleteArpSource(arp)" class="text-red-400 hover:text-red-300">刪除</button>
+                    <button v-if="userCanWrite" @click="editArp(arp)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
+                    <button v-if="userCanWrite" @click="deleteArpSource(arp)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
                 </tr>
                 <tr v-if="arpSources.length === 0">
@@ -817,6 +817,7 @@
 <script>
 import CategoryModal from '../components/CategoryModal.vue';
 import { apiFetch, formatErrorMessage, ErrorType } from '../utils/api.js';
+import { canWrite, getAuthHeaders } from '../utils/auth.js';
 
 export default {
   name: 'Devices',
@@ -930,6 +931,9 @@ export default {
   computed: {
     selectedMaintenanceId() {
       return this.maintenanceId;
+    },
+    userCanWrite() {
+      return canWrite.value;
     },
     canAddDevice() {
       return this.newDevice.old_hostname && this.newDevice.old_ip_address && this.newDevice.old_vendor
@@ -1047,7 +1051,9 @@ export default {
         let url = `/api/v1/mac-list/${this.selectedMaintenanceId}/detailed`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           this.macList = await res.json();
         }
@@ -1069,7 +1075,9 @@ export default {
       if (!this.selectedMaintenanceId) return;
 
       try {
-        const res = await fetch(`/api/v1/categories?maintenance_id=${this.selectedMaintenanceId}`);
+        const res = await fetch(`/api/v1/categories?maintenance_id=${this.selectedMaintenanceId}`, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           this.categories = await res.json();
         }
@@ -1084,7 +1092,9 @@ export default {
       this.selectedCategoryIds = [];
       for (const cat of this.categories) {
         try {
-          const res = await fetch(`/api/v1/categories/${cat.id}/members`);
+          const res = await fetch(`/api/v1/categories/${cat.id}/members`, {
+            headers: getAuthHeaders()
+          });
           if (res.ok) {
             const members = await res.json();
             if (members.some(m => m.mac_address === mac.mac_address)) {
@@ -1109,7 +1119,9 @@ export default {
         const currentCategoryIds = new Set();
         for (const cat of this.categories) {
           try {
-            const res = await fetch(`/api/v1/categories/${cat.id}/members`);
+            const res = await fetch(`/api/v1/categories/${cat.id}/members`, {
+              headers: getAuthHeaders()
+            });
             if (res.ok) {
               const members = await res.json();
               if (members.some(m => m.mac_address === mac)) {
@@ -1126,6 +1138,7 @@ export default {
           if (!newCategoryIds.has(catId)) {
             await fetch(`/api/v1/categories/${catId}/members/${encodeURIComponent(mac)}`, {
               method: 'DELETE',
+              headers: getAuthHeaders()
             });
           }
         }
@@ -1135,7 +1148,7 @@ export default {
           if (!currentCategoryIds.has(catId)) {
             await fetch(`/api/v1/categories/${catId}/members`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
               body: JSON.stringify({ mac_address: mac }),
             });
           }
@@ -1155,7 +1168,9 @@ export default {
       if (!this.selectedMaintenanceId) return;
 
       try {
-        const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/stats`);
+        const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/stats`, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           this.macListStats = await res.json();
         }
@@ -1247,6 +1262,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
         const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/import-csv`, {
           method: 'POST',
           body: formData,
+          headers: getAuthHeaders()
         });
         const data = await res.json();
 
@@ -1282,6 +1298,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
       try {
         const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/${encodeURIComponent(mac.mac_address)}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
         if (res.ok) {
           await this.loadMacList();
@@ -1351,7 +1368,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
           // 編輯模式：使用 PUT 請求（不處理分類）
           res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/${this.editingClientId}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify({
               ip_address: ip,
               tenant_group: tenantGroup,
@@ -1363,7 +1380,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
           // 新增模式：使用 POST 請求
           res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify({
               mac_address: mac,
               ip_address: ip,
@@ -1377,7 +1394,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
             for (const catId of categoryIds) {
               await fetch(`/api/v1/categories/${catId}/members`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                 body: JSON.stringify({ mac_address: mac }),
               });
             }
@@ -1432,7 +1449,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
       try {
         const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(this.selectedMacs),
         });
 
@@ -1486,6 +1503,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
             try {
               await fetch(`/api/v1/categories/${cat.id}/members/${encodeURIComponent(mac)}`, {
                 method: 'DELETE',
+                headers: getAuthHeaders()
               });
             } catch {
               // 忽略刪除失敗（可能本來就不在該分類）
@@ -1496,7 +1514,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
           for (const catId of newCategoryIds) {
             await fetch(`/api/v1/categories/${catId}/members`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
               body: JSON.stringify({ mac_address: mac }),
             });
           }
@@ -1595,7 +1613,9 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
         let url = `/api/v1/maintenance-devices/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           const data = await res.json();
           this.deviceList = data.devices || [];
@@ -1618,7 +1638,9 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
       if (!this.selectedMaintenanceId) return;
 
       try {
-        const res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/stats`);
+        const res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/stats`, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           this.deviceStats = await res.json();
         }
@@ -1668,6 +1690,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,�
         const res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/import-csv`, {
           method: 'POST',
           body: formData,
+          headers: getAuthHeaders()
         });
         const data = await res.json();
 
@@ -1785,6 +1808,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,�
       try {
         const res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/${device.id}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
         if (res.ok) {
           await this.loadDeviceList();
@@ -1804,7 +1828,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,�
       try {
         const res = await fetch(
           `/api/v1/maintenance-devices/${this.selectedMaintenanceId}/batch-test-reachability`,
-          { method: 'POST' }
+          { method: 'POST', headers: getAuthHeaders() }
         );
 
         if (res.ok) {
@@ -1819,22 +1843,31 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,�
       }
     },
 
-    // 啟動可達性自動測試（每 10 秒）
+    // 啟動可達性資料輪詢（每 10 秒讀取後端統計，由 scheduler 採集資料）
     startReachabilityPolling() {
       // 已經在執行中就跳過
       if (this.reachabilityInterval) return;
       // 沒有設備就跳過
       if (this.deviceList.length === 0) return;
 
-      // 立即執行一次
-      this.batchTestReachability();
+      // 立即執行一次（只讀取，不觸發採集）
+      this.refreshDeviceData();
 
-      // 每 10 秒執行一次
+      // 每 10 秒刷新一次（只讀取，由 scheduler 採集）
       this.reachabilityInterval = setInterval(() => {
-        if (!this.batchTestingReachability) {
-          this.batchTestReachability();
-        }
+        this.refreshDeviceData();
       }, 10000);
+    },
+
+    // 刷新設備資料（只讀取，不觸發採集）
+    async refreshDeviceData() {
+      if (!this.selectedMaintenanceId || this.deviceList.length === 0) return;
+      try {
+        await this.loadDeviceList();
+        await this.loadDeviceStats();
+      } catch (e) {
+        console.error('刷新設備資料失敗:', e);
+      }
     },
 
     // 停止可達性自動測試
@@ -1870,7 +1903,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,�
       try {
         const res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(this.selectedDevices),
         });
 
@@ -1987,7 +2020,9 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,�
         let url = `/api/v1/expectations/arp/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          headers: getAuthHeaders()
+        });
         if (res.ok) {
           const data = await res.json();
           this.arpSources = data.items || [];
@@ -2030,6 +2065,7 @@ DISTRO-SW-01,100,分發層交換機`;
         const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/import-csv`, {
           method: 'POST',
           body: formData,
+          headers: getAuthHeaders()
         });
         const data = await res.json();
 
@@ -2085,13 +2121,13 @@ DISTRO-SW-01,100,分發層交換機`;
         if (this.editingArp && this.newArp.id) {
           res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/${this.newArp.id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(payload),
           });
         } else {
           res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(payload),
           });
         }
@@ -2118,6 +2154,7 @@ DISTRO-SW-01,100,分發層交換機`;
       try {
         const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/${arp.id}`, {
           method: 'DELETE',
+          headers: getAuthHeaders()
         });
         if (res.ok) {
           await this.loadArpList();
@@ -2154,7 +2191,7 @@ DISTRO-SW-01,100,分發層交換機`;
       try {
         const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(this.selectedArps),
         });
 

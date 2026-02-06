@@ -5,7 +5,6 @@ from .enums import (
     VendorType,
     PlatformType,
     MetricType,
-    CollectionStatus,
     MaintenancePhase,
 )
 from .config import settings
@@ -16,7 +15,6 @@ __all__ = [
     "VendorType",
     "PlatformType",
     "MetricType",
-    "CollectionStatus",
     "MaintenancePhase",
     "settings",
 ]

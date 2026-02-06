@@ -20,7 +20,10 @@ from sqlalchemy import (
 from app.core.enums import (
     ClientDetectionStatus,
     MaintenancePhase,
+    MealDeliveryStatus,
+    Permission,
     TenantGroup,
+    UserRole,
 )
 from app.db.base import Base
 
@@ -883,3 +886,248 @@ class SeverityOverride(Base):
 
     def __repr__(self) -> str:
         return f"<SeverityOverride {self.mac_address}: {self.override_severity}>"
+
+
+# ══════════════════════════════════════════════════════════════════
+# 通訊錄模型
+# ══════════════════════════════════════════════════════════════════
+
+
+class ContactCategory(Base):
+    """
+    通訊錄分類。
+
+    每個歲修有自己獨立的通訊錄分類體系。
+    用於將聯絡人組織成不同群組（如：網路組、機電組、廠務等）。
+    """
+
+    __tablename__ = "contact_categories"
+    __table_args__ = (
+        UniqueConstraint(
+            "maintenance_id", "name",
+            name="uk_contact_category_name"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(
+        String(100), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    color: Mapped[str | None] = mapped_column(
+        String(20), default="#3B82F6"
+    )  # 前端顯示顏色
+    icon: Mapped[str | None] = mapped_column(
+        String(10), nullable=True
+    )  # emoji 圖示
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    contacts: Mapped[list["Contact"]] = relationship(
+        "Contact",
+        back_populates="category",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<ContactCategory {self.name}>"
+
+
+class Contact(Base):
+    """
+    通訊錄聯絡人。
+
+    每個聯絡人屬於一個分類，每個歲修有自己的通訊錄。
+    """
+
+    __tablename__ = "contacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(
+        String(100), index=True, nullable=False
+    )
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contact_categories.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+
+    # 基本資訊
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    title: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )  # 職稱
+    department: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )  # 部門
+    company: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )  # 公司
+
+    # 聯絡方式
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    mobile: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    extension: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )  # 分機
+
+    # 額外資訊
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    category: Mapped["ContactCategory"] = relationship(
+        "ContactCategory",
+        back_populates="contacts",
+    )
+
+    def __repr__(self) -> str:
+        return f"<Contact {self.name}>"
+
+
+# ══════════════════════════════════════════════════════════════════
+# 餐點到達通知模型
+# ══════════════════════════════════════════════════════════════════
+
+
+class MealZone(Base):
+    """
+    餐點配送區域。
+
+    記錄每個區域的餐點狀態，以歲修 ID 區分。
+    三個區域：竹科 (HSP)、中科 (CSP)、南科 (SSP)
+    """
+
+    __tablename__ = "meal_zones"
+    __table_args__ = (
+        UniqueConstraint(
+            "maintenance_id", "zone_code",
+            name="uk_meal_zone"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(
+        String(100), index=True, nullable=False
+    )
+
+    zone_code: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # HSP, CSP, SSP
+    zone_name: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # 竹科, 中科, 南科
+
+    # 狀態
+    status = Column(
+        Enum(MealDeliveryStatus),
+        default=MealDeliveryStatus.NO_MEAL,
+        nullable=False,
+    )
+
+    # 預計到達時間
+    expected_time: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
+    # 實際到達時間
+    arrived_time: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
+    # 餐點數量
+    meal_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # 備註
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # 更新者
+    updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<MealZone {self.zone_name} ({self.status.value})>"
+
+
+# ══════════════════════════════════════════════════════════════════
+# 使用者認證授權模型
+# ══════════════════════════════════════════════════════════════════
+
+
+class User(Base):
+    """
+    系統使用者。
+
+    角色說明：
+    - ROOT: 超級管理員，可管理歲修和使用者
+    - PM: 專案經理，有歲修內的所有寫入權限
+    - GUEST: 訪客，只有讀取權限
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(
+        String(100), unique=True, index=True, nullable=False
+    )
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    # 使用者角色
+    role = Column(
+        Enum(UserRole),
+        default=UserRole.GUEST,
+        nullable=False,
+    )
+
+    # 所屬歲修 ID（ROOT 不需要，PM/GUEST 必填）
+    maintenance_id: Mapped[str | None] = mapped_column(
+        String(100), index=True, nullable=True
+    )
+
+    # 帳號狀態（Guest 需等待啟用）
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # 最後登入時間
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    @property
+    def is_root(self) -> bool:
+        """向後相容：檢查是否為 ROOT 角色。"""
+        return self.role == UserRole.ROOT
+
+    def __repr__(self) -> str:
+        return f"<User {self.username} ({self.role.value})>"
+
+

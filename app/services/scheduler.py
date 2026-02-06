@@ -249,20 +249,29 @@ class SchedulerService:
                         )
 
             else:
-                # 一般指標採集（從 switches 表採集，與特定歲修無關）
+                # 一般指標採集（對每個歲修執行）
                 svc = self.collection_service
-                result = await svc.collect_indicator_data(
-                    collection_type=job_name,
-                    url=url,
-                    source=source,
-                    brand=brand,
-                )
-                logger.info(
-                    "Collection complete for '%s': %d/%d successful",
-                    job_name,
-                    result["success"],
-                    result["total"],
-                )
+                for mid in maintenance_ids:
+                    try:
+                        result = await svc.collect_indicator_data(
+                            collection_type=job_name,
+                            maintenance_id=mid,
+                            url=url,
+                            source=source,
+                            brand=brand,
+                        )
+                        logger.info(
+                            "%s collection for %s: %d/%d successful",
+                            job_name,
+                            mid,
+                            result["success"],
+                            result["total"],
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "%s collection failed for %s: %s",
+                            job_name, mid, e,
+                        )
 
         except Exception as e:
             logger.error(
@@ -277,18 +286,48 @@ class SchedulerService:
         """
         Run mock client data generation for a specific maintenance.
 
-        Generates random ClientRecord data based on latest records or MAC list.
+        模擬真實情境：
+        - 系統不知道現在是哪個「階段」
+        - 系統查詢所有可達的 ARP 來源來找 MAC
+        - MAC 物理位置由收斂時間決定（模擬設備切換）
 
-        注意：必須先設定 ArpSource 才會生成資料，
-        這與真實資料採集邏輯一致。
+        收斂邏輯模擬：
+        - 收斂前 (t < T/2)：MAC 物理上在 OLD 設備
+        - 收斂後 (t >= T/2)：MAC 物理上在 NEW 設備
+        - 無論哪個階段，只要 MAC 所在的設備可達，就能採集到
+
+        記錄的 phase 永遠是 NEW（因為我們是在做 NEW 環境的驗收）。
+
+        注意：必須先設定 ArpSource 才會生成資料。
         """
         from sqlalchemy import select, func
 
         from app.db.base import get_session_context
         from app.db.models import ClientRecord, ArpSource
         from app.core.enums import MaintenancePhase
+        from app.fetchers.convergence import MockTimeTracker
+        from app.core.config import settings
 
         generator = get_mock_data_generator()
+        tracker = MockTimeTracker()
+
+        # 判斷 MAC 目前物理上在哪裡（收斂前在 OLD，收斂後在 NEW）
+        elapsed = tracker.get_elapsed_seconds(maintenance_id)
+        converge_time = settings.mock_ping_converge_time
+        switch_time = converge_time / 2
+        has_converged = elapsed >= switch_time
+
+        # MAC 物理位置的 phase（用於模擬 MAC 在 OLD 還是 NEW 設備上）
+        mac_physical_phase = MaintenancePhase.NEW if has_converged else MaintenancePhase.OLD
+
+        # 記錄的 phase 永遠是 NEW（驗收記錄）
+        record_phase = MaintenancePhase.NEW
+
+        logger.debug(
+            "Mock client generation for %s: elapsed=%.1fs, converged=%s, "
+            "MAC physical location=%s",
+            maintenance_id, elapsed, has_converged, mac_physical_phase.value,
+        )
 
         async with get_session_context() as session:
             from app.db.models import MaintenanceMacList
@@ -309,28 +348,52 @@ class SchedulerService:
                 )
                 return
 
-            # 取得最新的 NEW 階段記錄作為基準
+            # 取得最新的 NEW 階段記錄作為基準（驗收記錄都是 NEW）
             subquery = (
                 select(func.max(ClientRecord.collected_at))
                 .where(
                     ClientRecord.maintenance_id == maintenance_id,
-                    ClientRecord.phase == MaintenancePhase.NEW,
+                    ClientRecord.phase == record_phase,
                 )
                 .scalar_subquery()
             )
 
             stmt = select(ClientRecord).where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.NEW,
+                ClientRecord.phase == record_phase,
                 ClientRecord.collected_at == subquery,
             )
             result = await session.execute(stmt)
             latest_records = list(result.scalars().all())
 
-            # 生成變化版本的記錄
-            new_records = await generator.generate_client_records(
+            # 獲取設備對應清單
+            device_mapping = await generator._get_device_mapping(
+                maintenance_id, session
+            )
+
+            # 獲取所有可達設備（包含 OLD 和 NEW，模擬查詢所有 ARP 來源）
+            old_reachable = generator._get_reachable_devices(
+                device_mapping, MaintenancePhase.OLD
+            )
+            new_reachable = generator._get_reachable_devices(
+                device_mapping, MaintenancePhase.NEW
+            )
+            all_reachable = old_reachable | new_reachable
+
+            logger.debug(
+                "Reachable devices for %s: OLD=%d, NEW=%d, total=%d",
+                maintenance_id, len(old_reachable), len(new_reachable), len(all_reachable),
+            )
+
+            # 生成記錄
+            # - mac_physical_phase 決定 MAC 物理上在 OLD 還是 NEW 設備
+            # - all_reachable 決定哪些設備可以被查詢到
+            # - record_phase (NEW) 是記錄的階段標記
+            new_records = await generator.generate_client_records_realistic(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.NEW,
+                mac_physical_phase=mac_physical_phase,
+                record_phase=record_phase,
+                reachable_devices=all_reachable,
                 session=session,
                 base_records=latest_records if latest_records else None,
             )
@@ -346,23 +409,20 @@ class SchedulerService:
                 mac_list_result = await session.execute(mac_list_stmt)
                 mac_list = mac_list_result.scalars().all()
 
-                # 獲取有效的交換機 hostname 列表
-                valid_hostnames = await generator._get_valid_switch_hostnames(
-                    maintenance_id, MaintenancePhase.NEW, session
-                )
-
                 # 為新加入的 MAC 創建記錄
                 from datetime import datetime, timezone
                 now = datetime.now(timezone.utc)
                 for mac_entry in mac_list:
                     mac_upper = mac_entry.mac_address.upper() if mac_entry.mac_address else ""
                     if mac_upper and mac_upper not in existing_macs:
-                        new_record = generator._create_new_record(
-                            mac_entry, maintenance_id, MaintenancePhase.NEW, now,
-                            valid_hostnames,
+                        new_record = generator._create_new_record_realistic(
+                            mac_entry, maintenance_id,
+                            mac_physical_phase, record_phase,
+                            now, device_mapping, all_reachable,
                         )
-                        new_records.append(new_record)
-                        logger.info("Added new MAC to mock data: %s", mac_upper)
+                        if new_record:  # None 表示 MAC「消失」或設備不可達
+                            new_records.append(new_record)
+                            logger.info("Added new MAC to mock data: %s", mac_upper)
 
             # 儲存 ClientRecord 到資料庫
             for record in new_records:

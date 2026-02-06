@@ -44,7 +44,8 @@ class Settings(BaseSettings):
         default=False,
         description=(
             "Use in-memory MockApiClient (no external server needed). "
-            "When False, uses ExternalApiClient pointing at EXTERNAL_API_SERVER."
+            "When False, uses ExternalApiClient pointing at "
+            "EXTERNAL_API_SERVER."
         ),
     )
     mock_ping_converge_time: int = Field(
@@ -54,6 +55,38 @@ class Settings(BaseSettings):
             "Devices become reachable within this time window. "
             "Default is 600 (10 minutes). Set to 0 for instant reachability."
         ),
+    )
+
+    # Scheduling
+    collection_interval_seconds: int = Field(
+        default=30,
+        description="Data collection interval in seconds.",
+    )
+    checkpoint_interval_minutes: int = Field(
+        default=60,
+        description="Checkpoint snapshot interval in minutes.",
+    )
+    frontend_polling_interval_seconds: int = Field(
+        default=60,
+        description="Frontend polling interval in seconds.",
+    )
+    data_retention_days: int = Field(
+        default=7,
+        description="Data retention period in days for automatic cleanup.",
+    )
+    max_history_days: int = Field(
+        default=7,
+        description="Maximum history days for checkpoints and comparisons.",
+    )
+
+    # JWT / Auth
+    jwt_secret: str = Field(
+        default="CHANGE-THIS-IN-PRODUCTION",
+        description="JWT signing secret key (use strong random string in production)",
+    )
+    jwt_expire_hours: int = Field(
+        default=24,
+        description="JWT token expiration time in hours",
     )
 
     # Application

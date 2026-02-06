@@ -32,20 +32,25 @@ def _is_old_device(hostname: str) -> bool:
     """
     判斷是否為舊設備。
 
-    支援的命名模式：
-    - 包含 'old'（如 SW-OLD-01, swold01）
-    - 以 'old' 結尾（如 sw01old）
-    - 以 '-o' 或 '_o' 結尾（如 SW-01-O, SW_01_O）
-    - 以 'o' 結尾且不是以 'new' 結尾（如 SWO, sw01o）
+    嚴格的命名模式（避免誤判）：
+    - 包含 '-OLD-' 或 '_OLD_'（如 SW-OLD-01）
+    - 以 '-OLD' 或 '_OLD' 結尾（如 SW01-OLD）
+    - 以 '-O' 或 '_O' 結尾（如 SW-01-O, SW_01_O）
+
+    不匹配的例子：
+    - 'OHIO'（雖然以 O 結尾，但沒有分隔符）
+    - 'PRODUCTION-GOLDEN'（包含 OLD 但不是獨立詞）
     """
-    h = hostname.lower()
-    if "old" in h:
+    h = hostname.upper()
+    # 檢查 OLD 作為獨立詞（前後有分隔符或邊界）
+    if "-OLD-" in h or "_OLD_" in h:
         return True
-    # 檢查以 -o, _o, 或單獨 o 結尾
-    if h.endswith(("-o", "_o")):
+    if h.endswith("-OLD") or h.endswith("_OLD"):
         return True
-    # 以 o 結尾但不是 new 結尾（避免誤判）
-    if h.endswith("o") and not h.endswith("new"):
+    if h.startswith("OLD-") or h.startswith("OLD_"):
+        return True
+    # 檢查以 -O 或 _O 結尾（單字母縮寫）
+    if h.endswith("-O") or h.endswith("_O"):
         return True
     return False
 
@@ -54,20 +59,25 @@ def _is_new_device(hostname: str) -> bool:
     """
     判斷是否為新設備。
 
-    支援的命名模式：
-    - 包含 'new'（如 SW-NEW-01, swnew01）
-    - 以 'new' 結尾（如 sw01new）
-    - 以 '-n' 或 '_n' 結尾（如 SW-01-N, SW_01_N）
-    - 以 'n' 結尾且不是以 'old' 結尾（如 SWN, sw01n）
+    嚴格的命名模式（避免誤判）：
+    - 包含 '-NEW-' 或 '_NEW_'（如 SW-NEW-01）
+    - 以 '-NEW' 或 '_NEW' 結尾（如 SW01-NEW）
+    - 以 '-N' 或 '_N' 結尾（如 SW-01-N, SW_01_N）
+
+    不匹配的例子：
+    - 'PRODUCTION'（雖然以 N 結尾，但沒有分隔符）
+    - 'RENEW-SERVER'（包含 NEW 但不是獨立詞）
     """
-    h = hostname.lower()
-    if "new" in h:
+    h = hostname.upper()
+    # 檢查 NEW 作為獨立詞（前後有分隔符或邊界）
+    if "-NEW-" in h or "_NEW_" in h:
         return True
-    # 檢查以 -n, _n, 或單獨 n 結尾
-    if h.endswith(("-n", "_n")):
+    if h.endswith("-NEW") or h.endswith("_NEW"):
         return True
-    # 以 n 結尾但不是 old 結尾（避免誤判）
-    if h.endswith("n") and not h.endswith("old"):
+    if h.startswith("NEW-") or h.startswith("NEW_"):
+        return True
+    # 檢查以 -N 或 _N 結尾（單字母縮寫）
+    if h.endswith("-N") or h.endswith("_N"):
         return True
     return False
 
@@ -76,21 +86,19 @@ def _get_device_success_rate(
     hostname: str,
     elapsed: float,
     converge_time: float,
-    base_flaky_rate: float = 0.02,
 ) -> float:
     """
     計算設備的成功率（基於時間收斂 + 新舊設備差異）。
 
-    歲修模擬邏輯：
-    - 舊設備 (OLD): 成功率從 ~100% 下降到 ~0%
-    - 新設備 (NEW): 成功率從 ~0% 上升到 ~100%
-    - 其他設備: 維持穩定的高成功率
+    歲修模擬邏輯（確定性，無隨機）：
+    - 舊設備 (OLD): 成功率從 100% 下降到 0%
+    - 新設備 (NEW): 成功率從 0% 上升到 100%
+    - 其他設備: 維持 100% 成功率
 
     Args:
         hostname: 設備名稱
         elapsed: 經過時間（秒）
         converge_time: 收斂時間（秒），完整切換在 2T 完成
-        base_flaky_rate: 基礎不穩定率（即使成功也有此機率失敗）
 
     Returns:
         float: 成功率 (0.0 ~ 1.0)
@@ -98,11 +106,11 @@ def _get_device_success_rate(
     if converge_time <= 0:
         # 立即收斂：OLD 失敗，NEW 成功
         if _is_old_device(hostname):
-            return base_flaky_rate
+            return 0.0
         elif _is_new_device(hostname):
-            return 1.0 - base_flaky_rate
+            return 1.0
         else:
-            return 1.0 - base_flaky_rate
+            return 1.0
 
     # 計算收斂進度：0.0（開始）到 1.0（完成）
     # 使用 S 曲線（sigmoid）讓轉換更平滑
@@ -118,13 +126,8 @@ def _get_device_success_rate(
         # 新設備：成功率從低到高
         success_rate = progress
     else:
-        # 其他設備：維持穩定
-        success_rate = 1.0 - base_flaky_rate
-        return success_rate
-
-    # 加入隨機抖動
-    if random.random() < base_flaky_rate:
-        success_rate = max(0.0, success_rate - 0.1)
+        # 其他設備：維持穩定 100%
+        return 1.0
 
     return max(0.0, min(1.0, success_rate))
 
@@ -133,24 +136,46 @@ def _should_device_fail(
     hostname: str,
     elapsed: float,
     converge_time: float,
-    base_flaky_rate: float = 0.02,
 ) -> bool:
     """
     判斷設備是否應該失敗（基於時間收斂 + 新舊設備差異）。
+
+    收斂邏輯（與 MockArpTableFetcher 一致）：
+    - 收斂切換點 = converge_time / 2
+    - 舊設備 (OLD): 切換點前可達，之後不可達
+    - 新設備 (NEW): 切換點前不可達，之後可達
+    - 其他設備: 始終可達
 
     Args:
         hostname: 設備名稱
         elapsed: 經過時間（秒）
         converge_time: 收斂時間（秒）
-        base_flaky_rate: 基礎不穩定率
 
     Returns:
         bool: True 表示應該失敗
     """
-    success_rate = _get_device_success_rate(
-        hostname, elapsed, converge_time, base_flaky_rate
-    )
-    return random.random() > success_rate
+    if converge_time <= 0:
+        # 立即收斂：OLD 失敗，NEW 成功
+        if _is_old_device(hostname):
+            return True
+        elif _is_new_device(hostname):
+            return False
+        else:
+            return False
+
+    # 計算收斂狀態（統一邏輯：收斂時間點 = converge_time / 2）
+    switch_time = converge_time / 2
+    has_converged = elapsed >= switch_time
+
+    if _is_old_device(hostname):
+        # 舊設備：收斂前可達，收斂後失敗
+        return has_converged
+    elif _is_new_device(hostname):
+        # 新設備：收斂前失敗，收斂後可達
+        return not has_converged
+    else:
+        # 其他設備：始終可達
+        return False
 
 
 # ── Mock Network State ─────────────────────────────────────────────
@@ -232,21 +257,22 @@ class MockTransceiverFetcher(BaseFetcher):
     """
     Mock: HPE Comware 'display transceiver' output.
 
-    歲修模擬：
-    - 舊設備 (OLD): 光功率隨時間偏離規格（模擬設備逐漸故障）
-    - 新設備 (NEW): 光功率隨時間趨於規格（模擬設備逐漸穩定）
+    歲修模擬（與 Ping 一致的二元切換）：
+    - 切換點前：OLD 設備正常，NEW 設備光功率異常（超出規格）
+    - 切換點後：OLD 設備光功率異常，NEW 設備正常
     """
 
     fetch_type = "transceiver"
 
-    # 目標值（符合規格）
-    TX_TARGET = -2.0  # dBm
-    RX_TARGET = -5.0  # dBm
-    TEMP_TARGET = 38.0  # °C
+    # 正常值（符合規格）
+    TX_NORMAL = -2.0   # dBm
+    RX_NORMAL = -5.0   # dBm
+    TEMP_NORMAL = 38.0  # °C
 
-    # 變異數設定
-    HIGH_VARIANCE = 15.0   # 高變異（不穩定）
-    LOW_VARIANCE = 2.0     # 低變異（穩定）
+    # 異常值（超出規格，會導致驗收失敗）
+    TX_BAD = -18.0     # dBm（過低）
+    RX_BAD = -22.0     # dBm（過低）
+    TEMP_BAD = 65.0    # °C（過高）
 
     async def fetch(self, ctx: FetchContext) -> FetchResult:
         from app.core.config import settings
@@ -254,29 +280,32 @@ class MockTransceiverFetcher(BaseFetcher):
         tracker = MockTimeTracker()
         hostname = ctx.switch_hostname or ""
 
-        # 計算設備成功率來決定變異數
-        success_rate = _get_device_success_rate(
+        # 使用與 Ping 相同的二元切換邏輯
+        should_fail = _should_device_fail(
             hostname=hostname,
-            elapsed=tracker.elapsed_seconds,
+            elapsed=tracker.get_elapsed_seconds(ctx.maintenance_id),
             converge_time=settings.mock_ping_converge_time,
         )
-
-        # 成功率高 → 低變異（穩定），成功率低 → 高變異（不穩定）
-        variance = self.HIGH_VARIANCE * (1.0 - success_rate) + self.LOW_VARIANCE * success_rate
 
         port_count = 6
         lines: list[str] = []
 
         for i in range(1, port_count + 1):
-            # 使用 gaussian 分佈產生數值
-            tx = self.TX_TARGET + random.gauss(0, variance / 3)
-            rx = self.RX_TARGET + random.gauss(0, variance / 3)
-            temp = self.TEMP_TARGET + random.gauss(0, 5.0)
+            if should_fail:
+                # 設備應該失敗：產生超出規格的數值
+                tx = self.TX_BAD + random.gauss(0, 1.0)
+                rx = self.RX_BAD + random.gauss(0, 1.0)
+                temp = self.TEMP_BAD + random.gauss(0, 2.0)
+            else:
+                # 設備正常：產生符合規格的數值
+                tx = self.TX_NORMAL + random.gauss(0, 1.0)
+                rx = self.RX_NORMAL + random.gauss(0, 1.0)
+                temp = self.TEMP_NORMAL + random.gauss(0, 3.0)
 
             # 限制在合理範圍內
-            tx = max(-20.0, min(5.0, tx))
-            rx = max(-25.0, min(5.0, rx))
-            temp = max(20.0, min(70.0, temp))
+            tx = max(-25.0, min(5.0, tx))
+            rx = max(-30.0, min(5.0, rx))
+            temp = max(20.0, min(80.0, temp))
 
             lines.append(f"GigabitEthernet1/0/{i}")
             lines.append(f"  TX Power : {tx:.1f} dBm")
@@ -306,7 +335,7 @@ class MockPortChannelFetcher(BaseFetcher):
 
         fails = _should_device_fail(
             hostname=hostname,
-            elapsed=tracker.elapsed_seconds,
+            elapsed=tracker.get_elapsed_seconds(ctx.maintenance_id),
             converge_time=settings.mock_ping_converge_time,
         )
 
@@ -318,7 +347,7 @@ class MockPortChannelFetcher(BaseFetcher):
         parts = ctx.switch_ip.split(".")
         third_octet = int(parts[2]) if len(parts) == 4 else 0
 
-        if third_octet == 2:
+        if third_octet == 20:
             m1, m2 = "HGE1/0/25", "HGE1/0/26"
         else:
             m1, m2 = "XGE1/0/51", "XGE1/0/52"
@@ -356,13 +385,13 @@ class MockArpTableFetcher(BaseFetcher):
         hostname_upper = hostname.upper()
 
         # 判斷設備類型（OLD/NEW）並根據收斂狀態決定是否返回 ARP
-        is_old_device = "-OLD" in hostname_upper
-        is_new_device = "-NEW" in hostname_upper
+        is_old = _is_old_device(hostname)
+        is_new = _is_new_device(hostname)
 
-        if is_old_device or is_new_device:
+        if is_old or is_new:
             # 計算收斂狀態（統一邏輯：收斂時間點 = converge_time / 2）
             tracker = MockTimeTracker()
-            elapsed = tracker.elapsed_seconds
+            elapsed = tracker.get_elapsed_seconds(ctx.maintenance_id)
             converge_time = settings.mock_ping_converge_time
 
             if converge_time <= 0:
@@ -371,7 +400,7 @@ class MockArpTableFetcher(BaseFetcher):
                 switch_time = converge_time / 2
                 has_converged = elapsed >= switch_time
 
-            if is_old_device:
+            if is_old:
                 device_reachable = not has_converged
             else:
                 device_reachable = has_converged
@@ -379,6 +408,7 @@ class MockArpTableFetcher(BaseFetcher):
             if not device_reachable:
                 return FetchResult(
                     raw_output="IP,MAC",
+                    success=False,
                     error=f"Device {hostname} is not reachable",
                 )
 
@@ -422,8 +452,8 @@ class MockAclFetcher(BaseFetcher):
 
     async def fetch(self, ctx: FetchContext) -> FetchResult:
         tracker = MockTimeTracker()
-        elapsed = tracker.elapsed_seconds
-        converge_time = tracker.config.topology_stabilize_time
+        elapsed = tracker.get_elapsed_seconds(ctx.maintenance_id)
+        converge_time = tracker.converge_time
 
         # 計算當前合規率
         decay = math.exp(-3.0 * elapsed / converge_time) if converge_time > 0 else 0
@@ -468,7 +498,7 @@ class MockVersionFetcher(BaseFetcher):
         # 使用設備感知的失敗判斷
         fails = _should_device_fail(
             hostname=hostname,
-            elapsed=tracker.elapsed_seconds,
+            elapsed=tracker.get_elapsed_seconds(ctx.maintenance_id),
             converge_time=settings.mock_ping_converge_time,
         )
 
@@ -505,7 +535,7 @@ class MockUplinkFetcher(BaseFetcher):
         # 使用設備感知的失敗判斷
         fails = _should_device_fail(
             hostname=hostname,
-            elapsed=tracker.elapsed_seconds,
+            elapsed=tracker.get_elapsed_seconds(ctx.maintenance_id),
             converge_time=settings.mock_ping_converge_time,
         )
 
@@ -576,7 +606,7 @@ class MockFanFetcher(BaseFetcher):
 
         fails = _should_device_fail(
             hostname=hostname,
-            elapsed=tracker.elapsed_seconds,
+            elapsed=tracker.get_elapsed_seconds(ctx.maintenance_id),
             converge_time=settings.mock_ping_converge_time,
         )
 
@@ -612,7 +642,7 @@ class MockPowerFetcher(BaseFetcher):
 
         fails = _should_device_fail(
             hostname=hostname,
-            elapsed=tracker.elapsed_seconds,
+            elapsed=tracker.get_elapsed_seconds(ctx.maintenance_id),
             converge_time=settings.mock_ping_converge_time,
         )
 
@@ -654,7 +684,7 @@ class MockErrorCountFetcher(BaseFetcher):
             # 每個介面獨立判斷
             has_error = _should_device_fail(
                 hostname=hostname,
-                elapsed=tracker.elapsed_seconds,
+                elapsed=tracker.get_elapsed_seconds(ctx.maintenance_id),
                 converge_time=settings.mock_ping_converge_time,
             )
 
@@ -678,7 +708,10 @@ class MockMacTableFetcher(BaseFetcher):
 
     資料流邏輯：
     1. 從 mock_network_state.csv 讀取模擬網路狀態
-    2. 返回該 switch 的 MAC table（只包含設定檔中屬於該 switch 的 MAC）
+    2. 根據設備名稱判斷是 OLD 還是 NEW 設備
+    3. 根據時間收斂狀態決定是否返回 MAC table：
+       - OLD 設備：收斂前返回 MAC，收斂後不返回（設備已下線）
+       - NEW 設備：收斂前不返回 MAC，收斂後返回（設備已上線）
 
     這確保 mock 資料來自獨立的模擬網路狀態，而非用戶輸入。
     Ghost device（不在設定檔中的 MAC）自然不會出現。
@@ -687,9 +720,39 @@ class MockMacTableFetcher(BaseFetcher):
     fetch_type = "mac_table"
 
     async def fetch(self, ctx: FetchContext) -> FetchResult:
+        from app.core.config import settings
+
         hostname = ctx.switch_hostname or ""
 
-        # 從 mock_network_state.csv 取得該 switch 的 MAC 清單
+        # 判斷設備類型（OLD/NEW）並根據收斂狀態決定是否返回 MAC table
+        is_old = _is_old_device(hostname)
+        is_new = _is_new_device(hostname)
+
+        if is_old or is_new:
+            # 計算收斂狀態（與 MockArpTableFetcher 相同邏輯）
+            tracker = MockTimeTracker()
+            elapsed = tracker.get_elapsed_seconds(ctx.maintenance_id)
+            converge_time = settings.mock_ping_converge_time
+
+            if converge_time <= 0:
+                has_converged = True
+            else:
+                switch_time = converge_time / 2
+                has_converged = elapsed >= switch_time
+
+            if is_old:
+                device_reachable = not has_converged
+            else:
+                device_reachable = has_converged
+
+            if not device_reachable:
+                return FetchResult(
+                    raw_output="MAC,Interface,VLAN",
+                    success=False,
+                    error=f"Device {hostname} is not reachable",
+                )
+
+        # 設備可達，從 mock_network_state.csv 取得該 switch 的 MAC 清單
         entries = _get_mock_entries_for_switch(hostname)
 
         if not entries:
@@ -712,6 +775,8 @@ class MockInterfaceStatusFetcher(BaseFetcher):
     歲修模擬：
     - 舊設備 (OLD): 介面狀態隨時間惡化（模擬設備逐漸故障）
     - 新設備 (NEW): 介面狀態隨時間改善（模擬設備逐漸穩定）
+
+    Interface 名稱從 mock_network_state.csv 讀取，確保格式一致。
     """
 
     fetch_type = "interface_status"
@@ -722,19 +787,29 @@ class MockInterfaceStatusFetcher(BaseFetcher):
         tracker = MockTimeTracker()
         hostname = ctx.switch_hostname or ""
 
+        # 從 mock_network_state.csv 取得該 switch 的所有 interface
+        mock_state = _load_mock_network_state()
+        switch_interfaces: set[str] = set()
+        for entry in mock_state:
+            if entry["switch_hostname"] == hostname:
+                switch_interfaces.add(entry["interface"])
+
+        # 如果沒有找到任何 interface，fallback 到預設的 GE1/0/x 格式
+        if not switch_interfaces:
+            switch_interfaces = {f"GE1/0/{i}" for i in range(1, 21)}
+
         lines = ["Interface,Status,Speed,Duplex"]
-        port_count = 20
-        for i in range(1, port_count + 1):
+        for idx, interface in enumerate(sorted(switch_interfaces), start=1):
             # 每個介面獨立判斷
             is_down = _should_device_fail(
                 hostname=hostname,
-                elapsed=tracker.elapsed_seconds,
+                elapsed=tracker.get_elapsed_seconds(ctx.maintenance_id),
                 converge_time=settings.mock_ping_converge_time,
             )
             status = "DOWN" if is_down else "UP"
-            speed = "10G" if i <= 4 else "1000M"
+            speed = "10G" if idx <= 4 else "1000M"
             duplex = "full"
-            lines.append(f"GE1/0/{i},{status},{speed},{duplex}")
+            lines.append(f"{interface},{status},{speed},{duplex}")
         return FetchResult(raw_output="\n".join(lines))
 
 
@@ -747,14 +822,9 @@ class MockInterfaceStatusFetcher(BaseFetcher):
 
 class MockPingFetcher(BaseFetcher):
     """
-    Mock: 批量 Ping Fetcher（GNMSPing）。
+    Mock: 設備 Ping Fetcher。
 
-    ctx.params 可用參數:
-        target_ips: list[str] — 要 ping 的目標 IP 清單
-
-    若未指定 target_ips，預設 ping switch 本身（ctx.switch_ip）。
-
-    回傳格式: "IP,Reachable\\n192.168.1.1,true\\n..."
+    對單一設備執行 ping，返回標準 ping 輸出格式（供 HpePingParser 解析）。
 
     歲修模擬：
     - 舊設備 (OLD): 可達率隨時間下降（模擬設備逐漸離線）
@@ -769,26 +839,111 @@ class MockPingFetcher(BaseFetcher):
 
         tracker = MockTimeTracker()
         hostname = ctx.switch_hostname or ""
+        switch_ip = ctx.switch_ip
 
-        # 從 params 取得要 ping 的 IP 清單
-        target_ips: list[str] = []
-        if ctx.params and "target_ips" in ctx.params:
-            target_ips = ctx.params["target_ips"]
+        # 使用設備感知的失敗判斷
+        is_unreachable = _should_device_fail(
+            hostname=hostname,
+            elapsed=tracker.get_elapsed_seconds(ctx.maintenance_id),
+            converge_time=settings.mock_ping_converge_time,
+        )
 
-        # 若未指定 target_ips，預設 ping switch 本身
-        if not target_ips:
-            target_ips = [ctx.switch_ip]
-
-        lines = ["IP,Reachable"]
-        for ip in target_ips:
-            # 使用設備感知的失敗判斷
-            is_unreachable = _should_device_fail(
-                hostname=hostname,
-                elapsed=tracker.elapsed_seconds,
-                converge_time=settings.mock_ping_converge_time,
+        # 返回標準 ping 輸出格式（供 HpePingParser 解析）
+        if is_unreachable:
+            # 失敗：100% packet loss
+            output = (
+                f"PING {switch_ip} ({switch_ip}): 56 data bytes\n"
+                f"Request timeout for icmp_seq 0\n"
+                f"Request timeout for icmp_seq 1\n"
+                f"Request timeout for icmp_seq 2\n"
+                f"\n"
+                f"--- {switch_ip} ping statistics ---\n"
+                f"3 packets transmitted, 0 packets received, 100.0% packet loss\n"
             )
-            reachable = "false" if is_unreachable else "true"
-            lines.append(f"{ip},{reachable}")
+        else:
+            # 成功：0% packet loss
+            output = (
+                f"PING {switch_ip} ({switch_ip}): 56 data bytes\n"
+                f"64 bytes from {switch_ip}: icmp_seq=0 ttl=64 time=1.2 ms\n"
+                f"64 bytes from {switch_ip}: icmp_seq=1 ttl=64 time=1.1 ms\n"
+                f"64 bytes from {switch_ip}: icmp_seq=2 ttl=64 time=1.3 ms\n"
+                f"\n"
+                f"--- {switch_ip} ping statistics ---\n"
+                f"3 packets transmitted, 3 packets received, 0.0% packet loss\n"
+                f"round-trip min/avg/max = 1.1/1.2/1.3 ms\n"
+            )
+
+        return FetchResult(raw_output=output)
+
+
+class MockGnmsPingFetcher(BaseFetcher):
+    """
+    Mock: GNMS Ping Fetcher（批次 ping 多個 Client IP）。
+
+    用於驗證 Client 設備的網路連通性。
+    收斂行為基於 mock_network_state.csv 中的 switch hostname：
+    - Client 在 OLD switch → 收斂前可達，收斂後不可達
+    - Client 在 NEW switch → 收斂前不可達，收斂後可達
+    - 未知 IP → 視為 NEW switch（收斂後可達）
+
+    輸出格式：CSV (IP,Reachable,Latency_ms)
+    """
+
+    fetch_type = "gnms_ping"
+
+    async def fetch(self, ctx: FetchContext) -> FetchResult:
+        from collections import defaultdict
+
+        from app.core.config import settings
+
+        tracker = MockTimeTracker()
+        switch_ips = ctx.params.get("switch_ips", [])
+        elapsed = tracker.get_elapsed_seconds(ctx.maintenance_id)
+        converge_time = settings.mock_ping_converge_time
+
+        # 載入 mock network state 建立 IP → (switch hostname, ping_reachable) 對應
+        # 注意：每個 IP 可能同時出現在 OLD 和 NEW switch 上
+        mock_state = _load_mock_network_state()
+        ip_to_entries: dict[str, list[dict]] = defaultdict(list)
+        for entry in mock_state:
+            ip_to_entries[entry["ip_address"]].append(entry)
+
+        # CSV header
+        lines = ["IP,Reachable,Latency_ms"]
+
+        for ip in switch_ips:
+            # 根據 IP 查找對應的所有 entries
+            entries = ip_to_entries.get(ip, [])
+
+            if not entries:
+                # IP 不在 mock network state 中，視為不可達
+                lines.append(f"{ip},false,")
+                continue
+
+            # 只要任一 switch 可達且 ping_reachable=true，該 IP 就視為可達
+            # 這處理了收斂期間 IP 同時存在於 OLD 和 NEW switch 的情況
+            is_reachable = False
+            for entry in entries:
+                switch_hostname = entry["switch_hostname"]
+                ping_reachable = entry.get("ping_reachable", True)
+
+                # 檢查 switch 是否可達（基於收斂邏輯）
+                switch_reachable = not _should_device_fail(
+                    hostname=switch_hostname,
+                    elapsed=elapsed,
+                    converge_time=converge_time,
+                )
+
+                # 同時滿足：switch 可達 AND ping_reachable=true
+                if switch_reachable and ping_reachable:
+                    is_reachable = True
+                    break
+
+            if is_reachable:
+                latency = round(random.uniform(1.0, 5.0), 2)
+                lines.append(f"{ip},true,{latency}")
+            else:
+                lines.append(f"{ip},false,")
 
         return FetchResult(raw_output="\n".join(lines))
 
@@ -811,8 +966,9 @@ _ALL_MOCK_FETCHERS: list[type[BaseFetcher]] = [
     MockErrorCountFetcher,
     MockMacTableFetcher,
     MockInterfaceStatusFetcher,
-    # GNMSPing (1)
+    # GNMSPing (2)
     MockPingFetcher,
+    MockGnmsPingFetcher,
 ]
 
 

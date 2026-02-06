@@ -2,7 +2,7 @@ category_name,mac_address,description
 EQP,AA:BB:CC:DD:EE:01,F6-EQP設備1
 EQP,AA:BB:CC:DD:EE:02,F6-EQP設備2
 AMHS,AA:BB:CC:DD:EE:03,F6-AMHS設備1
-示範櫃,AA:BB:CC:DD:EE:04,AP-SNR設備1
-示範櫃,AA:BB:CC:DD:EE:05,AP-SNR設備2
-示範櫃,AA:BB:CC:DD:EE:06,AP-SNR設備3
-EQP,AA:BB:CC:DD:EE:07,F6-幽靈設備(永不上線)
+示範櫃,AA:BB:CC:DD:EE:04,AP-示範櫃1
+示範櫃,AA:BB:CC:DD:EE:05,AP-示範櫃2
+示範櫃,AA:BB:CC:DD:EE:06,AP-示範櫃3
+EQP,AA:BB:CC:DD:EE:99,幽靈設備(不存在於網路)

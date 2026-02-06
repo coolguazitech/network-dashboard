@@ -14,7 +14,6 @@
 """
 import asyncio
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -83,22 +82,22 @@ TEST_DEVICES = [
 TEST_UPLINK_EXPECTATIONS = [
     {
         "hostname": "NEW-SW-001",
-        "interface_name": "GE1/0/1",
+        "local_interface": "GE1/0/1",
         "expected_neighbor": "NEW-SW-002",
-        "expected_neighbor_interface": "GE1/0/48",
+        "expected_interface": "GE1/0/48",
     },
     {
         "hostname": "NEW-SW-002",
-        "interface_name": "GE1/0/48",
+        "local_interface": "GE1/0/48",
         "expected_neighbor": "NEW-SW-001",
-        "expected_neighbor_interface": "GE1/0/1",
+        "expected_interface": "GE1/0/1",
     },
 ]
 
 TEST_VERSION_EXPECTATIONS = [
-    {"hostname": "NEW-SW-001", "expected_version": "16.12.4"},
-    {"hostname": "NEW-SW-002", "expected_version": "17.3.2"},
-    {"hostname": "NEW-SW-003", "expected_version": "9.3(8)"},
+    {"hostname": "NEW-SW-001", "expected_versions": "16.12.4"},
+    {"hostname": "NEW-SW-002", "expected_versions": "17.3.2"},
+    {"hostname": "NEW-SW-003", "expected_versions": "9.3(8)"},
 ]
 
 TEST_ARP_SOURCES = [
@@ -115,6 +114,13 @@ class E2ESimulation:
         self.maintenance_id = maintenance_id
         self.client = httpx.AsyncClient(timeout=30.0)
         self.results: dict[str, Any] = {}
+        self.auth_token: str | None = None
+
+    def _get_headers(self) -> dict[str, str]:
+        """取得含認證的 HTTP headers"""
+        if self.auth_token:
+            return {"Authorization": f"Bearer {self.auth_token}"}
+        return {}
 
     async def close(self):
         await self.client.aclose()
@@ -132,7 +138,9 @@ class E2ESimulation:
         """檢查伺服器是否運行"""
         print("\n檢查伺服器狀態...")
         try:
-            resp = await self.client.get(f"{self.base_url.replace('/api/v1', '')}/health")
+            resp = await self.client.get(
+                f"{self.base_url.replace('/api/v1', '')}/health"
+            )
             if resp.status_code == 200:
                 self.print_result(True, "伺服器運行正常")
                 return True
@@ -141,6 +149,26 @@ class E2ESimulation:
         self.print_result(False, "無法連接到伺服器，請先啟動後端服務")
         return False
 
+    async def login(self) -> bool:
+        """登入取得 token"""
+        print("\n登入中...")
+        try:
+            resp = await self.client.post(
+                f"{self.base_url}/auth/login",
+                json={"username": "root", "password": "root123"}
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                self.auth_token = data.get("token")
+                self.print_result(True, f"登入成功: {data.get('user', {}).get('username')}")
+                return True
+            else:
+                self.print_result(False, f"登入失敗: {resp.text}")
+                return False
+        except Exception as e:
+            self.print_result(False, f"登入錯誤: {e}")
+            return False
+
     # =========================================================================
     # Step 1: 建立歲修 ID
     # =========================================================================
@@ -148,15 +176,18 @@ class E2ESimulation:
         """建立歲修 ID"""
         self.print_step(1, "建立歲修 ID")
 
+        headers = self._get_headers()
+
         # 先檢查是否已存在，如果存在則刪除
-        resp = await self.client.get(f"{self.base_url}/maintenance")
+        resp = await self.client.get(f"{self.base_url}/maintenance", headers=headers)
         if resp.status_code == 200:
             existing = resp.json()
             for m in existing:
-                if m.get("maintenance_id") == self.maintenance_id:
+                if m.get("id") == self.maintenance_id:
                     print(f"   發現已存在的歲修 ID: {self.maintenance_id}，刪除中...")
                     del_resp = await self.client.delete(
-                        f"{self.base_url}/maintenance/{self.maintenance_id}"
+                        f"{self.base_url}/maintenance/{self.maintenance_id}",
+                        headers=headers
                     )
                     if del_resp.status_code == 200:
                         self.print_result(True, "已刪除舊的歲修資料")
@@ -166,7 +197,8 @@ class E2ESimulation:
         # 建立新的歲修 ID
         resp = await self.client.post(
             f"{self.base_url}/maintenance",
-            json={"maintenance_id": self.maintenance_id}
+            json={"id": self.maintenance_id},
+            headers=headers
         )
 
         if resp.status_code == 200:
@@ -216,11 +248,13 @@ class E2ESimulation:
         """匯入設備對應清單"""
         self.print_step(3, "匯入設備對應清單")
 
+        headers = self._get_headers()
         success_count = 0
         for device in TEST_DEVICES:
             resp = await self.client.post(
                 f"{self.base_url}/maintenance-devices/{self.maintenance_id}",
-                json=device
+                json=device,
+                headers=headers
             )
             if resp.status_code == 200:
                 success_count += 1
@@ -234,7 +268,8 @@ class E2ESimulation:
 
         # 驗證統計
         resp = await self.client.get(
-            f"{self.base_url}/maintenance-devices/{self.maintenance_id}/stats"
+            f"{self.base_url}/maintenance-devices/{self.maintenance_id}/stats",
+            headers=headers
         )
         if resp.status_code == 200:
             stats = resp.json()
@@ -250,7 +285,7 @@ class E2ESimulation:
         """設定期望值"""
         self.print_step(4, "設定期望值")
 
-        all_success = True
+        headers = self._get_headers()
 
         # 4.1 Uplink 期望
         print("\n   4.1 Uplink 期望:")
@@ -258,7 +293,8 @@ class E2ESimulation:
         for exp in TEST_UPLINK_EXPECTATIONS:
             resp = await self.client.post(
                 f"{self.base_url}/expectations/uplink/{self.maintenance_id}",
-                json=exp
+                json=exp,
+                headers=headers
             )
             if resp.status_code == 200:
                 uplink_count += 1
@@ -272,7 +308,8 @@ class E2ESimulation:
         for exp in TEST_VERSION_EXPECTATIONS:
             resp = await self.client.post(
                 f"{self.base_url}/expectations/version/{self.maintenance_id}",
-                json=exp
+                json=exp,
+                headers=headers
             )
             if resp.status_code == 200:
                 version_count += 1
@@ -286,7 +323,8 @@ class E2ESimulation:
         for exp in TEST_ARP_SOURCES:
             resp = await self.client.post(
                 f"{self.base_url}/expectations/arp/{self.maintenance_id}",
-                json=exp
+                json=exp,
+                headers=headers
             )
             if resp.status_code == 200:
                 arp_count += 1
@@ -419,11 +457,16 @@ class E2ESimulation:
         """執行客戶端偵測"""
         self.print_step(7, "執行客戶端偵測")
 
+        # 等待資料庫同步
+        await asyncio.sleep(1)
+
         print("   觸發客戶端偵測（POST /mac-list/{id}/detect）...")
 
+        headers = self._get_headers()
         resp = await self.client.post(
             f"{self.base_url}/mac-list/{self.maintenance_id}/detect",
-            timeout=60.0  # 偵測可能需要較長時間
+            headers=headers,
+            timeout=120.0  # 偵測可能需要較長時間
         )
 
         if resp.status_code == 200:
@@ -459,34 +502,32 @@ class E2ESimulation:
             self.print_result(False, f"取得統計失敗: {resp.text}")
             all_checks_passed = False
 
-        # 8.2 驗證時間點
-        print("\n   8.2 時間點查詢:")
+        # 8.2 驗證 Checkpoint
+        print("\n   8.2 Checkpoint 查詢:")
         resp = await self.client.get(
-            f"{self.base_url}/comparisons/timepoints/{self.maintenance_id}"
+            f"{self.base_url}/comparisons/checkpoints/{self.maintenance_id}"
         )
         if resp.status_code == 200:
             data = resp.json()
-            timepoints = data.get("timepoints", [])
-            self.print_result(True, f"可用時間點數量: {len(timepoints)}")
-            if timepoints:
-                self.print_result(True, f"最新時間點: {timepoints[-1].get('label', 'N/A')}")
+            checkpoints = data.get("checkpoints", [])
+            self.print_result(True, f"可用 Checkpoint 數量: {len(checkpoints)}")
+            if checkpoints:
+                latest = checkpoints[-1]
+                self.print_result(True, f"最新: {latest.get('label', 'N/A')}")
         else:
-            self.print_result(False, f"取得時間點失敗: {resp.text}")
+            self.print_result(False, f"取得 Checkpoint 失敗: {resp.text}")
 
-        # 8.3 驗證統計資料
-        print("\n   8.3 統計資料（圖表用）:")
+        # 8.3 驗證比較摘要
+        print("\n   8.3 比較摘要:")
         resp = await self.client.get(
-            f"{self.base_url}/comparisons/statistics/{self.maintenance_id}"
+            f"{self.base_url}/comparisons/summary/{self.maintenance_id}"
         )
         if resp.status_code == 200:
             data = resp.json()
-            stats_list = data.get("statistics", [])
-            self.print_result(True, f"統計點數量: {len(stats_list)}")
-            if stats_list:
-                latest = stats_list[-1]
-                self.print_result(True, f"最新統計: total={latest.get('total', 0)}, has_issues={latest.get('has_issues', 0)}")
+            self.print_result(True, f"總數: {data.get('total', 0)}")
+            self.print_result(True, f"有問題: {data.get('has_issues', 0)}")
         else:
-            self.print_result(False, f"取得統計資料失敗: {resp.text}")
+            self.print_result(False, f"取得摘要失敗: {resp.text}")
 
         # 8.4 驗證分類統計
         print("\n   8.4 分類統計:")
@@ -515,6 +556,11 @@ class E2ESimulation:
         # 檢查伺服器
         if not await self.check_server_health():
             print("\n請先啟動後端服務: cd network_dashboard && python -m app.main")
+            return 1
+
+        # 登入
+        if not await self.login():
+            print("\n登入失敗，請確認使用者帳號密碼")
             return 1
 
         steps = [

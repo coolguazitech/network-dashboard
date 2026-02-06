@@ -302,6 +302,8 @@
 </template>
 
 <script>
+import { getAuthHeaders } from '@/utils/auth'
+
 export default {
   name: 'Switches',
   data() {
@@ -333,7 +335,9 @@ export default {
     async loadSwitches() {
       this.loading = true
       try {
-        const response = await fetch('/api/v1/switches')
+        const response = await fetch('/api/v1/switches', {
+          headers: getAuthHeaders()
+        })
         const data = await response.json()
         this.switches = data.data || []
       } catch (error) {
@@ -393,7 +397,8 @@ export default {
         const response = await fetch(url, {
           method,
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
           },
           body: JSON.stringify(this.formData)
         })
@@ -422,7 +427,8 @@ export default {
     async deleteSwitch() {
       try {
         const response = await fetch(`/api/v1/switches/${this.deleteTarget.id}`, {
-          method: 'DELETE'
+          method: 'DELETE',
+          headers: getAuthHeaders()
         })
 
         if (response.ok) {

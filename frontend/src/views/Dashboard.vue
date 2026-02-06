@@ -1,10 +1,40 @@
 <template>
   <div class="px-3 py-3">
-    <!-- 頁面標題 + 摘要 -->
+    <!-- 頁面標題 + 摘要 + 餐點狀態 -->
     <div class="flex justify-between items-start mb-3">
-      <div>
-        <h1 class="text-xl font-bold text-white">指標總覽</h1>
+      <div class="flex items-start gap-4">
+        <div>
+          <h1 class="text-xl font-bold text-white">指標總覽</h1>
+        </div>
+        <!-- 匯出報告按鈕 -->
+        <div v-if="selectedMaintenanceId" class="relative">
+          <button
+            @click="showExportMenu = !showExportMenu"
+            class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-sm font-medium transition flex items-center gap-1"
+          >
+            📄 匯出報告 <span class="text-xs">▼</span>
+          </button>
+          <!-- 下拉選單 -->
+          <div
+            v-if="showExportMenu"
+            class="absolute left-0 mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-20 min-w-32"
+          >
+            <button
+              @click="exportReport('preview')"
+              class="w-full px-3 py-2 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition"
+            >
+              👁️ 預覽
+            </button>
+            <button
+              @click="exportReport('html')"
+              class="w-full px-3 py-2 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition"
+            >
+              📥 下載 HTML
+            </button>
+          </div>
+        </div>
       </div>
+      <!-- 整體通過率 -->
       <div class="text-right" v-if="selectedMaintenanceId">
         <div class="text-3xl font-black mb-0.5" :class="overallStatusColor">
           {{ overallPassRate }}%
@@ -146,7 +176,7 @@
     <!-- 無數據提示 -->
     <div v-if="!selectedMaintenanceId" class="bg-slate-800/80 rounded border border-slate-600 p-8 text-center">
       <div class="text-5xl mb-3">📊</div>
-      <p class="text-slate-400 text-lg">請先在頂部選擇維護作業 ID</p>
+      <p class="text-slate-400 text-lg">請先在頂部選擇歲修 ID</p>
     </div>
 
     <!-- Loading -->
@@ -160,10 +190,27 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, inject, watch } from 'vue'
+import { ref, computed, onMounted, inject, watch, onUnmounted } from 'vue'
 import axios from 'axios'
+import { getAuthHeaders } from '../utils/auth.js'
 
 const loading = ref(false)
+const showExportMenu = ref(false)
+
+// 點擊外部關閉選單
+const handleClickOutside = (event) => {
+  if (!event.target.closest('.relative')) {
+    showExportMenu.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside)
+})
 const selectedMaintenanceId = inject('maintenanceId')
 const summary = ref({
   maintenance_id: '',
@@ -291,7 +338,9 @@ const fetchSummary = async () => {
   
   loading.value = true
   try {
-    const response = await axios.get(`/api/v1/dashboard/maintenance/${selectedMaintenanceId.value}/summary`)
+    const response = await axios.get(`/api/v1/dashboard/maintenance/${selectedMaintenanceId.value}/summary`, {
+      headers: getAuthHeaders()
+    })
     summary.value = response.data
     
     // 默認選擇有失敗的指標
@@ -316,7 +365,8 @@ const fetchIndicatorDetails = async (type) => {
   
   try {
     const response = await axios.get(
-      `/api/v1/dashboard/maintenance/${selectedMaintenanceId.value}/indicator/${type}/details`
+      `/api/v1/dashboard/maintenance/${selectedMaintenanceId.value}/indicator/${type}/details`,
+      { headers: getAuthHeaders() }
     )
     indicatorDetails.value = response.data
   } catch (error) {
@@ -334,17 +384,17 @@ const selectIndicator = async (type) => {
 // 下載 CSV
 const downloadCSV = () => {
   if (!indicatorDetails.value || !indicatorDetails.value.failures) return
-  
+
   const failures = indicatorDetails.value.failures
   let csv = 'Device,Interface,Reason\n'
-  
+
   failures.forEach(failure => {
     const device = failure.device || ''
     const interface_name = failure.interface || failure.expected_neighbor || ''
     const reason = (failure.reason || '').replace(/"/g, '""')
     csv += `"${device}","${interface_name}","${reason}"\n`
   })
-  
+
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
   const link = document.createElement('a')
   const url = URL.createObjectURL(blob)
@@ -354,6 +404,36 @@ const downloadCSV = () => {
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
+}
+
+// 匯出報告
+const exportReport = async (type) => {
+  showExportMenu.value = false
+  if (!selectedMaintenanceId.value) return
+
+  if (type === 'preview') {
+    // 開啟新視窗預覽
+    window.open(`/api/v1/reports/maintenance/${selectedMaintenanceId.value}/export?include_details=true`, '_blank')
+  } else if (type === 'html') {
+    // 下載 HTML
+    try {
+      const response = await axios.get(
+        `/api/v1/reports/maintenance/${selectedMaintenanceId.value}/export?include_details=true`,
+        { responseType: 'blob', headers: getAuthHeaders() }
+      )
+      const blob = new Blob([response.data], { type: 'text/html;charset=utf-8' })
+      const link = document.createElement('a')
+      const url = URL.createObjectURL(blob)
+      link.setAttribute('href', url)
+      link.setAttribute('download', `sanity_report_${selectedMaintenanceId.value}.html`)
+      link.style.visibility = 'hidden'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } catch (error) {
+      console.error('Failed to export report:', error)
+    }
+  }
 }
 
 // 排序後的指標（失敗的優先顯示）

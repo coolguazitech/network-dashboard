@@ -4,24 +4,26 @@ MockFetcher 時間收斂機制。
 提供時間追蹤和收斂計算功能，讓 MockFetcher 產生隨時間收斂到正常狀態的資料。
 
 核心組件:
-    - ConvergenceConfig: 收斂參數配置
-    - MockTimeTracker: 追蹤 Mock 系統啟動時間的 Singleton
+    - MockTimeTracker: 追蹤各歲修建立時間，計算經過時間
     - exponential_decay_failure_rate(): 計算當前失敗率
     - should_fail(): 根據當前時間決定是否產生失敗資料
+
+收斂時間統一從 settings.mock_ping_converge_time 讀取。
 
 收斂公式:
     failure_rate(t) = target + (initial - target) × e^(-3t/T)
 
-    t = 經過時間（秒）
-    T = 收斂時間常數
+    t = 經過時間（秒），從歲修建立時間開始計算
+    T = 收斂時間常數（來自 .env 的 MOCK_PING_CONVERGE_TIME）
     initial = 初始失敗率
     target = 目標失敗率
 
 範例:
     tracker = MockTimeTracker()
+    elapsed = tracker.get_elapsed_seconds("MAINT-2025-001")
     fails = should_fail(
-        elapsed=tracker.elapsed_seconds,
-        converge_time=tracker.config.ping_converge_time,
+        elapsed=elapsed,
+        converge_time=tracker.converge_time,
         initial_failure_rate=0.40,
         target_failure_rate=0.05,
     )
@@ -31,79 +33,154 @@ from __future__ import annotations
 import math
 import random
 import time
-from dataclasses import dataclass
-
-
-@dataclass
-class ConvergenceConfig:
-    """
-    收斂參數配置。
-
-    Attributes:
-        hardware_stabilize_time: fan/power 穩定時間（秒）
-        transceiver_converge_time: 光模塊功率收斂時間（秒）
-        error_converge_time: 錯誤計數歸零時間（秒）
-        ping_converge_time: Ping 成功率收斂時間（秒）
-        topology_stabilize_time: uplink/port_channel 穩定時間（秒）
-        version_stabilize_time: 版本驗證穩定時間（秒）
-    """
-
-    hardware_stabilize_time: float = 60.0
-    transceiver_converge_time: float = 300.0
-    error_converge_time: float = 600.0
-    ping_converge_time: float = 300.0
-    topology_stabilize_time: float = 120.0
-    version_stabilize_time: float = 60.0
+from datetime import datetime, timezone
 
 
 class MockTimeTracker:
     """
-    追蹤 Mock 系統啟動時間的 Singleton。
+    追蹤各歲修建立時間的 Singleton。
 
-    用於計算經過時間，讓 MockFetcher 根據時間產生收斂的資料。
+    每個歲修有自己的起始時間（從 MaintenanceConfig.created_at 讀取），
+    用於計算該歲修的經過時間，讓 MockFetcher 根據時間產生收斂的資料。
+
+    收斂時間統一從 settings.mock_ping_converge_time 讀取。
 
     Usage:
         tracker = MockTimeTracker()
-        elapsed = tracker.elapsed_seconds
-        config = tracker.config
+        elapsed = tracker.get_elapsed_seconds("MAINT-2025-001")
+        converge_time = tracker.converge_time
     """
 
     _instance: MockTimeTracker | None = None
-    _start_time: float = 0.0
-    _config: ConvergenceConfig
+    _maintenance_start_times: dict[str, datetime]
+    _fallback_start_time: float  # 無 maintenance_id 時的 fallback
 
     def __new__(cls) -> MockTimeTracker:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._start_time = time.time()
-            cls._instance._config = ConvergenceConfig()
+            cls._instance._maintenance_start_times = {}
+            cls._instance._fallback_start_time = time.time()
         return cls._instance
 
     @classmethod
-    def reset(cls, config: ConvergenceConfig | None = None) -> None:
+    def reset(cls) -> None:
         """
         重置計時器。
 
-        在 setup_fetchers() 或測試中呼叫以重新開始計時。
-
-        Args:
-            config: 可選的新配置，None 則保留現有配置
+        清除所有快取的歲修起始時間，在測試中使用。
         """
         if cls._instance is None:
             cls._instance = cls()
-        cls._instance._start_time = time.time()
-        if config is not None:
-            cls._instance._config = config
+        cls._instance._maintenance_start_times = {}
+        cls._instance._fallback_start_time = time.time()
+
+    @classmethod
+    def set_maintenance_start_time(
+        cls, maintenance_id: str, start_time: datetime
+    ) -> None:
+        """
+        手動設定歲修起始時間（用於測試或快取）。
+
+        Args:
+            maintenance_id: 歲修 ID
+            start_time: 起始時間
+        """
+        if cls._instance is None:
+            cls._instance = cls()
+        cls._instance._maintenance_start_times[maintenance_id] = start_time
+
+    @classmethod
+    def clear_maintenance_cache(cls, maintenance_id: str) -> None:
+        """
+        清除指定歲修的快取。
+
+        當歲修被刪除時呼叫，確保下次重建時使用新的起始時間。
+
+        Args:
+            maintenance_id: 歲修 ID
+        """
+        if cls._instance is not None:
+            cls._instance._maintenance_start_times.pop(maintenance_id, None)
+
+    def _load_maintenance_start_time(self, maintenance_id: str) -> datetime | None:
+        """
+        從資料庫載入歲修的建立時間。
+
+        使用同步方式查詢，因為 Mock Fetcher 可能在非 async context 中呼叫。
+        """
+        try:
+            from sqlalchemy import create_engine, text
+            from app.core.config import settings
+
+            # 建立同步 engine 進行查詢
+            sync_url = settings.database_url.replace(
+                "postgresql+asyncpg://", "postgresql://"
+            ).replace(
+                "sqlite+aiosqlite://", "sqlite://"
+            )
+            engine = create_engine(sync_url)
+
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text(
+                        "SELECT created_at FROM maintenance_configs "
+                        "WHERE maintenance_id = :mid"
+                    ),
+                    {"mid": maintenance_id}
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    return row[0]
+        except Exception:
+            pass
+        return None
+
+    def get_elapsed_seconds(self, maintenance_id: str | None = None) -> float:
+        """
+        取得指定歲修的經過時間（秒）。
+
+        Args:
+            maintenance_id: 歲修 ID，若為 None 則使用 fallback 時間
+
+        Returns:
+            從歲修建立時間到現在的秒數
+        """
+        if maintenance_id is None:
+            return time.time() - self._fallback_start_time
+
+        # 檢查快取
+        if maintenance_id in self._maintenance_start_times:
+            start_time = self._maintenance_start_times[maintenance_id]
+        else:
+            # 從資料庫載入
+            start_time = self._load_maintenance_start_time(maintenance_id)
+            if start_time:
+                self._maintenance_start_times[maintenance_id] = start_time
+            else:
+                # 找不到時使用 fallback
+                return time.time() - self._fallback_start_time
+
+        # 計算經過時間
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if isinstance(start_time, datetime):
+            delta = now - start_time
+            return delta.total_seconds()
+        return time.time() - self._fallback_start_time
 
     @property
     def elapsed_seconds(self) -> float:
-        """自 Mock 系統啟動以來經過的秒數。"""
-        return time.time() - self._start_time
+        """
+        [已棄用] 使用 get_elapsed_seconds(maintenance_id) 代替。
+
+        保留此屬性是為了向後相容，使用 fallback 時間。
+        """
+        return time.time() - self._fallback_start_time
 
     @property
-    def config(self) -> ConvergenceConfig:
-        """當前的收斂配置。"""
-        return self._config
+    def converge_time(self) -> float:
+        """收斂時間（秒），來自 settings.mock_ping_converge_time。"""
+        from app.core.config import settings
+        return float(settings.mock_ping_converge_time)
 
 
 def exponential_decay_failure_rate(
