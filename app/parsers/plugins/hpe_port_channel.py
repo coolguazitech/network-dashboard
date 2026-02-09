@@ -1,20 +1,75 @@
 """
-HPE Comware Port-Channel Parser.
+HPE Comware Port-Channel (Bridge-Aggregation) Parser — 解析 HPE Comware 鏈路聚合狀態。
+
+CLI 指令：display link-aggregation verbose（或 summary）
+註冊資訊：
+    device_type = DeviceType.HPE
+    indicator_type = "port_channel"
+
+輸出模型：list[PortChannelData]
+    PortChannelData 欄位：
+        interface_name: str              — 聚合介面名稱（如 "BAGG1"）
+        status: str                      — 自動正規化為 LinkStatus（"up"/"down"/"unknown"）
+        protocol: str | None             — 聚合協議，自動正規化為 AggregationProtocol
+                                           ("lacp"/"static"/"pagp"/"none")
+        members: list[str]               — 成員介面列表
+        member_status: dict[str,str]|None — 各成員的狀態（自動正規化為 LinkStatus）
 """
 from __future__ import annotations
 
 import re
 
-from app.core.enums import PlatformType, VendorType
+from app.core.enums import DeviceType
 from app.parsers.protocols import BaseParser, PortChannelData
 from app.parsers.registry import parser_registry
 
 
 class HpePortChannelParser(BaseParser[PortChannelData]):
-    """Parser for HPE Comware Port-Channel (Bridge-Aggregation) status."""
+    """
+    HPE Comware Port-Channel (Bridge-Aggregation) Parser。
 
-    vendor = VendorType.HPE
-    platform = PlatformType.HPE_COMWARE
+    CLI 指令：display link-aggregation verbose（或 summary）
+
+    輸入格式（raw_output 範例 — summary 格式）：
+    ::
+
+        AggID   Interface   Link   Attribute   Mode   Members
+        1       BAGG1       UP     A           LACP   GE1/0/1(S) GE1/0/2(S)
+        2       BAGG2       DOWN   A           LACP   GE1/0/3(U) GE1/0/4(U)
+
+    輸出格式（parse() 回傳值）：
+    ::
+
+        [
+            PortChannelData(
+                interface_name="BAGG1", status="up", protocol="lacp",
+                members=["GE1/0/1", "GE1/0/2"],
+                member_status={"GE1/0/1": "up", "GE1/0/2": "up"}),
+            PortChannelData(
+                interface_name="BAGG2", status="down", protocol="lacp",
+                members=["GE1/0/3", "GE1/0/4"],
+                member_status={"GE1/0/3": "down", "GE1/0/4": "down"}),
+        ]
+
+    解析策略：
+        - 此 parser 主要解析 summary 格式（表格形式）
+        - 用 regex 匹配 "AggID  Interface  UP/DOWN  Attribute  Mode  Members" 行
+        - 成員格式為 "GE1/0/1(S)"，括號內 S=Selected(UP), U=Unselected(DOWN)
+        - protocol：若 Mode 包含 "LACP" 或 "Dynamic" → "lacp"，否則 → "static"
+
+    HPE 術語對照：
+        - Bridge-Aggregation (BAGG) ≈ Cisco Port-Channel (Po)
+        - S (Selected) ≈ P (Bundled) → UP
+        - U (Unselected) ≈ D (Down) → DOWN
+
+    已知邊界情況：
+        - verbose 格式的輸出結構不同，此 parser 不支援 verbose 格式
+        - 成員字串中若沒有括號（極少見），member_status 設為 "UNKNOWN"
+        - status 和 member_status 由 PortChannelData 的 Pydantic validator 自動正規化
+        - 空輸出或無匹配行 → 回傳空列表 []
+    """
+
+    device_type = DeviceType.HPE
     indicator_type = "port_channel"
     command = "display link-aggregation verbose"  # or summary
 

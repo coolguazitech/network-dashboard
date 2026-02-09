@@ -4,16 +4,16 @@ Typed Record Repositories.
 Data access layer for typed record tables (replacing CollectionRecord's JSON blob).
 Each typed repo handles one collection type's records.
 """
+
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import MaintenancePhase
 from app.db.base import Base
 from app.db.models import (
     CollectionBatch,
@@ -52,7 +52,6 @@ class TypedRecordRepository(Generic[RecordT]):
         switch_hostname: str,
         raw_data: str,
         parsed_items: list[BaseModel],
-        phase: MaintenancePhase,
         maintenance_id: str,
     ) -> CollectionBatch:
         """
@@ -62,19 +61,17 @@ class TypedRecordRepository(Generic[RecordT]):
             switch_hostname: Device hostname
             raw_data: Raw CLI output (kept for debugging)
             parsed_items: Pydantic models from parser
-            phase: OLD / NEW
             maintenance_id: Maintenance job ID
 
         Returns:
             The created CollectionBatch
         """
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # 1. Create batch header
         batch = CollectionBatch(
             collection_type=self.collection_type,
             switch_hostname=switch_hostname,
-            phase=phase,
             maintenance_id=maintenance_id,
             raw_data=raw_data,
             item_count=len(parsed_items),
@@ -88,7 +85,6 @@ class TypedRecordRepository(Generic[RecordT]):
             row = self.model(
                 batch_id=batch.id,
                 switch_hostname=switch_hostname,
-                phase=phase,
                 maintenance_id=maintenance_id,
                 collected_at=now,
                 **item.model_dump(),
@@ -100,7 +96,6 @@ class TypedRecordRepository(Generic[RecordT]):
 
     async def get_latest_per_device(
         self,
-        phase: MaintenancePhase,
         maintenance_id: str,
     ) -> list[RecordT]:
         """
@@ -117,7 +112,6 @@ class TypedRecordRepository(Generic[RecordT]):
             )
             .where(
                 CollectionBatch.collection_type == self.collection_type,
-                CollectionBatch.phase == phase,
                 CollectionBatch.maintenance_id == maintenance_id,
             )
             .group_by(CollectionBatch.switch_hostname)
@@ -139,7 +133,6 @@ class TypedRecordRepository(Generic[RecordT]):
     async def get_time_series_records(
         self,
         maintenance_id: str,
-        phase: MaintenancePhase,
         limit: int = 100,
     ) -> list[RecordT]:
         """
@@ -151,7 +144,6 @@ class TypedRecordRepository(Generic[RecordT]):
             select(self.model)
             .where(
                 self.model.maintenance_id == maintenance_id,
-                self.model.phase == phase,
             )
             .order_by(self.model.collected_at.desc())
             .limit(limit)
@@ -162,7 +154,6 @@ class TypedRecordRepository(Generic[RecordT]):
     async def get_latest_records(
         self,
         maintenance_id: str,
-        phase: MaintenancePhase,
         limit: int = 100,
     ) -> list[RecordT]:
         """
@@ -172,7 +163,6 @@ class TypedRecordRepository(Generic[RecordT]):
             select(self.model)
             .where(
                 self.model.maintenance_id == maintenance_id,
-                self.model.phase == phase,
             )
             .order_by(self.model.collected_at.desc())
             .limit(limit)
@@ -252,5 +242,11 @@ def get_typed_repo(
     Raises:
         KeyError: if collection_type is not registered
     """
-    repo_cls = TYPED_REPO_MAP[collection_type]
+    repo_cls = TYPED_REPO_MAP.get(collection_type)
+    if repo_cls is None:
+        available = ", ".join(sorted(TYPED_REPO_MAP.keys()))
+        raise KeyError(
+            f"未註冊的採集類型 '{collection_type}'。"
+            f"可用類型: {available}"
+        )
     return repo_cls(session)

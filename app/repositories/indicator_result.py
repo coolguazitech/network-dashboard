@@ -10,7 +10,6 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.core.enums import MaintenancePhase
 from app.db.models import IndicatorResult
 from app.repositories.base import BaseRepository
 
@@ -27,7 +26,6 @@ class IndicatorResultRepository(BaseRepository[IndicatorResult]):
         total_count: int,
         pass_count: int,
         fail_count: int,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
         maintenance_id: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> IndicatorResult:
@@ -40,7 +38,6 @@ class IndicatorResultRepository(BaseRepository[IndicatorResult]):
             total_count: Total items evaluated
             pass_count: Items that passed
             fail_count: Items that failed
-            phase: Maintenance phase
             maintenance_id: Maintenance job ID (optional)
             details: Additional details (optional)
 
@@ -53,7 +50,6 @@ class IndicatorResultRepository(BaseRepository[IndicatorResult]):
             total_count=total_count,
             pass_count=pass_count,
             fail_count=fail_count,
-            phase=phase,
             maintenance_id=maintenance_id,
             details=details,
         )
@@ -61,7 +57,6 @@ class IndicatorResultRepository(BaseRepository[IndicatorResult]):
     async def get_latest_result(
         self,
         indicator_type: str,
-        phase: MaintenancePhase | None = None,
         maintenance_id: str | None = None,
     ) -> IndicatorResult | None:
         """
@@ -69,7 +64,6 @@ class IndicatorResultRepository(BaseRepository[IndicatorResult]):
 
         Args:
             indicator_type: Type of indicator
-            phase: Filter by phase (optional)
             maintenance_id: Filter by maintenance ID (optional)
 
         Returns:
@@ -82,8 +76,6 @@ class IndicatorResultRepository(BaseRepository[IndicatorResult]):
             .limit(1)
         )
 
-        if phase:
-            stmt = stmt.where(IndicatorResult.phase == phase)
         if maintenance_id:
             stmt = stmt.where(
                 IndicatorResult.maintenance_id == maintenance_id
@@ -171,33 +163,22 @@ class IndicatorResultRepository(BaseRepository[IndicatorResult]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def compare_phases(
+    async def get_latest_for_maintenance(
         self,
         indicator_type: str,
         maintenance_id: str,
-    ) -> dict[str, IndicatorResult | None]:
+    ) -> IndicatorResult | None:
         """
-        Get results for both OLD and NEW phases.
+        Get the latest result for an indicator within a maintenance job.
 
         Args:
             indicator_type: Type of indicator
             maintenance_id: Maintenance job ID
 
         Returns:
-            Dict with 'old' and 'new' keys
+            Latest IndicatorResult or None
         """
-        pre_result = await self.get_latest_result(
+        return await self.get_latest_result(
             indicator_type=indicator_type,
-            phase=MaintenancePhase.OLD,
             maintenance_id=maintenance_id,
         )
-        post_result = await self.get_latest_result(
-            indicator_type=indicator_type,
-            phase=MaintenancePhase.NEW,
-            maintenance_id=maintenance_id,
-        )
-
-        return {
-            "old": pre_result,
-            "new": post_result,
-        }

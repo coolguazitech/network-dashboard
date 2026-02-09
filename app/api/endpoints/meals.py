@@ -13,8 +13,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.core.enums import MealDeliveryStatus
+from app.core.timezone import now_utc
 from app.db.base import get_session_context
 from app.db.models import MealZone
+from app.services.system_log import write_log
 
 router = APIRouter(prefix="/meals", tags=["Meals"])
 
@@ -153,7 +155,7 @@ async def update_meal_status(
 
         # 更新到達時間
         if data.status == "arrived":
-            zone.arrived_time = datetime.utcnow()
+            zone.arrived_time = now_utc()
         elif data.status == "pending":
             zone.arrived_time = None
 
@@ -169,6 +171,14 @@ async def update_meal_status(
 
         await session.commit()
         await session.refresh(zone)
+
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"更新餐點狀態: {zone_code} → {data.status}",
+            module="meals",
+            maintenance_id=maintenance_id,
+        )
 
         status_text = {
             MealDeliveryStatus.NO_MEAL: "今日無便當",
@@ -210,6 +220,14 @@ async def reset_meal_status(maintenance_id: str) -> dict[str, Any]:
             zone.notes = None
 
         await session.commit()
+
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary="重置所有餐點狀態",
+            module="meals",
+            maintenance_id=maintenance_id,
+        )
 
         # 回傳重置後的狀態
         zones_list = []

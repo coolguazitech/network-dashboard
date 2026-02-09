@@ -1,0 +1,11 @@
+hostname,local_interface,expected_neighbor,expected_interface,description
+SW-NEW-001-CORE,Ethernet1/49,SW-NEW-002-CORE,Ethernet1/49,CORE 互聯
+SW-NEW-002-CORE,Ethernet1/50,SW-NEW-001-CORE,Ethernet1/50,CORE 互聯
+SW-NEW-011-EQP,GigabitEthernet1/0/49,SW-NEW-001-CORE,Ethernet1/1,EQP 上行至 CORE-001
+SW-NEW-013-EQP,GigabitEthernet1/0/49,SW-NEW-001-CORE,Ethernet1/3,EQP 上行至 CORE-001
+SW-NEW-015-EQP,GigabitEthernet1/0/49,SW-NEW-001-CORE,Ethernet1/5,EQP 上行至 CORE-001
+SW-NEW-012-EQP,GigabitEthernet1/0/49,SW-NEW-002-CORE,Ethernet1/2,EQP 上行至 CORE-002
+SW-NEW-014-EQP,GigabitEthernet1/0/49,SW-NEW-002-CORE,Ethernet1/4,EQP 上行至 CORE-002
+SW-NEW-021-AMHS,1/1/49,SW-NEW-001-CORE,Ethernet1/11,AMHS 上行至 CORE-001
+SW-NEW-022-AMHS,1/1/49,SW-NEW-001-CORE,Ethernet1/12,AMHS 上行至 CORE-001
+SW-NEW-031-AP,1/1/49,SW-NEW-002-CORE,Ethernet1/11,AP 上行至 CORE-002

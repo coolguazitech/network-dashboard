@@ -385,6 +385,7 @@
 <script>
 import CategoryModal from '../components/CategoryModal.vue';
 import { getAuthHeaders } from '@/utils/auth';
+import { apiFetch } from '@/utils/api';
 
 export default {
   name: "Comparison",
@@ -468,60 +469,9 @@ export default {
       return Object.keys(this.checkpointsByDate).sort((a, b) => b.localeCompare(a));
     },
 
-    // 篩選後的比較結果
+    // 後端已排序 + 篩選，直接使用
     filteredComparisons() {
-      let result = this.allComparisons;
-
-      // 種類篩選（-1 = 全部，null = 未分類）
-      if (!this.selectedCategories.includes(-1)) {
-        result = result.filter(c => {
-          // 標準化 MAC 格式（全部轉大寫）
-          const normalizedMac = c.mac_address?.toUpperCase();
-          const catIds = this.categoryMembers[normalizedMac] || [];
-
-          // 如果該 MAC 有任一分類在選擇的分類中，就顯示
-          if (catIds.length === 0) {
-            // 未分類的 MAC，檢查是否選擇了 null
-            return this.selectedCategories.includes(null);
-          }
-          return catIds.some(id => this.selectedCategories.includes(id));
-        });
-      }
-
-      // 嚴重程度篩選（只有 critical、warning、undetected 才算異常，info 不算）
-      if (this.severityFilter === 'critical') {
-        result = result.filter(c => c.severity === 'critical');
-      } else if (this.severityFilter === 'warning') {
-        result = result.filter(c => c.severity === 'warning');
-      } else if (this.severityFilter === 'has_issues') {
-        // 只有 critical、warning、undetected 才算異常
-        // severity='info' 表示預期變化或無變化，不算異常
-        result = result.filter(c =>
-          c.severity === 'critical' ||
-          c.severity === 'warning' ||
-          c.severity === 'undetected'
-        );
-      }
-
-      // 搜尋篩選
-      if (this.searchText) {
-        const search = this.searchText.toLowerCase();
-        result = result.filter(c =>
-          (c.mac_address && c.mac_address.toLowerCase().includes(search)) ||
-          (c.before?.ip_address && c.before.ip_address.toLowerCase().includes(search)) ||
-          (c.current?.ip_address && c.current.ip_address.toLowerCase().includes(search))
-        );
-      }
-
-      // 排序：重大問題 > 警告 > 其他
-      const order = { critical: 1, warning: 2, info: 3 };
-      result.sort((a, b) => {
-        const oa = a.is_changed ? (order[a.severity] || 3) : 4;
-        const ob = b.is_changed ? (order[b.severity] || 3) : 4;
-        return oa - ob;
-      });
-
-      return result;
+      return this.allComparisons;
     },
 
     totalPages() {
@@ -639,6 +589,23 @@ export default {
         this.initialize();
       }
     },
+    // 篩選條件變更時重新向後端取資料
+    severityFilter() {
+      this.currentPage = 1;
+      this.loadDiff();
+    },
+    selectedCategories: {
+      handler() {
+        this.currentPage = 1;
+        this.loadDiff();
+      },
+      deep: true,
+    },
+    searchText() {
+      this.currentPage = 1;
+      clearTimeout(this._searchTimer);
+      this._searchTimer = setTimeout(() => this.loadDiff(), 300);
+    },
   },
   mounted() {
     if (this.selectedMaintenanceId) this.initialize();
@@ -687,7 +654,7 @@ export default {
     // ===== Config =====
     async loadFrontendConfig() {
       try {
-        const res = await apiFetch('/api/v1/config/frontend');
+        const res = await apiFetch('/api/v1/dashboard/config/frontend');
         if (res.ok) {
           const config = await res.json();
           this.pollingIntervalMs = (config.polling_interval_seconds || 60) * 1000;
@@ -787,15 +754,14 @@ export default {
     },
 
     formatHourLabel(timestamp) {
-      // 顯示小時:分鐘
+      // 顯示整點時間，與趨勢圖 X 軸一致
       let ts = timestamp;
       if (!ts.endsWith('Z') && !ts.includes('+')) {
         ts = ts + 'Z';
       }
       const date = new Date(ts);
       const hour = String(date.getHours()).padStart(2, '0');
-      const min = String(date.getMinutes()).padStart(2, '0');
-      return `${hour}:${min}`;
+      return `${hour}:00`;
     },
 
     isToday(dateKey) {
@@ -866,6 +832,19 @@ export default {
         const params = new URLSearchParams();
         params.append('checkpoint', this.selectedCheckpoint);
 
+        // 篩選參數交給後端處理
+        if (this.severityFilter && this.severityFilter !== 'all') {
+          params.append('severity_filter', this.severityFilter);
+        }
+        if (!this.selectedCategories.includes(-1) && this.selectedCategories.length > 0) {
+          // 後端一次只支援一個 category，取第一個選中的
+          const catId = this.selectedCategories[0];
+          params.append('category_id', catId === null ? '0' : String(catId));
+        }
+        if (this.searchText) {
+          params.append('search', this.searchText);
+        }
+
         const res = await fetch(`/api/v1/comparisons/diff/${this.selectedMaintenanceId}?${params}`, {
           headers: getAuthHeaders()
         });
@@ -874,9 +853,6 @@ export default {
           this.currentTime = data.current_time;
           this.summary = data.summary;
           this.allComparisons = data.results || [];
-
-          // 更新分類統計（從 by_category）
-          // 這裡可以使用 diff API 返回的分類統計，但為了和原有邏輯一致，仍然呼叫 loadCategoryStats
         }
       } catch (e) {
         console.error('載入 Diff 失敗:', e);

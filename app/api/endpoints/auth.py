@@ -316,9 +316,8 @@ async def list_maintenances_public(
     return [
         {
             "id": c.maintenance_id,
-            "name": c.config_data.get("name") or c.maintenance_id if c.config_data else c.maintenance_id,
+            "name": c.name or c.maintenance_id,
         }
         for c in configs
-        # 只回傳啟用中的歲修
-        if not c.config_data or c.config_data.get("is_active", True)
+        if c.is_active
     ]

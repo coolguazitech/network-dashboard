@@ -10,7 +10,7 @@ import io
 import re
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Body, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func, delete
 
@@ -20,6 +20,7 @@ from app.db.models import (
     MaintenanceMacList, ClientCategoryMember, ClientCategory,
 )
 from app.services.client_comparison_service import ClientComparisonService
+from app.services.system_log import write_log
 
 
 # MAC 地址格式驗證
@@ -444,6 +445,14 @@ async def add_client(
         await session.commit()
         await session.refresh(entry)
 
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"新增 Client: {mac} ({ip})",
+            module="client_list",
+            maintenance_id=maintenance_id,
+        )
+
         # 自動重新生成比較結果
         await regenerate_comparisons(maintenance_id, session)
 
@@ -525,6 +534,14 @@ async def update_client(
         await session.commit()
         await session.refresh(entry)
 
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"更新 Client: {entry.mac_address}",
+            module="client_list",
+            maintenance_id=maintenance_id,
+        )
+
         # 自動重新生成比較結果（MAC 變更可能影響比較）
         await regenerate_comparisons(maintenance_id, session)
 
@@ -578,6 +595,14 @@ async def remove_mac(
         await session.delete(entry)
         await session.commit()
 
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary=f"刪除 Client: {mac}",
+            module="client_list",
+            maintenance_id=maintenance_id,
+        )
+
         # 自動重新生成比較結果
         await regenerate_comparisons(maintenance_id, session)
 
@@ -587,7 +612,7 @@ async def remove_mac(
 @router.post("/{maintenance_id}/batch-delete")
 async def batch_delete_macs(
     maintenance_id: str,
-    mac_ids: list[int],
+    mac_ids: list[int] = Body(..., embed=True),
 ) -> dict[str, Any]:
     """批量刪除 MAC 位址（同時從所有分類中移除）。"""
     if not mac_ids:
@@ -632,6 +657,13 @@ async def batch_delete_macs(
 
         # 自動重新生成比較結果
         if result.rowcount > 0:
+            await write_log(
+                level="WARNING",
+                source="api",
+                summary=f"批量刪除 Client: {result.rowcount} 筆",
+                module="client_list",
+                maintenance_id=maintenance_id,
+            )
             await regenerate_comparisons(maintenance_id, session)
 
         return {
@@ -650,6 +682,14 @@ async def clear_all(maintenance_id: str) -> dict[str, Any]:
         )
         result = await session.execute(stmt)
         await session.commit()
+
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary=f"清空 Client 清單: {result.rowcount} 筆",
+            module="client_list",
+            maintenance_id=maintenance_id,
+        )
 
         # 自動重新生成比較結果（清空後會是空的）
         await regenerate_comparisons(maintenance_id, session)
@@ -795,6 +835,13 @@ async def import_csv(
 
         # 自動重新生成比較結果
         if imported > 0:
+            await write_log(
+                level="INFO",
+                source="api",
+                summary=f"CSV 匯入 Client: 新增 {imported}, 跳過 {skipped}",
+                module="client_list",
+                maintenance_id=maintenance_id,
+            )
             await regenerate_comparisons(maintenance_id, session)
 
         return {
@@ -1118,6 +1165,14 @@ async def detect_clients(maintenance_id: str) -> dict[str, Any]:
 
     service = get_client_collection_service()
     result = await service.detect_clients(maintenance_id)
+
+    await write_log(
+        level="INFO",
+        source="api",
+        summary="觸發客戶端偵測",
+        module="client_list",
+        maintenance_id=maintenance_id,
+    )
 
     # 偵測完成後自動重新生成比較結果
     async with get_session_context() as session:

@@ -22,7 +22,6 @@ from app.indicators.base import (
     TimeSeriesPoint,
     RawDataRow,
 )
-from app.core.enums import MaintenancePhase
 
 
 class UplinkIndicator(BaseIndicator):
@@ -38,12 +37,8 @@ class UplinkIndicator(BaseIndicator):
         self,
         maintenance_id: str,
         session: AsyncSession,
-        phase: MaintenancePhase | None = None,
     ) -> IndicatorEvaluationResult:
         """評估 Uplink 拓樸。"""
-        if phase is None:
-            phase = MaintenancePhase.NEW
-
         # 從 DB 讀取 uplink 期望
         uplink_expectations = await self._load_expectations(
             session, maintenance_id
@@ -51,7 +46,7 @@ class UplinkIndicator(BaseIndicator):
 
         # 使用 NeighborRecordRepo 取得每台設備最新批次的鄰居記錄
         repo = NeighborRecordRepo(session)
-        records = await repo.get_latest_per_device(phase, maintenance_id)
+        records = await repo.get_latest_per_device(maintenance_id)
 
         # 按設備分組：每台設備有多筆 NeighborRecord（每個鄰居一筆）
         device_neighbors: dict[str, list[str]] = defaultdict(list)
@@ -63,6 +58,7 @@ class UplinkIndicator(BaseIndicator):
         total_count = 0
         pass_count = 0
         failures = []
+        passes = []
 
         # 遍歷每台有期望的設備（以期望值為主，而非收集到的資料）
         for device_hostname, expected_neighbors in uplink_expectations.items():
@@ -77,7 +73,6 @@ class UplinkIndicator(BaseIndicator):
                 total_count += 1
 
                 if not actual_neighbors:
-                    # 沒有收集到資料 → 失敗
                     failures.append({
                         "device": device_hostname,
                         "expected_neighbor": expected_neighbor,
@@ -85,6 +80,12 @@ class UplinkIndicator(BaseIndicator):
                     })
                 elif expected_neighbor in actual_neighbors:
                     pass_count += 1
+                    if len(passes) < 10:
+                        passes.append({
+                            "device": device_hostname,
+                            "interface": "Uplink",
+                            "reason": f"鄰居 '{expected_neighbor}' 已連接",
+                        })
                 else:
                     failures.append({
                         "device": device_hostname,
@@ -97,7 +98,6 @@ class UplinkIndicator(BaseIndicator):
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
-            phase=phase,
             maintenance_id=maintenance_id,
             total_count=total_count,
             pass_count=pass_count,
@@ -107,6 +107,7 @@ class UplinkIndicator(BaseIndicator):
                 if total_count > 0 else 0
             },
             failures=failures if failures else None,
+            passes=passes if passes else None,
             summary=(
                 f"Uplink 驗收: {pass_count}/{total_count} 通過 "
                 f"({pass_count / total_count * 100:.1f}%)"
@@ -162,7 +163,6 @@ class UplinkIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[TimeSeriesPoint]:
         """獲取時間序列數據。"""
         uplink_expectations = await self._load_expectations(
@@ -171,7 +171,7 @@ class UplinkIndicator(BaseIndicator):
 
         repo = NeighborRecordRepo(session)
         records = await repo.get_time_series_records(
-            maintenance_id, phase, limit
+            maintenance_id, limit
         )
 
         # 按 (collected_at, switch_hostname) 分組，計算每組的匹配率
@@ -214,12 +214,11 @@ class UplinkIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
         repo = NeighborRecordRepo(session)
         records = await repo.get_latest_records(
-            maintenance_id, phase, limit
+            maintenance_id, limit
         )
 
         raw_data = []

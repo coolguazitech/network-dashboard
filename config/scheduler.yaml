@@ -1,38 +1,50 @@
 # =============================================================================
-# 排程設定檔（通用設定）
+# 排程設定檔 (Scheduler Configuration)
 # =============================================================================
-# 此檔案定義所有資料收集的排程任務，適用於「所有活躍歲修」
-# 每個 job 的 name 即為採集的資料類型 (fetch_type)
+# 定義所有 Fetcher 的來源 (source) 和採集間隔 (interval)。
 #
-# source: 資料來源 API
-#   - DNA: Device Network Automation（設備層級資料）
-#   - FNA: Factory Network Automation（工廠層級資料）
-#   - GNMSPing: GNMS Ping 服務（批次 ping 檢查）
+# source: 外部 API 來源（對應 .env 中的 FETCHER_SOURCE__{SOURCE}__BASE_URL）
+#   - FNA: FAB Network API
+#   - DNA: Data Center Network API
+#   - GNMSPING: GNMS Ping API
 #
-# brand: HPE / Cisco-IOS / Cisco-NXOS (選填)
+# interval: 觸發頻率（秒）。若上一輪尚未完成，本次會被跳過（max_instances=1）
 #
-# 注意：此設定檔不指定 maintenance_id，系統會自動對所有活躍歲修執行採集
+# endpoint 模板定義在 .env 的 FETCHER_ENDPOINT__{NAME} 變數中，
+# 支援佔位符如 {switch_ip}，未消耗的變數自動成為 query params。
+#
+# 新增 Fetcher 步驟：
+#   1. 在此檔案加一筆 fetcher entry（source + interval）
+#      若 source 為新的外部 API（例如不在 FNA/DNA/GNMSPING 之中），需額外：
+#      a. 在 .env 加 FETCHER_SOURCE__{SOURCE}__BASE_URL 和 __TIMEOUT
+#      b. 在 app/core/config.py 的 FetcherSourceConfig 加對應的欄位
+#   2. 在 .env 加一筆 FETCHER_ENDPOINT__{NAME}=... endpoint 模板
+#      支援佔位符（會替換進 URL path）：
+#        - {switch_ip}: FetchContext.switch_ip
+#        - {device_type}: FetchContext.device_type.api_value ("hpe"/"ios"/"nxos")
+#        - {tenant_group}, {switch_ips} 等: FetchContext.params 中的任意 key
+#      未被佔位符消耗的變數自動成為 query params（?key=value）
+#   3. 在 app/parsers/plugins/ 寫對應的 Parser
+#   4. 完成！ConfiguredFetcher 自動處理 GET 呼叫。
 # =============================================================================
 
-jobs:
+fetchers:
   # ---------------------------------------------------------------------------
-  # DNA/FNA 資料收集（設備層級）
+  # FNA (2): FAB Network API — 內部自動偵測廠牌，只需 switch_ip
   # ---------------------------------------------------------------------------
-  mac_table:
-    source: DNA
-    interval: 30
-    description: "MAC Table 採集"
-
-  arp_table:
-    source: FNA
-    interval: 30
-    description: "ARP Table 採集"
-
   transceiver:
     source: FNA
     interval: 30
     description: "光模組 Tx/Rx 功率資料收集"
 
+  port_channel:
+    source: FNA
+    interval: 30
+    description: "Port-Channel 狀態及成員檢查"
+
+  # ---------------------------------------------------------------------------
+  # DNA (4): Data Center Network API — 需要 device_type + switch_ip
+  # ---------------------------------------------------------------------------
   version:
     source: DNA
     interval: 30
@@ -48,59 +60,37 @@ jobs:
     interval: 30
     description: "設備風扇狀態收集"
 
-  error_count:
-    source: DNA
-    interval: 30
-    description: "Interface 錯誤計數收集"
-
   power:
     source: DNA
     interval: 30
     description: "設備電源供應器狀態收集"
 
-  port_channel:
-    source: FNA
+  error_count:
+    source: DNA
     interval: 30
-    description: "Port-Channel 狀態及成員檢查"
+    description: "Interface 錯誤計數收集"
+
+  not_registerd_for_test:
+    source: DNA
+    interval: 30
+    description: "製造錯誤日誌用於測試（不會被 Parser 消耗）"
 
   # ---------------------------------------------------------------------------
-  # 設備 Ping（Switch 可達性檢查）- 獨立高頻率採集
+  # GNMSPing (1): GNMS Ping API — 批量 Ping，不需 device_type
   # ---------------------------------------------------------------------------
   ping:
-    source: DNA
-    interval: 10  # 比其他採集更頻繁
+    source: GNMSPING
+    interval: 30
     description: "設備可達性檢查（Switch Ping）"
 
-  # ---------------------------------------------------------------------------
-  # GNMSPing 資料收集（批次 ping）
-  # ---------------------------------------------------------------------------
-  gnms_ping:
-    source: GNMSPing
-    interval: 30
-    description: "GNMS Ping 連通性檢查（Client IP Ping by TenantGroup）"
-
-  # ---------------------------------------------------------------------------
-  # 客戶端資料收集（整合多種 Fetcher）
-  # ---------------------------------------------------------------------------
+# =============================================================================
+# Non-fetcher tasks（自訂邏輯，在 scheduler 中特殊處理）
+# =============================================================================
+tasks:
   client-collection:
-    source: DNA
-    interval: 15  # 15 秒，後端統一控制偵測頻率
+    interval: 30
     description: "客戶端資料採集 (MAC/ARP/InterfaceStatus/ACL/Ping)"
 
-  # =============================================================================
-  # Mock 資料生成（用於測試環境）
-  # 注意：此 job 會直接塞假資料進 DB，繞過真實資料流
-  # 正常測試時應該停用，讓資料通過 mock fetchers 流入
-  # =============================================================================
-  mock-client-generation:
-    interval: 60
-    enabled: false  # 停用：使用真實資料流 + mock fetchers
-    description: "Mock 客戶端及版本資料生成"
-
-  # =============================================================================
-  # 資料清理（刪除超過 7 天的舊資料）
-  # =============================================================================
   cleanup-old-records:
-    interval: 3600
-    enabled: true
-    description: "清理超過 7 天的 ClientRecord 舊資料"
+    interval: 30
+    description: "清理超過保留天數的 ClientRecord 舊資料"

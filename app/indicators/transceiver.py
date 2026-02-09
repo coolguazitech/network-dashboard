@@ -1,8 +1,8 @@
 """
 Transceiver (光模塊) indicator evaluator.
 
-Evaluates if NEW phase transceiver data meets expectations.
-Uses typed TransceiverRecord table instead of CollectionRecord JSON blobs.
+Evaluates if transceiver data meets expectations (bilateral thresholds).
+Uses typed TransceiverRecord table via TransceiverRecordRepo.
 """
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ from app.indicators.base import (
     RawDataRow,
     TimeSeriesPoint,
 )
-from app.core.enums import MaintenancePhase
 from app.repositories.typed_records import TransceiverRecordRepo
+from app.services.threshold_service import get_threshold
 
 # Fields to aggregate when computing time-series averages.
 _METRIC_FIELDS = ("tx_power", "rx_power", "temperature", "voltage")
@@ -33,16 +33,47 @@ class TransceiverIndicator(BaseIndicator):
     """
     Transceiver 光模塊指標評估器。
 
-    檢查 NEW phase 中每個光模塊的 Tx/Rx 功率是否在正常範圍內。
+    檢查每個光模塊的 Tx/Rx 功率、溫度、電壓是否在正常範圍內（雙向閾值）。
+    閾值來源：DB 動態覆寫 → .env 預設值（透過 threshold_service.get_threshold()）。
     """
 
     indicator_type = "transceiver"
 
-    # 光模塊預期值閾值
-    TX_POWER_MIN = -12.0  # dBm
-    RX_POWER_MIN = -18.0  # dBm
-    TEMPERATURE_MAX = 60.0  # °C
-    VOLTAGE_MIN = 3.2  # V
+    # 當前評估中的歲修 ID（由 evaluate / get_time_series / get_latest_raw_data 設定）
+    _maintenance_id: str | None = None
+
+    # 光模塊閾值：優先讀 DB 覆寫，fallback 到 .env（見 threshold_service.py）
+    @property
+    def TX_POWER_MIN(self) -> float:
+        return get_threshold("transceiver_tx_power_min", self._maintenance_id)
+
+    @property
+    def TX_POWER_MAX(self) -> float:
+        return get_threshold("transceiver_tx_power_max", self._maintenance_id)
+
+    @property
+    def RX_POWER_MIN(self) -> float:
+        return get_threshold("transceiver_rx_power_min", self._maintenance_id)
+
+    @property
+    def RX_POWER_MAX(self) -> float:
+        return get_threshold("transceiver_rx_power_max", self._maintenance_id)
+
+    @property
+    def TEMPERATURE_MIN(self) -> float:
+        return get_threshold("transceiver_temperature_min", self._maintenance_id)
+
+    @property
+    def TEMPERATURE_MAX(self) -> float:
+        return get_threshold("transceiver_temperature_max", self._maintenance_id)
+
+    @property
+    def VOLTAGE_MIN(self) -> float:
+        return get_threshold("transceiver_voltage_min", self._maintenance_id)
+
+    @property
+    def VOLTAGE_MAX(self) -> float:
+        return get_threshold("transceiver_voltage_max", self._maintenance_id)
 
     # ── evaluate ────────────────────────────────────────────────
 
@@ -50,7 +81,6 @@ class TransceiverIndicator(BaseIndicator):
         self,
         maintenance_id: str,
         session: AsyncSession,
-        phase: MaintenancePhase | None = None,
     ) -> IndicatorEvaluationResult:
         """
         評估光模塊指標。
@@ -58,45 +88,62 @@ class TransceiverIndicator(BaseIndicator):
         Args:
             maintenance_id: 維護作業 ID
             session: 資料庫 session
-            phase: 階段 (OLD 或 NEW)，如果為 None 則默認 NEW
         """
-        if phase is None:
-            phase = MaintenancePhase.NEW
-
+        self._maintenance_id = maintenance_id
         repo = TransceiverRecordRepo(session)
-        records = await repo.get_latest_per_device(phase, maintenance_id)
+        records = await repo.get_latest_per_device(maintenance_id)
 
         total_count = 0
         pass_count = 0
         failures: list[dict[str, Any]] = []
+        passes: list[dict[str, Any]] = []
 
         for record in records:
             total_count += 1
             failure = self._check_single_record(record)
             if failure is None:
                 pass_count += 1
+                if len(passes) < 10:
+                    passes.append({
+                        "device": record.switch_hostname,
+                        "interface": record.interface_name,
+                        "reason": "光模塊正常",
+                        "data": {
+                            "tx_power": record.tx_power,
+                            "rx_power": record.rx_power,
+                            "temperature": record.temperature,
+                            "voltage": record.voltage,
+                        },
+                    })
             else:
                 failures.append(failure)
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
-            phase=phase,
             maintenance_id=maintenance_id,
             total_count=total_count,
             pass_count=pass_count,
             fail_count=total_count - pass_count,
             pass_rates={
                 "tx_power_ok": self._calculate_pass_rate(
-                    records, "tx_power", self.TX_POWER_MIN
+                    records, "tx_power",
+                    self.TX_POWER_MIN, self.TX_POWER_MAX,
                 ),
                 "rx_power_ok": self._calculate_pass_rate(
-                    records, "rx_power", self.RX_POWER_MIN
+                    records, "rx_power",
+                    self.RX_POWER_MIN, self.RX_POWER_MAX,
                 ),
                 "temperature_ok": self._calculate_pass_rate(
-                    records, "temperature", None, self.TEMPERATURE_MAX
+                    records, "temperature",
+                    self.TEMPERATURE_MIN, self.TEMPERATURE_MAX,
+                ),
+                "voltage_ok": self._calculate_pass_rate(
+                    records, "voltage",
+                    self.VOLTAGE_MIN, self.VOLTAGE_MAX,
                 ),
             },
             failures=failures if failures else None,
+            passes=passes if passes else None,
             summary=f"光模塊驗收: {pass_count}/{total_count} 通過 "
                    f"({self._calc_percent(pass_count, total_count):.1f}%)"
         )
@@ -110,7 +157,6 @@ class TransceiverIndicator(BaseIndicator):
         Returns:
             A failure dict if the record fails any check, or None if it passes.
         """
-        # 如果 tx_power 和 rx_power 都是 None，判定為光模塊缺失
         if record.tx_power is None and record.rx_power is None:
             return {
                 "device": record.switch_hostname,
@@ -147,22 +193,53 @@ class TransceiverIndicator(BaseIndicator):
         """Return a list of human-readable failure reasons for *record*."""
         reasons: list[str] = []
 
-        if record.tx_power is not None and record.tx_power < self.TX_POWER_MIN:
-            reasons.append(
-                f"Tx Power低: {record.tx_power} dBm (預期: > {self.TX_POWER_MIN})"
-            )
-        if record.rx_power is not None and record.rx_power < self.RX_POWER_MIN:
-            reasons.append(
-                f"Rx Power低: {record.rx_power} dBm (預期: > {self.RX_POWER_MIN})"
-            )
-        if record.temperature is not None and record.temperature > self.TEMPERATURE_MAX:
-            reasons.append(
-                f"溫度高: {record.temperature}°C (預期: < {self.TEMPERATURE_MAX}°C)"
-            )
-        if record.voltage is not None and record.voltage < self.VOLTAGE_MIN:
-            reasons.append(
-                f"電壓低: {record.voltage}V (預期: > {self.VOLTAGE_MIN}V)"
-            )
+        if record.tx_power is not None:
+            if record.tx_power < self.TX_POWER_MIN:
+                reasons.append(
+                    f"Tx Power 過低: {record.tx_power} dBm "
+                    f"(範圍: {self.TX_POWER_MIN}~{self.TX_POWER_MAX})"
+                )
+            elif record.tx_power > self.TX_POWER_MAX:
+                reasons.append(
+                    f"Tx Power 過高: {record.tx_power} dBm "
+                    f"(範圍: {self.TX_POWER_MIN}~{self.TX_POWER_MAX})"
+                )
+
+        if record.rx_power is not None:
+            if record.rx_power < self.RX_POWER_MIN:
+                reasons.append(
+                    f"Rx Power 過低: {record.rx_power} dBm "
+                    f"(範圍: {self.RX_POWER_MIN}~{self.RX_POWER_MAX})"
+                )
+            elif record.rx_power > self.RX_POWER_MAX:
+                reasons.append(
+                    f"Rx Power 過高: {record.rx_power} dBm "
+                    f"(範圍: {self.RX_POWER_MIN}~{self.RX_POWER_MAX})"
+                )
+
+        if record.temperature is not None:
+            if record.temperature < self.TEMPERATURE_MIN:
+                reasons.append(
+                    f"溫度過低: {record.temperature}°C "
+                    f"(範圍: {self.TEMPERATURE_MIN}~{self.TEMPERATURE_MAX}°C)"
+                )
+            elif record.temperature > self.TEMPERATURE_MAX:
+                reasons.append(
+                    f"溫度過高: {record.temperature}°C "
+                    f"(範圍: {self.TEMPERATURE_MIN}~{self.TEMPERATURE_MAX}°C)"
+                )
+
+        if record.voltage is not None:
+            if record.voltage < self.VOLTAGE_MIN:
+                reasons.append(
+                    f"電壓過低: {record.voltage}V "
+                    f"(範圍: {self.VOLTAGE_MIN}~{self.VOLTAGE_MAX}V)"
+                )
+            elif record.voltage > self.VOLTAGE_MAX:
+                reasons.append(
+                    f"電壓過高: {record.voltage}V "
+                    f"(範圍: {self.VOLTAGE_MIN}~{self.VOLTAGE_MAX}V)"
+                )
 
         return reasons
 
@@ -172,10 +249,10 @@ class TransceiverIndicator(BaseIndicator):
         self,
         records: list[TransceiverRecord],
         field: str,
-        min_threshold: float | None = None,
-        max_threshold: float | None = None,
+        min_threshold: float,
+        max_threshold: float,
     ) -> float:
-        """計算特定字段的通過率。"""
+        """計算特定字段的通過率（雙向閾值）。"""
         total = 0
         passed = 0
 
@@ -185,33 +262,19 @@ class TransceiverIndicator(BaseIndicator):
                 continue
 
             total += 1
-            if self._value_passes_threshold(value, min_threshold, max_threshold):
+            if min_threshold <= value <= max_threshold:
                 passed += 1
 
         return self._calc_percent(passed, total)
 
     @staticmethod
-    def _value_passes_threshold(
-        value: float,
-        min_threshold: float | None,
-        max_threshold: float | None,
-    ) -> bool:
-        """Return True when *value* satisfies the given threshold(s)."""
-        if min_threshold is not None:
-            return value >= min_threshold
-        if max_threshold is not None:
-            return value <= max_threshold
-        return True
-
-    @staticmethod
     def _calc_percent(passed: int, total: int) -> float:
-        """計算百分比。"""
         return (passed / total * 100) if total > 0 else 0.0
 
     # ── metadata ────────────────────────────────────────────────
 
     def get_metadata(self) -> IndicatorMetadata:
-        """獲取指標元數據（從 indicators.yaml 配置）。"""
+        """獲取指標元數據。"""
         return IndicatorMetadata(
             name="transceiver",
             title="光模組 Tx/Rx 功率監控",
@@ -263,20 +326,18 @@ class TransceiverIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[TimeSeriesPoint]:
         """獲取時間序列數據。"""
+        self._maintenance_id = maintenance_id
         repo = TransceiverRecordRepo(session)
-        records = await repo.get_time_series_records(maintenance_id, phase, limit)
+        records = await repo.get_time_series_records(maintenance_id, limit)
 
-        # Group records by collected_at to aggregate averages per timestamp
         grouped: dict[datetime, list[TransceiverRecord]] = defaultdict(list)
         for record in records:
             grouped[record.collected_at].append(record)
 
         time_series: list[TimeSeriesPoint] = []
 
-        # Iterate in chronological order (records come desc, so sort the keys)
         for timestamp in sorted(grouped.keys()):
             values = self._aggregate_group_averages(grouped[timestamp])
             if values:
@@ -312,11 +373,11 @@ class TransceiverIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
+        self._maintenance_id = maintenance_id
         repo = TransceiverRecordRepo(session)
-        records = await repo.get_latest_records(maintenance_id, phase, limit)
+        records = await repo.get_latest_records(maintenance_id, limit)
 
         return [self._record_to_raw_row(record) for record in records]
 
@@ -330,12 +391,12 @@ class TransceiverIndicator(BaseIndicator):
             temperature=record.temperature,
             voltage=record.voltage,
             tx_pass=(
-                record.tx_power >= self.TX_POWER_MIN
+                self.TX_POWER_MIN <= record.tx_power <= self.TX_POWER_MAX
                 if record.tx_power is not None
                 else None
             ),
             rx_pass=(
-                record.rx_power >= self.RX_POWER_MIN
+                self.RX_POWER_MIN <= record.rx_power <= self.RX_POWER_MAX
                 if record.rx_power is not None
                 else None
             ),

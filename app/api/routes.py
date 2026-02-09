@@ -20,6 +20,8 @@ from app.api.endpoints import (
     maintenance_devices,
     meals,
     reports,
+    system_logs,
+    thresholds,
     users,
 )
 
@@ -96,6 +98,18 @@ api_router.include_router(
     reports.router,
     prefix="",
     tags=["Reports"],
+)
+
+api_router.include_router(
+    system_logs.router,
+    prefix="",
+    tags=["System Logs"],
+)
+
+api_router.include_router(
+    thresholds.router,
+    prefix="",
+    tags=["Thresholds"],
 )
 
 api_router.include_router(

@@ -1,0 +1,82 @@
+{
+  "name": "Network Dashboard Dev",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "devcontainer",
+  "workspaceFolder": "/workspace",
+
+  // 功能擴展
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+
+  // VSCode 設定
+  "customizations": {
+    "vscode": {
+      "settings": {
+        // Python
+        "python.defaultInterpreterPath": "/workspace/.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        },
+        // Vue / Frontend
+        "[vue]": {
+          "editor.defaultFormatter": "Vue.volar"
+        },
+        "[javascript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[typescript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        // 通用
+        "files.eol": "\n",
+        "files.trimTrailingWhitespace": true,
+        "editor.tabSize": 2,
+        "editor.insertSpaces": true
+      },
+      "extensions": [
+        // Python
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        // Vue / Frontend
+        "Vue.volar",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss",
+        // 通用
+        "eamodio.gitlens",
+        "usernamehw.errorlens",
+        "EditorConfig.EditorConfig",
+        // Database
+        "cweijan.vscode-database-client2"
+      ]
+    }
+  },
+
+  // 容器啟動後執行
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  // 轉發埠口
+  "forwardPorts": [8000, 5173, 3306, 8080],
+  "portsAttributes": {
+    "8000": { "label": "Backend API" },
+    "5173": { "label": "Frontend Dev" },
+    "3306": { "label": "MariaDB" },
+    "8080": { "label": "phpMyAdmin" }
+  },
+
+  // 環境變數
+  "remoteEnv": {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUNBUFFERED": "1"
+  }
+}

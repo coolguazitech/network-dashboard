@@ -4,6 +4,7 @@ Network Dashboard - FastAPI Application Entry Point.
 from __future__ import annotations
 
 import logging
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator
@@ -15,8 +16,19 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import IntegrityError
 
+import re
+
 from app.core.config import settings
 from app.db.base import close_db, init_db
+
+# 從 URL 路徑中提取 maintenance_id（用於日誌關聯）
+_MAINTENANCE_ID_RE = re.compile(r"/maintenance/([^/]+)")
+
+
+def _extract_maintenance_id(path: str) -> str | None:
+    """嘗試從 API 路徑中提取 maintenance_id。"""
+    m = _MAINTENANCE_ID_RE.search(path)
+    return m.group(1) if m else None
 from app.fetchers.registry import setup_fetchers
 from app.parsers.registry import auto_discover_parsers
 from app.services.scheduler import get_scheduler_service, setup_scheduled_jobs
@@ -29,50 +41,62 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_scheduler_config() -> dict[str, Any]:
+def load_fetcher_config() -> dict[str, Any]:
     """
-    Load scheduler configuration from YAML file.
+    Load fetcher and task configuration from YAML file.
 
-    此設定檔是通用的，不包含特定的 maintenance_id。
-    採集時會自動查詢所有活躍的歲修 ID。
+    讀取 config/scheduler.yaml，回傳兩部分：
+    - fetchers: {name: {source, endpoint, interval}} — 用於 ConfiguredFetcher
+    - jobs: [{name, interval}] — 所有排程任務（fetchers + tasks 合併）
 
     Returns:
-        dict with 'jobs' list.
-        Each job has: name, url, source, brand, interval, description.
+        dict with 'fetchers' and 'jobs' keys.
     """
     config_path = Path("config/scheduler.yaml")
     if not config_path.exists():
         logger.warning("scheduler.yaml not found, no jobs will be scheduled")
-        return {"jobs": []}
+        return {"fetchers": {}, "jobs": []}
 
     with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    if not config or "jobs" not in config:
-        return {"jobs": []}
+    if not config:
+        return {"fetchers": {}, "jobs": []}
 
-    jobs = []
-    for job_name, job_config in config["jobs"].items():
-        if not job_config:
-            job_config = {}
+    default_interval = settings.collection_interval_seconds
+    fetchers: dict[str, dict[str, Any]] = {}
+    jobs: list[dict[str, Any]] = []
 
-        # 檢查 enabled 標誌（預設為 True）
-        if not job_config.get("enabled", True):
-            logger.info(f"Skipping disabled job: {job_name}")
+    # Parse fetchers section
+    for name, fc in (config.get("fetchers") or {}).items():
+        if not fc:
+            fc = {}
+        if not fc.get("enabled", True):
+            logger.info(f"Skipping disabled fetcher: {name}")
             continue
 
-        # 使用 env 設定的預設值，或 scheduler.yaml 中指定的值
-        default_interval = settings.collection_interval_seconds
+        fetchers[name] = {
+            "source": fc.get("source", ""),
+        }
         jobs.append({
-            "name": job_name,
-            "url": job_config.get("url"),
-            "source": job_config.get("source"),
-            "brand": job_config.get("brand"),
-            "interval": job_config.get("interval", default_interval),
-            "description": job_config.get("description", ""),
+            "name": name,
+            "interval": fc.get("interval", default_interval),
         })
 
-    return {"jobs": jobs}
+    # Parse tasks section
+    for name, tc in (config.get("tasks") or {}).items():
+        if not tc:
+            tc = {}
+        if not tc.get("enabled", True):
+            logger.info(f"Skipping disabled task: {name}")
+            continue
+
+        jobs.append({
+            "name": name,
+            "interval": tc.get("interval", default_interval),
+        })
+
+    return {"fetchers": fetchers, "jobs": jobs}
 
 
 @asynccontextmanager
@@ -86,12 +110,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     logger.info("Starting application...")
     await init_db()
-    auto_discover_parsers()
-    setup_fetchers(use_mock=settings.use_mock_api)
 
-    # Load and start scheduled jobs
-    scheduler_config = load_scheduler_config()
-    jobs = scheduler_config.get("jobs", [])
+    # Create default root account if not exists
+    from app.services.auth_service import AuthService
+    root_user = await AuthService.create_root_if_not_exists()
+    if root_user:
+        logger.info(f"Root account ready: {root_user.username}")
+
+    auto_discover_parsers()
+
+    # Load fetcher config from YAML
+    fetcher_config = load_fetcher_config()
+    setup_fetchers(
+        use_mock=settings.use_mock_api,
+        fetcher_configs=fetcher_config.get("fetchers"),
+    )
+
+    # Threshold overrides: per-maintenance, loaded lazily on first access
+
+    # Start scheduled jobs
+    jobs = fetcher_config.get("jobs", [])
     if jobs:
         await setup_scheduled_jobs(jobs)
         logger.info(f"Started {len(jobs)} scheduled jobs")
@@ -146,9 +184,67 @@ def create_app() -> FastAPI:
 
         logger.warning(f"IntegrityError on {request.url}: {error_msg}")
 
+        # 寫入 SystemLog
+        from app.services.system_log import write_log, format_error_detail
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary=f"資料庫約束錯誤 ({type(exc).__name__}): {request.method} {request.url.path}",
+            detail=format_error_detail(
+                exc=exc,
+                context={
+                    "請求": f"{request.method} {request.url.path}",
+                    "約束": error_msg,
+                    "客戶端": request.client.host if request.client else "unknown",
+                },
+            ),
+            module="database",
+            maintenance_id=_extract_maintenance_id(str(request.url.path)),
+            request_path=str(request.url.path),
+            request_method=request.method,
+            status_code=400,
+            ip_address=request.client.host if request.client else None,
+        )
+
         return JSONResponse(
             status_code=400,
             content={"detail": detail},
+        )
+
+    # Global exception handler for uncaught exceptions
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """
+        攔截所有未處理的 500 錯誤，寫入 SystemLog。
+        """
+        logger.error(
+            "Unhandled exception on %s %s: %s",
+            request.method, request.url.path, exc,
+        )
+
+        from app.services.system_log import write_log, format_error_detail
+        await write_log(
+            level="ERROR",
+            source="api",
+            summary=f"API 錯誤 ({type(exc).__name__}): {request.method} {request.url.path}",
+            detail=format_error_detail(
+                exc=exc,
+                context={
+                    "請求": f"{request.method} {request.url.path}",
+                    "客戶端": request.client.host if request.client else "unknown",
+                },
+            ),
+            module="api",
+            maintenance_id=_extract_maintenance_id(str(request.url.path)),
+            request_path=str(request.url.path),
+            request_method=request.method,
+            status_code=500,
+            ip_address=request.client.host if request.client else None,
+        )
+
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "內部伺服器錯誤"},
         )
 
     # Import and include routers

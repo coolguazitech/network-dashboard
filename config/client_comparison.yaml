@@ -9,6 +9,7 @@ critical_fields:
   - link_status          # 連接狀態變了 (connected/down)
   - ping_reachable       # Ping 可達性變了 (True/False)
   - acl_passes           # ACL 檢查狀態變了
+  - vlan_id              # VLAN 變了
 
 # 🟡 警告 (Warning)
 # 這些欄位的變化影響效能但不影響連通性

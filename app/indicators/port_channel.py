@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import MaintenancePhase
+from app.core.enums import LinkStatus
 from app.db.models import PortChannelExpectation, PortChannelRecord
 from app.indicators.base import (
     BaseIndicator,
@@ -48,7 +48,6 @@ class PortChannelIndicator(BaseIndicator):
         self,
         maintenance_id: str,
         session: AsyncSession,
-        phase: MaintenancePhase | None = None,
     ) -> IndicatorEvaluationResult:
         """
         評估 Port-Channel 指標。
@@ -56,30 +55,28 @@ class PortChannelIndicator(BaseIndicator):
         Args:
             maintenance_id: 維護作業 ID
             session: 資料庫 session
-            phase: 階段 (OLD 或 NEW)，預設 NEW
         """
-        if phase is None:
-            phase = MaintenancePhase.NEW
-
         exp_map = await self._build_expectation_map(session, maintenance_id)
 
         repo = PortChannelRecordRepo(session)
-        records = await repo.get_latest_per_device(phase, maintenance_id)
+        records = await repo.get_latest_per_device(maintenance_id)
         device_pcs = self._build_device_pc_map(records)
 
         total_count = 0
         pass_count = 0
         failures: list[_Failure] = []
+        passes: list[_Failure] = []
 
         for hostname, pcs in exp_map.items():
-            t, p, f = self._evaluate_device(hostname, pcs, device_pcs)
+            t, p, f, ps = self._evaluate_device(hostname, pcs, device_pcs)
             total_count += t
             pass_count += p
             failures.extend(f)
+            if len(passes) < 10:
+                passes.extend(ps[:10 - len(passes)])
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
-            phase=phase,
             maintenance_id=maintenance_id,
             total_count=total_count,
             pass_count=pass_count,
@@ -88,6 +85,7 @@ class PortChannelIndicator(BaseIndicator):
                 "status_ok": self._calc_percent(pass_count, total_count),
             },
             failures=failures or None,
+            passes=passes or None,
             summary=f"Port-Channel: {pass_count}/{total_count} 通過",
         )
 
@@ -123,11 +121,11 @@ class PortChannelIndicator(BaseIndicator):
         hostname: str,
         expected_pcs: dict[str, PortChannelExpectation],
         device_pcs: _DevicePCMap,
-    ) -> tuple[int, int, list[_Failure]]:
+    ) -> tuple[int, int, list[_Failure], list[_Failure]]:
         """Evaluate all expected port-channels for a single device.
 
         Returns:
-            (total_count, pass_count, failures)
+            (total_count, pass_count, failures, passes)
         """
         actual_pcs = device_pcs.get(hostname)
         if not actual_pcs:
@@ -135,11 +133,12 @@ class PortChannelIndicator(BaseIndicator):
                 self._failure(hostname, pc_name, "無採集數據")
                 for pc_name in expected_pcs
             ]
-            return len(expected_pcs), 0, failures
+            return len(expected_pcs), 0, failures, []
 
         total = 0
         passed = 0
         failures: list[_Failure] = []
+        passes: list[_Failure] = []
         for pc_name, exp in expected_pcs.items():
             total += 1
             fail = self._check_single_pc(hostname, pc_name, exp, actual_pcs)
@@ -147,8 +146,15 @@ class PortChannelIndicator(BaseIndicator):
                 failures.append(fail)
             else:
                 passed += 1
+                actual = self._find_actual_record(pc_name, actual_pcs)
+                passes.append({
+                    "device": hostname,
+                    "interface": pc_name,
+                    "reason": "Port-Channel 正常",
+                    "data": self._record_to_data(actual) if actual else None,
+                })
 
-        return total, passed, failures
+        return total, passed, failures, passes
 
     def _check_single_pc(
         self,
@@ -166,7 +172,7 @@ class PortChannelIndicator(BaseIndicator):
         if actual is None:
             return self._failure(hostname, pc_name, "Port-Channel 不存在")
 
-        if actual.status != "UP":
+        if actual.status.lower() != LinkStatus.UP.value:
             return self._failure(
                 hostname, pc_name,
                 f"Port-Channel 狀態異常: {actual.status}",
@@ -225,7 +231,7 @@ class PortChannelIndicator(BaseIndicator):
         return [
             f"{m}({status})"
             for m, status in actual.member_status.items()
-            if status != "UP"
+            if status.lower() != LinkStatus.UP.value
         ]
 
     @staticmethod
@@ -306,13 +312,11 @@ class PortChannelIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[TimeSeriesPoint]:
         """獲取時間序列數據。"""
         repo = PortChannelRecordRepo(session)
         records = await repo.get_time_series_records(
             maintenance_id=maintenance_id,
-            phase=phase,
             limit=limit,
         )
 
@@ -323,7 +327,7 @@ class PortChannelIndicator(BaseIndicator):
             if ts not in ts_groups:
                 ts_groups[ts] = {"up": 0, "total": 0}
             ts_groups[ts]["total"] += 1
-            if record.status == "UP":
+            if record.status.lower() == LinkStatus.UP.value:
                 ts_groups[ts]["up"] += 1
 
         return [
@@ -347,13 +351,11 @@ class PortChannelIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
         repo = PortChannelRecordRepo(session)
         records = await repo.get_latest_records(
             maintenance_id=maintenance_id,
-            phase=phase,
             limit=limit,
         )
 

@@ -1,0 +1,68 @@
+# =============================================================================
+# Production Docker Compose - 一鍵起服務
+#
+# 使用方式：
+#   1. 複製 .env.production → .env，修改密碼
+#   2. docker-compose -f docker-compose.production.yml up -d
+#   3. 開瀏覽器 http://localhost:8000 → root/admin123 登入
+# =============================================================================
+
+services:
+  app:
+    image: coolguazi/network-dashboard-base:v1.2.0
+    container_name: netora_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - DB_HOST=db
+      - DB_PORT=3306
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - app_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+  db:
+    image: mariadb:10.11
+    container_name: netora_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-admin}
+      MYSQL_DATABASE: ${DB_NAME:-netora}
+      MYSQL_USER: ${DB_USER:-admin}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-admin}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    container_name: netora_pma
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PMA_HOST: db
+      PMA_USER: ${DB_USER:-admin}
+      PMA_PASSWORD: ${DB_PASSWORD:-admin}
+    ports:
+      - "${PMA_PORT:-8080}:80"
+
+volumes:
+  mariadb_data:
+  app_data:

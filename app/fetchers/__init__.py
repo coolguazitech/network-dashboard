@@ -12,7 +12,6 @@ Fetchers package.
 """
 from app.fetchers.base import BaseFetcher, FetchContext, FetchResult
 from app.fetchers.registry import (
-    FetcherRegistry,
     fetcher_registry,
     setup_fetchers,
 )
@@ -21,7 +20,6 @@ __all__ = [
     "BaseFetcher",
     "FetchContext",
     "FetchResult",
-    "FetcherRegistry",
     "fetcher_registry",
     "setup_fetchers",
 ]

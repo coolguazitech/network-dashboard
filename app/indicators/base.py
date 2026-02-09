@@ -12,7 +12,6 @@ from typing import Any
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import MaintenancePhase
 
 
 class ObservedField(BaseModel):
@@ -61,7 +60,6 @@ class IndicatorEvaluationResult(BaseModel):
     """Result of indicator evaluation."""
 
     indicator_type: str
-    phase: MaintenancePhase
     maintenance_id: str
 
     # Statistics
@@ -74,6 +72,9 @@ class IndicatorEvaluationResult(BaseModel):
 
     # Detailed failure information
     failures: list[dict[str, Any]] | None = None
+
+    # Detailed pass information (sample, up to 10 items)
+    passes: list[dict[str, Any]] | None = None
 
     # Summary message
     summary: str | None = None
@@ -100,7 +101,6 @@ class BaseIndicator(ABC):
         self,
         maintenance_id: str,
         session: Any,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> IndicatorEvaluationResult:
         """
         Evaluate indicator for a maintenance operation.
@@ -108,7 +108,6 @@ class BaseIndicator(ABC):
         Args:
             maintenance_id: The maintenance operation ID
             session: Database session
-            phase: Maintenance phase (OLD or NEW)
 
         Returns:
             IndicatorEvaluationResult: Evaluation result with statistics
@@ -131,7 +130,6 @@ class BaseIndicator(ABC):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[TimeSeriesPoint]:
         """
         Get time series data for this indicator.
@@ -140,7 +138,6 @@ class BaseIndicator(ABC):
             limit: Maximum number of data points to return
             session: Database session
             maintenance_id: Maintenance ID to query
-            phase: Maintenance phase
 
         Returns:
             List of time series points
@@ -153,7 +150,6 @@ class BaseIndicator(ABC):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[RawDataRow]:
         """
         Get latest raw data records for this indicator.
@@ -162,7 +158,6 @@ class BaseIndicator(ABC):
             limit: Maximum number of records to return
             session: Database session
             maintenance_id: Maintenance ID to query
-            phase: Maintenance phase
 
         Returns:
             List of raw data rows

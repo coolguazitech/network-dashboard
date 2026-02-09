@@ -5,7 +5,7 @@
 # 建構指令：
 #   docker buildx build --platform linux/amd64 \
 #       -f docker/base/Dockerfile \
-#       -t network-dashboard-base:v1.0.0-local \
+#       -t coolguazi/network-dashboard-base:v1.1.0 \
 #       --load .
 # =============================================================================
 
@@ -33,7 +33,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 2: Python 依賴安裝
 # -----------------------------------------------------------------------------
-FROM --platform=$TARGETPLATFORM python:3.11-slim-bookworm AS python-deps
+FROM --platform=$TARGETPLATFORM python:3.11-slim-trixie AS python-deps
 
 # 設定環境變數
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -59,19 +59,23 @@ COPY pyproject.toml ./
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-RUN pip install --upgrade pip setuptools wheel && \
+RUN pip install --upgrade pip && \
+    # 升級 setuptools 到最新版本以修復 vendored 依賴的 CVE
+    pip install --upgrade "setuptools>=75.0.0" "wheel>=0.46.2" && \
     pip install . && \
+    # 再次確保 wheel 和 jaraco.context 是最新版本
+    pip install --upgrade "jaraco.context>=6.1.0" "wheel>=0.46.2" && \
     # 驗證關鍵模組安裝成功
     python -c "import bcrypt; import jwt; print('bcrypt and jwt OK')"
 
 # -----------------------------------------------------------------------------
 # Stage 3: 最終基礎映像檔
 # -----------------------------------------------------------------------------
-FROM --platform=$TARGETPLATFORM python:3.11-slim-bookworm AS final
+FROM --platform=$TARGETPLATFORM python:3.11-slim-trixie AS final
 
 # 標籤資訊
 LABEL maintainer="network-dashboard@example.com" \
-      version="1.0.0" \
+      version="1.1.0" \
       description="Network Dashboard Base Image - Python 3.11 + Dependencies"
 
 # 設定環境變數
@@ -84,13 +88,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # 安裝執行時期必要的系統函式庫（僅 runtime，不含 dev）
 RUN apt-get update && \
-    # 升級所有套件以修復 CVE
+    # 升級所有套件以修復 CVE（Debian trixie 有更新的安全補丁）
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-    # MySQL/MariaDB client runtime library（不是 -dev）
+    # MySQL/MariaDB client runtime library
     libmariadb3 \
-    # PostgreSQL client runtime library（不是 -dev）
+    # PostgreSQL client runtime library
     libpq5 \
+    # 其他必要工具
     curl \
     tini \
     && rm -rf /var/lib/apt/lists/* \
@@ -105,7 +110,6 @@ COPY --from=python-deps /opt/venv /opt/venv
 WORKDIR $APP_HOME
 
 # 複製應用程式核心檔案
-# 注意：fetchers 和 parsers 的具體實作會在公司端加入
 COPY --chown=appuser:appgroup app/__init__.py app/
 COPY --chown=appuser:appgroup app/core/ app/core/
 COPY --chown=appuser:appgroup app/db/ app/db/
@@ -116,14 +120,10 @@ COPY --chown=appuser:appgroup app/services/ app/services/
 COPY --chown=appuser:appgroup app/indicators/ app/indicators/
 COPY --chown=appuser:appgroup app/main.py app/
 
-# 複製 fetchers 基礎結構（實際 API 實作由公司端加入）
-COPY --chown=appuser:appgroup app/fetchers/__init__.py app/fetchers/
-COPY --chown=appuser:appgroup app/fetchers/base.py app/fetchers/
-COPY --chown=appuser:appgroup app/fetchers/registry.py app/fetchers/
-COPY --chown=appuser:appgroup app/fetchers/convergence.py app/fetchers/
-COPY --chown=appuser:appgroup app/fetchers/mock.py app/fetchers/
+# 複製 fetchers（含 configured.py，支援 mock + 真實 API 模式）
+COPY --chown=appuser:appgroup app/fetchers/ app/fetchers/
 
-# 複製 parsers（包含所有 plugins，因為它們是公開的解析邏輯）
+# 複製 parsers（含所有 plugins，base image 可獨立運行 mock 模式）
 COPY --chown=appuser:appgroup app/parsers/ app/parsers/
 
 # 複製設定檔
@@ -133,18 +133,25 @@ COPY --chown=appuser:appgroup config/ config/
 COPY --chown=appuser:appgroup alembic.ini ./
 COPY --chown=appuser:appgroup alembic/ alembic/
 
+# 複製測試資料（Mock 模式 & CSV 匯入範本）
+COPY --chown=appuser:appgroup test_data/ test_data/
+
 # 從前端建構階段複製靜態檔案
 COPY --from=frontend-builder --chown=appuser:appgroup /app/frontend/dist /app/static
 
 # 建立必要目錄
-RUN mkdir -p /app/logs /app/data /app/test_data && \
+RUN mkdir -p /app/logs /app/data && \
     chown -R appuser:appgroup /app
 
 # 切換到非 root 使用者
 USER appuser
 
 # 驗證關鍵模組可正常載入
-RUN python -c "import bcrypt; import jwt; from app.core.config import settings; print('All modules OK')"
+RUN python -c "\
+from app.core.config import settings; \
+from app.fetchers.registry import FetcherRegistry; \
+from app.parsers.registry import parser_registry; \
+print('All modules loaded successfully')"
 
 # 健康檢查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \

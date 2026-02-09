@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.enums import UserRole
+from app.core.timezone import now_utc
 from app.db.base import get_session_context
 from app.db.models import User
 
@@ -51,7 +52,7 @@ class AuthService:
         - maintenance_id: 所屬歲修 ID
         - exp: 過期時間
         """
-        expire = datetime.utcnow() + timedelta(hours=settings.jwt_expire_hours)
+        expire = now_utc() + timedelta(hours=settings.jwt_expire_hours)
         payload = {
             "user_id": user.id,
             "username": user.username,
@@ -103,7 +104,7 @@ class AuthService:
                 return None, None, "帳號尚未啟用，請聯繫管理員"
 
             # 更新最後登入時間
-            user.last_login_at = datetime.utcnow()
+            user.last_login_at = now_utc()
             await session.commit()
 
             # 建立 token

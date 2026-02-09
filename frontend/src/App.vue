@@ -1,5 +1,8 @@
 <template>
   <div class="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950" @click="isAuthenticated && closeUserMenu($event)">
+    <!-- 流星雨背景 -->
+    <MeteorShower />
+
     <!-- 頂部導航（登入後才顯示） -->
     <nav v-if="isAuthenticated && route.name !== 'Login'" class="bg-slate-900/80 backdrop-blur-sm border-b border-cyan-500/10">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -66,6 +69,14 @@
               >
                 使用者
               </router-link>
+              <router-link
+                v-if="isRoot"
+                to="/system-logs"
+                class="nav-link"
+                :class="{ active: route.path === '/system-logs' }"
+              >
+                日誌
+              </router-link>
             </div>
           </div>
           <!-- 右側：歲修選擇器 + 使用者 -->
@@ -83,7 +94,7 @@
                 :key="m.id"
                 :value="m.id"
               >
-                {{ m.name && m.name !== m.id ? m.name : m.id }}
+                {{ m.is_active === false ? '[已暫停] ' : '' }}{{ m.name && m.name !== m.id ? m.name : m.id }}
               </option>
             </select>
             <button
@@ -196,6 +207,7 @@
             <tr>
               <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">歲修 ID</th>
               <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">名稱</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">採集狀態</th>
               <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">建立時間</th>
               <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
             </tr>
@@ -207,10 +219,32 @@
                 <span v-if="m.id === selectedMaintenanceId" class="ml-1 text-xs text-green-400">●當前</span>
               </td>
               <td class="px-3 py-2 text-slate-200">{{ m.name || '-' }}</td>
+              <td class="px-3 py-2">
+                <button
+                  @click="toggleMaintenanceActive(m)"
+                  class="inline-flex items-center gap-2 cursor-pointer group"
+                  :title="m.is_active ? '點擊暫停採集' : '點擊恢復採集'"
+                >
+                  <!-- Toggle track -->
+                  <span
+                    class="relative inline-block w-8 h-[18px] rounded-full transition-colors duration-200"
+                    :class="m.is_active ? 'bg-green-600' : 'bg-slate-600'"
+                  >
+                    <!-- Toggle knob -->
+                    <span
+                      class="absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white shadow transition-transform duration-200"
+                      :class="m.is_active ? 'translate-x-[14px]' : 'translate-x-0'"
+                    ></span>
+                  </span>
+                  <span class="text-xs" :class="m.is_active ? 'text-green-400' : 'text-slate-500'">
+                    {{ m.is_active ? '採集中' : '已暫停' }}
+                  </span>
+                </button>
+              </td>
               <td class="px-3 py-2 text-slate-400 text-xs">{{ formatDate(m.created_at) }}</td>
               <td class="px-3 py-2">
-                <button 
-                  @click="startDeleteMaintenance(m)" 
+                <button
+                  @click="startDeleteMaintenance(m)"
                   class="text-red-400 hover:text-red-300 text-xs"
                 >
                   刪除
@@ -218,7 +252,7 @@
               </td>
             </tr>
             <tr v-if="maintenanceList.length === 0">
-              <td colspan="4" class="px-3 py-6 text-center text-slate-500">尚無歲修記錄</td>
+              <td colspan="5" class="px-3 py-6 text-center text-slate-500">尚無歲修記錄</td>
             </tr>
           </tbody>
         </table>
@@ -281,6 +315,7 @@ import { useRouter, useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import MealStatus from '@/components/MealStatus.vue'
+import MeteorShower from '@/components/MeteorShower.vue'
 import { isAuthenticated, currentUser, isRoot, logout as authLogout, getAuthHeaders } from '@/utils/auth'
 
 dayjs.extend(utc)
@@ -391,6 +426,25 @@ const createMaintenance = async () => {
   } catch (e) {
     console.error('建立歲修失敗:', e)
     alert('建立失敗，請稍後再試')
+  }
+}
+
+// 切換歲修採集狀態
+const toggleMaintenanceActive = async (m) => {
+  try {
+    const res = await fetch(`/api/v1/maintenance/${encodeURIComponent(m.id)}/toggle-active`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+    })
+    if (res.ok) {
+      await loadMaintenanceList()
+    } else {
+      const err = await res.json()
+      alert(`切換失敗: ${err.detail || '未知錯誤'}`)
+    }
+  } catch (e) {
+    console.error('切換採集狀態失敗:', e)
+    alert('切換失敗，請稍後再試')
   }
 }
 

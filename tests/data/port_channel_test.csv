@@ -1,7 +1,0 @@
-hostname,port_channel,member_interfaces,description
-SW-A-01-NEW,Po1,Gi1/0/1;Gi1/0/2,主要上行鏈路
-SW-A-01-NEW,Po2,Gi1/0/3;Gi1/0/4,備援上行鏈路
-SW-A-02-NEW,Po1,Gi1/0/1;Gi1/0/2;Gi1/0/3,三埠聚合
-SW-B-01-NEW,Po10,Te1/0/1;Te1/0/2,10G 高速鏈路
-SW-B-02-NEW,Po1,Gi1/0/1,單埠 Port Channel
-SW-C-01-NEW,Port-channel1,Gi1/0/1;Gi1/0/2,完整名稱格式

@@ -1,8 +1,43 @@
 """
-Parser Registry - Auto-discovery and registration of parsers.
+Parser Registry — Parser 的全域註冊中心與自動發現機制。
 
-Implements Singleton pattern for global registry access.
-Follows Open-Closed Principle: add new parsers without modifying this file.
+==========================================================================
+本模組負責管理所有已註冊的 Parser 實例，讓系統能透過
+(device_type, indicator_type) 二元組快速找到對應的 Parser。
+==========================================================================
+
+核心概念：
+    1. ParserRegistry 是 Singleton（全域唯一實例）
+       - 整個應用程式共用同一個 registry
+       - 透過 parser_registry = ParserRegistry() 取得全域實例
+
+    2. ParserKey 是查詢鍵（定義在 protocols.py）
+       - 由 (device_type, indicator_type) 組成
+       - 例如：ParserKey(device_type=DeviceType.CISCO_NXOS, indicator_type="transceiver")
+
+    3. 自動發現機制
+       - app/parsers/plugins/ 目錄下的所有 .py 檔案都是 parser plugin
+       - plugins/__init__.py 中的 import 觸發每個 plugin 的模組載入
+       - 每個 plugin 在模組底部呼叫 parser_registry.register() 完成自註冊
+
+資料流：如何從 DataCollectionService 找到 Parser
+    DataCollectionService:
+        1. 從設備資料取得 device_type=DeviceType.CISCO_NXOS
+        2. 要採集 indicator_type="transceiver"
+        3. 呼叫 parser_registry.get(device_type, indicator_type)
+        4. 取回 CiscoNxosTransceiverParser 實例
+        5. 呼叫 parser.parse(raw_output) 取得 list[TransceiverData]
+
+重要關係：fetch_type == indicator_type
+    - Fetcher 的 fetch_type（採集哪種資料）必須與 Parser 的 indicator_type 一致
+    - 這是系統自動配對 Fetcher ↔ Parser 的關鍵
+
+如何新增一個全新設備類型的 Parser：
+    1. 確認 app/core/enums.py 中已有對應的 DeviceType 值
+    2. 建立 app/parsers/plugins/xxx_transceiver.py（見 BaseParser docstring）
+    3. 在檔案底部 parser_registry.register(XxxTransceiverParser())
+    4. 在 app/parsers/plugins/__init__.py 加上 from . import xxx_transceiver
+    5. 系統啟動時自動載入，registry 中就有了新的 Parser
 """
 from __future__ import annotations
 
@@ -11,16 +46,37 @@ import pkgutil
 from pathlib import Path
 from typing import Any
 
-from app.core.enums import PlatformType, VendorType
+from app.core.enums import DeviceType
 from app.parsers.protocols import BaseParser, ParserKey
 
 
 class ParserRegistry:
     """
-    Registry for all available parsers.
+    Parser 的全域註冊中心（Singleton 模式）。
 
-    Singleton pattern ensures global access to parser registry.
-    Supports auto-discovery of parser plugins.
+    使用方式：
+        # 註冊（通常在 plugin 檔案底部）
+        parser_registry.register(MyParser())
+
+        # 查詢（通常在 DataCollectionService 中）
+        parser = parser_registry.get(DeviceType.CISCO_NXOS, "transceiver")
+        if parser:
+            results = parser.parse(raw_output)
+
+        # 查詢（找不到就拋錯）
+        parser = parser_registry.get_or_raise(device_type, indicator_type)
+
+        # 列出所有已註冊的 parser
+        all_keys = parser_registry.list_parsers()
+
+        # 依設備類型篩選
+        cisco_parsers = parser_registry.list_by_device_type(DeviceType.CISCO_NXOS)
+
+    內部結構：
+        _parsers: dict[ParserKey, BaseParser]
+        - key = ParserKey(device_type, indicator_type)
+        - value = Parser 實例
+        - 同一個 ParserKey 只能註冊一個 Parser（後註冊的會覆蓋前者）
     """
 
     _instance: ParserRegistry | None = None
@@ -48,48 +104,56 @@ class ParserRegistry:
             parser: Parser instance to register
         """
         key = ParserKey(
-            vendor=parser.vendor,
-            platform=parser.platform,
+            device_type=parser.device_type,
             indicator_type=parser.indicator_type,
         )
         self._parsers[key] = parser
 
     def get(
         self,
-        vendor: VendorType,
-        platform: PlatformType,
+        device_type: DeviceType,
         indicator_type: str,
     ) -> BaseParser[Any] | None:
         """
-        Get a parser by vendor, platform, and indicator type.
+        Get a parser by device type and indicator type.
+
+        Lookup order:
+            1. Exact match: (device_type, indicator_type)
+            2. Generic fallback: (None, indicator_type)
 
         Args:
-            vendor: Vendor type (e.g., CISCO)
-            platform: Platform type (e.g., NXOS)
+            device_type: Device type (e.g., DeviceType.CISCO_NXOS)
             indicator_type: Type of indicator (e.g., "transceiver")
 
         Returns:
             Parser instance or None if not found
         """
+        # 1. Exact match
         key = ParserKey(
-            vendor=vendor,
-            platform=platform,
+            device_type=device_type,
             indicator_type=indicator_type,
         )
-        return self._parsers.get(key)
+        parser = self._parsers.get(key)
+        if parser is not None:
+            return parser
+
+        # 2. Generic fallback (device_type=None)
+        generic_key = ParserKey(
+            device_type=None,
+            indicator_type=indicator_type,
+        )
+        return self._parsers.get(generic_key)
 
     def get_or_raise(
         self,
-        vendor: VendorType,
-        platform: PlatformType,
+        device_type: DeviceType,
         indicator_type: str,
     ) -> BaseParser[Any]:
         """
         Get a parser, raising exception if not found.
 
         Args:
-            vendor: Vendor type
-            platform: Platform type
+            device_type: Device type
             indicator_type: Type of indicator
 
         Returns:
@@ -98,10 +162,11 @@ class ParserRegistry:
         Raises:
             ValueError: If no parser found
         """
-        parser = self.get(vendor, platform, indicator_type)
+        parser = self.get(device_type, indicator_type)
         if parser is None:
             raise ValueError(
-                f"No parser found for {vendor}/{platform}/{indicator_type}"
+                f"No parser found for {device_type}/{indicator_type}"
+                f" (no generic fallback either)"
             )
         return parser
 
@@ -109,9 +174,9 @@ class ParserRegistry:
         """List all registered parser keys."""
         return list(self._parsers.keys())
 
-    def list_by_vendor(self, vendor: VendorType) -> list[ParserKey]:
-        """List parsers for a specific vendor."""
-        return [k for k in self._parsers.keys() if k.vendor == vendor]
+    def list_by_device_type(self, device_type: DeviceType) -> list[ParserKey]:
+        """List parsers for a specific device type."""
+        return [k for k in self._parsers.keys() if k.device_type == device_type]
 
     def list_by_indicator(self, indicator_type: str) -> list[ParserKey]:
         """List parsers for a specific indicator type."""
@@ -119,33 +184,6 @@ class ParserRegistry:
             k for k in self._parsers.keys()
             if k.indicator_type == indicator_type
         ]
-
-    def unregister(
-        self,
-        vendor: VendorType,
-        platform: PlatformType,
-        indicator_type: str,
-    ) -> bool:
-        """
-        Unregister a parser.
-
-        Args:
-            vendor: Vendor type
-            platform: Platform type
-            indicator_type: Type of indicator
-
-        Returns:
-            True if parser was removed, False if not found
-        """
-        key = ParserKey(
-            vendor=vendor,
-            platform=platform,
-            indicator_type=indicator_type,
-        )
-        if key in self._parsers:
-            del self._parsers[key]
-            return True
-        return False
 
     def clear(self) -> None:
         """Clear all registered parsers (mainly for testing)."""
@@ -158,45 +196,32 @@ parser_registry = ParserRegistry()
 
 def register_parser(parser: BaseParser[Any]) -> BaseParser[Any]:
     """
-    Decorator/function to register a parser.
-
-    Can be used as a decorator:
-        @register_parser
-        class MyParser(BaseParser[MyData]):
-            ...
-
-    Or called directly:
-        register_parser(MyParser())
+    註冊 Parser 的便捷函式（可當 decorator 或直接呼叫）。
 
     Args:
-        parser: Parser class or instance
+        parser: Parser 類別（會自動實例化）或 Parser 實例
 
     Returns:
-        The parser (for decorator use)
+        傳入的 parser（方便 decorator 鏈式使用）
     """
     if isinstance(parser, type):
-        # It's a class, instantiate it
         instance = parser()
         parser_registry.register(instance)
         return parser  # type: ignore
     else:
-        # It's an instance
         parser_registry.register(parser)
         return parser
 
 
 def auto_discover_parsers(package_path: str = "app.parsers.plugins") -> int:
     """
-    Auto-discover and register all parsers in the plugins package.
-
-    Scans the plugins directory for parser modules and imports them.
-    Parsers should self-register using the @register_parser decorator.
+    自動掃描 plugins 目錄，載入所有 parser 模組。
 
     Args:
-        package_path: Dotted path to the plugins package
+        package_path: plugins package 的 dotted path
 
     Returns:
-        int: Number of modules loaded
+        int: 成功載入的模組數量
     """
     count = 0
     try:
@@ -209,11 +234,9 @@ def auto_discover_parsers(package_path: str = "app.parsers.plugins") -> int:
                 importlib.import_module(module_name)
                 count += 1
             except ImportError as e:
-                # Log warning but continue
                 print(f"Warning: Failed to import {module_name}: {e}")
 
     except ImportError:
-        # Package doesn't exist yet, that's okay
         pass
 
     return count

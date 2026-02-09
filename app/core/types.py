@@ -5,7 +5,7 @@ Dataclasses and types used across the application.
 """
 from dataclasses import dataclass
 
-from app.core.enums import PlatformType, SiteType, VendorType
+from app.core.enums import DeviceType
 
 
 @dataclass
@@ -19,11 +19,8 @@ class SwitchInfo:
 
     hostname: str
     ip_address: str
-    vendor: VendorType
-    platform: PlatformType = PlatformType.HPE_COMWARE
-    site: SiteType = SiteType.DEFAULT
+    device_type: DeviceType
     model: str | None = None
-    description: str | None = None
 
     def __repr__(self) -> str:
         return f"<SwitchInfo {self.hostname}>"

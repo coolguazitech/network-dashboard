@@ -75,8 +75,8 @@ class ExternalApiClient(BaseApiClient):
             server: API server URL (default from settings)
             timeout: Request timeout in seconds (default from settings)
         """
-        self.server = server or settings.external_api_server
-        self.timeout = timeout or settings.external_api_timeout
+        self.server = server or settings.fetcher_source.gnmsping.base_url
+        self.timeout = timeout or settings.fetcher_source.gnmsping.timeout
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:

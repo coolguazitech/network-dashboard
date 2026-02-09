@@ -16,6 +16,7 @@ import {
   MarkLineComponent,
 } from 'echarts/components'
 import { isAuthenticated, isRoot, initAuth } from './utils/auth'
+import { setupErrorReporter } from './utils/errorReporter'
 
 use([
   CanvasRenderer,
@@ -79,6 +80,12 @@ const routes = [
     component: () => import('./views/Users.vue'),
     meta: { requiresAuth: true, requiresRoot: true },
   },
+  {
+    path: '/system-logs',
+    name: 'SystemLogs',
+    component: () => import('./views/SystemLogs.vue'),
+    meta: { requiresAuth: true, requiresRoot: true },
+  },
 ]
 
 const router = createRouter({
@@ -115,4 +122,5 @@ router.beforeEach(async (to, from, next) => {
 const app = createApp(App)
 app.component('v-chart', ECharts)
 app.use(router)
+setupErrorReporter(app)
 app.mount('#app')

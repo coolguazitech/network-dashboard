@@ -43,7 +43,7 @@ class ReportService:
             maintenance_id, session
         )
 
-        # 獲取詳細失敗列表
+        # 獲取詳細失敗 + 通過列表
         results = await self.indicator_service.evaluate_all(maintenance_id, session)
 
         indicator_details = {}
@@ -55,6 +55,7 @@ class ReportService:
                 "fail_count": result.fail_count,
                 "pass_rate": result.pass_rate_percent,
                 "failures": result.failures or [],
+                "passes": result.passes or [],
             }
 
         # 使用台灣時區 (UTC+8)
@@ -270,37 +271,76 @@ class ReportService:
             gap: 0.25rem;
         }}
 
-        .failures-section {{
+        .detail-section {{
             margin-top: 1rem;
             padding-top: 1rem;
             border-top: 1px solid #334155;
         }}
 
-        .failures-title {{
+        .detail-title {{
             font-size: 0.75rem;
-            color: #94a3b8;
             text-transform: uppercase;
             letter-spacing: 0.05em;
             margin-bottom: 0.75rem;
+            font-weight: 600;
         }}
 
-        .failure-list {{
-            max-height: 200px;
-            overflow-y: auto;
-        }}
-
-        .failure-item {{
-            padding: 0.5rem 0.75rem;
-            background: #0f172a;
-            border-radius: 0.375rem;
-            margin-bottom: 0.5rem;
-            font-size: 0.8125rem;
-            font-family: 'SF Mono', Monaco, 'Consolas', monospace;
+        .detail-title.fail {{
             color: #f87171;
         }}
 
-        .failure-item:last-child {{
-            margin-bottom: 0;
+        .detail-title.pass {{
+            color: #34d399;
+        }}
+
+        .detail-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8125rem;
+        }}
+
+        .detail-table th {{
+            text-align: left;
+            padding: 0.375rem 0.5rem;
+            color: #64748b;
+            font-size: 0.6875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid #334155;
+        }}
+
+        .detail-table td {{
+            padding: 0.375rem 0.5rem;
+            font-family: 'SF Mono', Monaco, 'Consolas', monospace;
+            font-size: 0.75rem;
+            border-bottom: 1px solid #1e293b;
+        }}
+
+        .detail-table tr:last-child td {{
+            border-bottom: none;
+        }}
+
+        .detail-table .text-fail {{
+            color: #f87171;
+        }}
+
+        .detail-table .text-pass {{
+            color: #34d399;
+        }}
+
+        .detail-table .text-device {{
+            color: #e2e8f0;
+        }}
+
+        .detail-table .text-muted {{
+            color: #94a3b8;
+        }}
+
+        .more-items {{
+            padding: 0.375rem 0.5rem;
+            font-size: 0.75rem;
+            color: #64748b;
+            font-style: italic;
         }}
 
         .footer {{
@@ -336,9 +376,20 @@ class ReportService:
                 color: #1e293b;
             }}
 
-            .failure-item {{
-                background: #fef2f2;
+            .detail-table .text-fail {{
                 color: #dc2626;
+            }}
+
+            .detail-table .text-pass {{
+                color: #059669;
+            }}
+
+            .detail-table .text-device {{
+                color: #1e293b;
+            }}
+
+            .detail-table td, .detail-table th {{
+                border-bottom-color: #e2e8f0;
             }}
         }}
     </style>
@@ -424,9 +475,9 @@ class ReportService:
             passed = summary.get("pass_count", 0)
             failed = summary.get("fail_count", 0)
             failures = details.get("failures", [])
+            passes = details.get("passes", [])
 
             # 決定顏色 class
-            # 當 total 為 0 時，視為無資料而非失敗，顯示綠色
             if total == 0 or pass_rate >= 95:
                 rate_class = "rate-pass"
             elif pass_rate >= 80:
@@ -434,35 +485,27 @@ class ReportService:
             else:
                 rate_class = "rate-fail"
 
-            # 生成失敗列表 HTML
+            # 生成失敗表格 HTML
             failures_html = ""
             if include_details and failures:
-                failure_items = ""
-                for failure in failures[:20]:  # 最多顯示 20 筆
-                    if isinstance(failure, dict):
-                        # 根據不同指標格式化失敗資訊
-                        if "device_name" in failure:
-                            failure_text = failure.get("device_name", "Unknown")
-                            if "port" in failure:
-                                failure_text += f" - {failure['port']}"
-                            if "reason" in failure:
-                                failure_text += f": {failure['reason']}"
-                        else:
-                            failure_text = str(failure)
-                    else:
-                        failure_text = str(failure)
-                    failure_items += f'<div class="failure-item">{failure_text}</div>\n'
+                failures_html = self._render_detail_table(
+                    items=failures,
+                    css_class="fail",
+                    title=f"❌ 未通過項目 ({len(failures)})",
+                    max_items=20,
+                    total_items=len(failures),
+                )
 
-                if len(failures) > 20:
-                    failure_items += f'<div class="failure-item">... and {len(failures) - 20} more</div>\n'
-
-                failures_html = f"""
-                <div class="failures-section">
-                    <div class="failures-title">Failed Items ({len(failures)})</div>
-                    <div class="failure-list">
-                        {failure_items}
-                    </div>
-                </div>"""
+            # 生成通過表格 HTML
+            passes_html = ""
+            if include_details and passes:
+                passes_html = self._render_detail_table(
+                    items=passes,
+                    css_class="pass",
+                    title=f"✅ 通過項目 (前 {len(passes)} 筆，共 {passed} 筆)",
+                    max_items=10,
+                    total_items=passed,
+                )
 
             card = f"""
             <div class="indicator-card">
@@ -476,7 +519,75 @@ class ReportService:
                     <span style="color: #ef4444">✗ {failed}</span>
                 </div>
                 {failures_html}
+                {passes_html}
             </div>"""
             cards.append(card)
 
         return "\n".join(cards)
+
+    @staticmethod
+    def _format_item_interface(item: dict) -> str:
+        """從 detail item 取得 interface / 項目欄位。"""
+        return (
+            item.get("interface")
+            or item.get("expected_neighbor")
+            or item.get("expected")
+            or "—"
+        )
+
+    def _render_detail_table(
+        self,
+        items: list[dict],
+        css_class: str,
+        title: str,
+        max_items: int,
+        total_items: int,
+    ) -> str:
+        """渲染失敗或通過的明細表格。"""
+        rows = ""
+        for item in items[:max_items]:
+            if not isinstance(item, dict):
+                continue
+            device = self._escape(item.get("device", "—"))
+            interface = self._escape(self._format_item_interface(item))
+            reason = self._escape(item.get("reason", "—"))
+            rows += f"""<tr>
+                <td class="text-device">{device}</td>
+                <td class="text-muted">{interface}</td>
+                <td class="text-{css_class}">{reason}</td>
+            </tr>\n"""
+
+        more_html = ""
+        if total_items > max_items:
+            more_html = (
+                f'<div class="more-items">'
+                f"... 還有 {total_items - max_items} 筆未顯示</div>"
+            )
+
+        return f"""
+            <div class="detail-section">
+                <div class="detail-title {css_class}">{title}</div>
+                <table class="detail-table">
+                    <thead>
+                        <tr>
+                            <th>設備</th>
+                            <th>項目</th>
+                            <th>描述</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows}
+                    </tbody>
+                </table>
+                {more_html}
+            </div>"""
+
+    @staticmethod
+    def _escape(text: str) -> str:
+        """Escape HTML special characters."""
+        return (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )

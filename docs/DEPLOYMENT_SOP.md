@@ -1,199 +1,521 @@
-# Network Dashboard 部署 SOP
+# NETORA 部署與開發 SOP
+
+> **最新版本**: `v1.2.0` (2026-02-09)
+> **重大更新**: 修復 ARP 來源處理邏輯，確保客戶端偵測狀態即時反映
 
 ## 目錄
-- [公司端快速開始](#公司端快速開始)
-- [MacBook 端：建構並推送 Image](#macbook-端建構並推送-image)
-- [附錄：必要檔案內容](#附錄必要檔案內容)
+
+- [🚀 公司端快速更新](#公司端快速更新-v120)
+- [Part 1：無腦起服務（5 分鐘）](#part-1無腦起服務5-分鐘)
+- [Part 2：開發指南（外部 API 串接）](#part-2開發指南外部-api-串接)
+- [Part 3：打包 Image 重新推送](#part-3打包-image-重新推送)
+- [附錄：故障排查](#附錄故障排查)
 
 ---
 
-# 公司端快速開始
+## 🚀 公司端快速更新 (v1.2.0)
 
-從開發 Fetcher 到看到前端畫面的完整流程。
+### 更新內容摘要
 
-## Step 1：建立 Python 開發環境
+**版本**: `coolguazi/network-dashboard-base:v1.2.0`
 
-在開發機器（只有 Python 3.11）：
+**關鍵修復**:
+- ✅ 修復客戶端比較頁面資料不同步問題
+- ✅ 修正 Mock Fetcher 不尊重 ARP 來源配置的 bug
+- ✅ 實現完整快照機制（每 30 秒確保資料一致性）
+- ✅ CVE 掃描通過（0 個 CRITICAL，4 個 HIGH 系統函式庫漏洞可接受）
 
-```bash
-mkdir -p fetcher_dev/app/fetchers
-cd fetcher_dev
-python3.11 -m venv venv
-source venv/bin/activate
-pip install requests
-```
+**影響範圍**: 客戶端偵測與比較功能
 
-## Step 2：開發 Fetcher
-
-建立 `app/fetchers/api_functions.py`：
-
-```python
-"""你的 API 連接函式"""
-import requests
-
-def fetch_ap_list():
-    response = requests.get("http://your-api/ap/list")
-    return response.json()
-
-def fetch_switch_list():
-    response = requests.get("http://your-api/switch/list")
-    return response.json()
-```
-
-建立 `app/fetchers/implementations.py`：
-
-```python
-"""你的 Fetcher 實作"""
-from .api_functions import fetch_ap_list, fetch_switch_list
-
-class RealAPFetcher:
-    async def fetch(self):
-        return fetch_ap_list()
-
-class RealSwitchFetcher:
-    async def fetch(self):
-        return fetch_switch_list()
-```
-
-## Step 3：測試 Fetcher
+### 在公司機器上執行（3 分鐘）
 
 ```bash
-python -c "from app.fetchers.api_functions import fetch_ap_list; print(fetch_ap_list())"
+# 1. 進入專案目錄
+cd /path/to/netora
+
+# 2. 修改 docker-compose.production.yml 的 image 版本
+sed -i 's/network-dashboard-base:v[0-9.]*\+/network-dashboard-base:v1.2.0/' docker-compose.production.yml
+
+# 3. 拉取新版 image
+docker-compose -f docker-compose.production.yml pull
+
+# 4. 重啟服務（零停機時間約 10 秒）
+docker-compose -f docker-compose.production.yml up -d
+
+# 5. 確認服務正常
+docker-compose -f docker-compose.production.yml ps
+curl http://localhost:8000/health
 ```
 
-## Step 4：部署到有 Docker 的機器
+### 驗證更新
 
-把 `app/fetchers/` 目錄帶到有 Docker 的機器，建立以下結構：
+1. 登入系統後，前往「客戶端比較」頁面
+2. 移除所有 ARP 來源
+3. 等待 30 秒後重新整理
+4. **預期結果**: 所有客戶端應顯示「未偵測」狀態
+5. 重新加入 ARP 來源，等待 30 秒
+6. **預期結果**: 客戶端應從「未偵測」變為「已偵測」
 
-```
-network_dashboard/
-├── app/fetchers/
-│   ├── api_functions.py
-│   └── implementations.py
-├── docker-compose.yaml    # 從附錄複製
-└── Dockerfile.prod        # 從附錄複製
-```
-
-## Step 5：建構並啟動
+### 回滾方案（如遇問題）
 
 ```bash
-cd network_dashboard
-
-# 建構 Production Image
-docker build -f Dockerfile.prod -t network-dashboard-prod:v1.0.0 .
-
-# 啟動
-docker compose up -d
-
-# 等待約 30 秒
+# 回到上一版本 v1.1.0
+sed -i 's/network-dashboard-base:v1.2.0/network-dashboard-base:v1.1.0/' docker-compose.production.yml
+docker-compose -f docker-compose.production.yml pull
+docker-compose -f docker-compose.production.yml up -d
 ```
-
-## Step 6：開啟瀏覽器
-
-- 網址：http://localhost:8000
-- 帳號：`root`
-- 密碼：`admin123`
 
 ---
 
-# MacBook 端：建構並推送 Image
+## Part 1：無腦起服務（5 分鐘）
 
-## 前置需求
+### 前置需求
 
-- Docker Desktop（已安裝 buildx）
-- Node.js 18+
+| 項目 | 最低版本 | 說明 |
+|------|---------|------|
+| Docker Engine | 20.10+ | 必須支援 BuildKit |
+| Docker Compose | v1.25+ | 使用 `docker-compose`（獨立安裝版） |
+| 磁碟空間 | 2GB+ | image + DB 資料 |
+| 網路 | 可達 DockerHub | 拉取 base image |
 
-## 建構
+### 步驟
 
 ```bash
-cd network_dashboard
+# 1. 拉取程式碼
+git clone <repo-url> netora && cd netora
 
+# 2. 建立環境設定
+cp .env.production .env
+```
+
+編輯 `.env`，**必改項目**：
+
+```ini
+DB_PASSWORD=<改成強密碼>
+DB_ROOT_PASSWORD=<改成強密碼>
+JWT_SECRET=<改成隨機字串>
+```
+
+其他保持預設即可（`USE_MOCK_API=true` 為演示模式）。
+
+```bash
+# 3. 一鍵啟動（app + db + phpmyadmin）
+docker-compose -f docker-compose.production.yml up -d
+
+# 4. 確認三個容器都 healthy
+docker-compose -f docker-compose.production.yml ps
+```
+
+預期結果：
+
+| 容器 | 埠號 | 狀態 |
+|------|------|------|
+| netora_app | 8000 | healthy |
+| netora_db | 3306 | healthy |
+| netora_pma | 8080 | running |
+
+```bash
+# 5. Health check
+curl http://localhost:8000/health
+```
+
+### 首次登入
+
+1. 瀏覽器打開 `http://localhost:8000`
+2. 帳號：`root` / 密碼：`admin123`
+3. 建立歲修 → 匯入設備清單 CSV → 匯入 MAC 清單 CSV
+4. 系統自動開始排程採集（每 30 秒一輪）
+
+### 管理資料庫
+
+phpMyAdmin：`http://localhost:8080`（使用 .env 中的 DB_USER / DB_PASSWORD 登入）
+
+### 停止 / 重啟
+
+```bash
+# 停止
+docker-compose -f docker-compose.production.yml down
+
+# 停止並清除資料庫（重新開始）
+docker-compose -f docker-compose.production.yml down -v
+
+# 重啟
+docker-compose -f docker-compose.production.yml restart
+```
+
+### 更新版本
+
+```bash
+# 修改 docker-compose.production.yml 中的 image 版本號（如 v1.2.0 → v1.3.0）
+docker-compose -f docker-compose.production.yml pull
+docker-compose -f docker-compose.production.yml up -d
+```
+
+---
+
+## Part 2：開發指南（外部 API 串接）
+
+### 2.1 架構概覽
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Base Image (coolguazi/network-dashboard-base:v1.2.0) │
+│                                                       │
+│  包含完整系統：                                         │
+│  • Python 3.11 + 所有 pip 依賴                         │
+│  • 前端靜態檔 (Vue 3 build)                            │
+│  • FastAPI + SQLAlchemy + APScheduler                  │
+│  • ConfiguredFetcher（通用 HTTP GET Fetcher）            │
+│  • MockFetcher（開發測試用）                             │
+│  • 所有 Parser plugins                                 │
+│  • Indicator 評估引擎 + Dashboard API                   │
+│  • 完整快照機制（每 30 秒確保資料一致性）                   │
+└──────────────────────────────────────────────────────┘
+```
+
+**核心設計**：Base Image 已包含完整框架 + `ConfiguredFetcher`（通用 HTTP GET fetcher）。
+切換 `USE_MOCK_API=false` 即自動走真實 API。**你只需要確保 Parser 能正確解析真實 API 回傳的格式。**
+
+資料流：
+
+```
+外部 API（FNA / DNA / GNMSPING）
+    ↓ HTTP GET（ConfiguredFetcher 自動處理）
+    ↓ raw_output: str（API 回傳的原始文字）
+Parser（你需要寫/修改的地方）
+    ↓ list[ParsedData]（結構化資料）
+Indicator（評估通過/失敗）
+    ↓ 結果存入 DB → Dashboard 顯示
+```
+
+### 2.2 Fetcher / Parser 對應表
+
+| fetch_type | API 來源 | Endpoint 模板 | 說明 |
+|-----------|---------|--------------|------|
+| transceiver | FNA | `/api/v1/transceiver/{switch_ip}` | 光模組 Tx/Rx 功率 |
+| port_channel | FNA | `/api/v1/port-channel/{switch_ip}` | Port-Channel 狀態 |
+| version | DNA | `/api/v1/version/{switch_ip}` | 韌體版本 |
+| uplink | DNA | `/api/v1/neighbors/{switch_ip}` | Uplink 鄰居拓撲 |
+| fan | DNA | `/api/v1/fan/{switch_ip}` | 風扇狀態 |
+| power | DNA | `/api/v1/power/{switch_ip}` | 電源供應器 |
+| error_count | DNA | `/api/v1/error-count/{switch_ip}` | Interface 錯誤計數 |
+| ping | GNMSPING | `/api/v1/ping/batch` | 設備可達性 |
+
+每個 fetch_type 有三組 Parser（按設備類型）：
+
+| 設備類型 | Parser 檔案前綴 | device_type 枚舉 |
+|---------|---------------|-----------------|
+| HPE Comware | `hpe_` | `DeviceType.HPE` |
+| Cisco IOS | `cisco_ios_` | `DeviceType.CISCO_IOS` |
+| Cisco NXOS | `cisco_nxos_` | `DeviceType.CISCO_NXOS` |
+
+### 2.3 開發流程
+
+當你要從 Mock 模式切換到真實 API 時：
+
+```
+1. curl 真實 API → 拿到 raw output 樣本
+2. 比對現有 Parser 的 parse() 邏輯
+3. 如果格式不同 → 修改 parse() 方法
+4. 本地測試：USE_MOCK_API=false + 設好 API URL
+5. 確認 Dashboard 正常顯示
+6. 打包新 image（見 Part 3）
+```
+
+### 2.4 設定外部 API 連線（.env）
+
+```ini
+# ===== 關閉 Mock 模式 =====
+USE_MOCK_API=false
+
+# ===== 外部 API 來源 (base_url + timeout) =====
+FETCHER_SOURCE__FNA__BASE_URL=http://your-fna-server:8001
+FETCHER_SOURCE__FNA__TIMEOUT=30
+FETCHER_SOURCE__DNA__BASE_URL=http://your-dna-server:8001
+FETCHER_SOURCE__DNA__TIMEOUT=30
+FETCHER_SOURCE__GNMSPING__BASE_URL=http://your-gnmsping-server:8001
+FETCHER_SOURCE__GNMSPING__TIMEOUT=60
+
+# ===== Endpoint 模板 =====
+FETCHER_ENDPOINT__TRANSCEIVER=/api/v1/transceiver/{switch_ip}
+FETCHER_ENDPOINT__FAN=/api/v1/fan/{switch_ip}
+FETCHER_ENDPOINT__POWER=/api/v1/power/{switch_ip}
+FETCHER_ENDPOINT__VERSION=/api/v1/version/{switch_ip}
+FETCHER_ENDPOINT__UPLINK=/api/v1/neighbors/{switch_ip}
+FETCHER_ENDPOINT__ERROR_COUNT=/api/v1/error-count/{switch_ip}
+FETCHER_ENDPOINT__PORT_CHANNEL=/api/v1/port-channel/{switch_ip}
+FETCHER_ENDPOINT__PING=/api/v1/ping/batch
+```
+
+佔位符說明：
+- `{switch_ip}` → 設備 IP（自動從 FetchContext 帶入）
+- `{device_type}` → 設備類型（`hpe`/`ios`/`nxos`）
+- 其他自訂 key → 自動成為 query params
+
+### 2.5 修改 Parser（核心工作）
+
+**步驟 1**：確認 API 回傳格式
+
+```bash
+# curl 你的 API，了解回傳的 raw text 格式
+curl http://your-fna-server:8001/api/v1/transceiver/10.1.1.1
+```
+
+**步驟 2**：修改對應的 Parser 檔案
+
+Parser 檔案位置：`app/parsers/plugins/{vendor}_{indicator_type}.py`
+
+範例 — 假設真實 API 回傳 JSON 格式：
+
+```python
+# app/parsers/plugins/hpe_transceiver.py
+import json
+
+from app.core.enums import DeviceType
+from app.parsers.protocols import BaseParser, TransceiverData
+from app.parsers.registry import parser_registry
+
+
+class HpeTransceiverParser(BaseParser[TransceiverData]):
+    device_type = DeviceType.HPE
+    indicator_type = "transceiver"            # ★ 必須與 scheduler.yaml name 一致
+    command = "display transceiver diag"
+
+    def parse(self, raw_output: str) -> list[TransceiverData]:
+        results = []
+        try:
+            data = json.loads(raw_output)
+        except json.JSONDecodeError:
+            return results
+
+        for intf in data.get("interfaces", []):
+            results.append(
+                TransceiverData(
+                    interface_name=intf["name"],
+                    tx_power=intf.get("tx_dbm"),
+                    rx_power=intf.get("rx_dbm"),
+                    temperature=intf.get("temp_c"),
+                    voltage=intf.get("volt"),
+                )
+            )
+        return results
+
+
+parser_registry.register(HpeTransceiverParser())
+```
+
+**步驟 3**：確認 `app/parsers/plugins/__init__.py` 有 import（已存在的 parser 不用加）
+
+```python
+from . import hpe_transceiver    # 確認這行存在
+```
+
+### 2.6 三處命名必須一致（關鍵！）
+
+```
+1. scheduler.yaml   →  fetchers:
+                          transceiver:        ← name
+                            source: FNA
+
+2. .env             →  FETCHER_ENDPOINT__TRANSCEIVER=...    ← 大寫版
+
+3. Parser class     →  indicator_type = "transceiver"       ← 完全一致
+```
+
+名稱不一致 = 系統找不到 Parser = 資料流斷裂 → 顯示「無採集數據」。
+
+### 2.7 ParsedData 資料模型（Parser 輸出契約）
+
+Parser 的回傳類型必須是以下之一（不能改欄位名）：
+
+| 模型 | 用途 | 必填欄位 | 可選欄位（可為空/有預設值） |
+|------|------|---------|--------------------------|
+| `TransceiverData` | 光模組診斷 | interface_name | tx_power, rx_power, temperature, voltage |
+| `InterfaceErrorData` | 介面錯誤計數 | interface_name | crc_errors(=0), input_errors(=0), output_errors(=0), collisions(=0), giants(=0), runts(=0) |
+| `FanStatusData` | 風扇狀態 | fan_id, status | speed_rpm, speed_percent |
+| `PowerData` | 電源供應器 | ps_id, status | input_status, output_status, capacity_watts, actual_output_watts |
+| `VersionData` | 韌體版本 | version | model, serial_number, uptime |
+| `NeighborData` | 鄰居 CDP/LLDP | local_interface, remote_hostname, remote_interface | remote_platform |
+| `PortChannelData` | Port-Channel | interface_name, status, members | protocol, member_status |
+| `PingData` | Ping 可達性 | target, is_reachable, success_rate | avg_rtt_ms |
+
+> **必填** = 型別為 `str` / `int` / `bool` 且無預設值，Parser 必須給值，否則 Pydantic 驗證報錯。
+> **可選** = 型別帶 `| None`（預設 None）或有 `= 預設值`，不傳也不會報錯。
+> 枚舉欄位（如 status）由 Pydantic 自動正規化：`"OK"` → `"ok"`、`"Normal"` → `"normal"`，不需手動轉換。
+
+### 2.8 新增 API Source
+
+如果有一個全新的外部 API（不在 FNA/DNA/GNMSPING 之中）：
+
+1. `.env` 新增：
+   ```ini
+   FETCHER_SOURCE__CMDB__BASE_URL=http://cmdb-server:8080
+   FETCHER_SOURCE__CMDB__TIMEOUT=30
+   ```
+
+2. `app/core/config.py` 的 `FetcherSourceConfig` 加欄位：
+   ```python
+   cmdb: SourceEntry | None = None
+   ```
+
+3. `config/scheduler.yaml` 新增 fetcher entry：
+   ```yaml
+   fetchers:
+     new_indicator:
+       source: CMDB
+       interval: 120
+   ```
+
+4. `.env` 新增 endpoint：
+   ```ini
+   FETCHER_ENDPOINT__NEW_INDICATOR=/api/v1/new-data/{switch_ip}
+   ```
+
+5. 寫對應的 Parser plugin（見 2.5）
+
+---
+
+## Part 3：打包 Image 重新推送
+
+### 3.1 一鍵打包（推薦）
+
+修改完 Parser/Fetcher 代碼後：
+
+```bash
+# 使用遞增版本號（當前最新: v1.2.0）
+bash scripts/build-and-push.sh v1.3.0
+```
+
+此腳本會依序：
+
+1. **Build** — `docker buildx build` 產出 image
+2. **CVE Scan** — Trivy 掃描 HIGH/CRITICAL 漏洞（報告存為 `trivy-report-v1.3.0.txt`）
+   - ✅ 0 個 CRITICAL 才允許推送
+   - ⚠️ HIGH 漏洞記錄但不阻擋（通常為系統函式庫）
+3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v1.3.0` + `:latest`）
+
+### 3.2 手動打包
+
+```bash
+# Build
 docker buildx build --platform linux/amd64 \
-  -f docker/base/Dockerfile.alpine \
-  -t network-dashboard-base:v1.0.2 \
-  --load .
+    -f docker/base/Dockerfile \
+    -t coolguazi/network-dashboard-base:v1.3.0 \
+    --load .
+
+# CVE Scan（可選）
+trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v1.3.0
+
+# Push
+docker login
+docker push coolguazi/network-dashboard-base:v1.3.0
+docker tag coolguazi/network-dashboard-base:v1.3.0 coolguazi/network-dashboard-base:latest
+docker push coolguazi/network-dashboard-base:latest
 ```
 
-## 推送到 DockerHub
+### 3.3 公司端更新
+
+在部署的機器上：
 
 ```bash
-docker login
-docker tag network-dashboard-base:v1.0.2 coolguazi/network-dashboard-base:v1.0.2
-docker push coolguazi/network-dashboard-base:v1.0.2
+# 修改 docker-compose.production.yml 中的 image 版本號
+# 然後：
+docker-compose -f docker-compose.production.yml pull
+docker-compose -f docker-compose.production.yml up -d
 ```
+
+### 3.4 Docker 檔案結構
+
+```
+docker/base/Dockerfile          ← 基礎映像檔（完整系統，可獨立運行 Mock 模式）
+docker/production/Dockerfile    ← 生產映像檔（覆蓋公司專屬的 Fetcher/Parser 實作）
+docker-compose.production.yml   ← 一鍵起服務（app + db + phpmyadmin）
+.env.production                 ← 環境變數範本
+scripts/build-and-push.sh       ← 一鍵 build + scan + push
+```
+
+- **Base Image**：包含完整系統 + MockFetcher + 所有 Parser plugins，可獨立運行演示
+- **Production Image**：以 Base Image 為基礎，覆蓋真實 API 的 Fetcher/Parser 實作
+- 一般情況只需修改代碼後重新打包 Base Image 推送即可
+- 只有在公司端有獨立於 repo 的專屬代碼時，才需要用 Production Dockerfile
 
 ---
 
-# 附錄：必要檔案內容
+## 附錄：故障排查
 
-## docker-compose.yaml
+### 常見問題
 
-```yaml
-services:
-  db:
-    image: mariadb:10.11
-    environment:
-      MYSQL_ROOT_PASSWORD: admin
-      MYSQL_DATABASE: network_dashboard
-      MYSQL_USER: admin
-      MYSQL_PASSWORD: admin
-    volumes:
-      - db_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+| 症狀 | 可能原因 | 解決方式 |
+|------|---------|---------|
+| Dashboard 全部「無資料」 | Mock 模式收斂中 | 等待 MOCK_PING_CONVERGE_TIME（預設 600 秒） |
+| 所有指標「無採集數據」 | Parser 未載入 or 名稱不一致 | 檢查 parser_registry 載入狀態（見下方） |
+| 紫色狀態「採集異常」 | Fetcher 連不上外部 API | 檢查 `.env` BASE_URL + 網路連通性 |
+| 登入失敗 401 | JWT_SECRET 變更 | 清除瀏覽器 localStorage 重新登入 |
+| 部分設備無資料 | 該設備類型缺少 Parser | 檢查 device_type 是否有對應 parser |
+| App 啟動後立刻退出 | DB 尚未就緒 | 確認 docker-compose 中的 depends_on + healthcheck 設定正確 |
 
-  app:
-    image: network-dashboard-prod:v1.0.0
-    environment:
-      DB_HOST: db
-      DB_PORT: 3306
-      DB_NAME: network_dashboard
-      DB_USER: admin
-      DB_PASSWORD: admin
-      USE_MOCK_API: "false"
-      JWT_SECRET: your-secret-key-change-this
-    ports:
-      - "8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
+### 除錯指令
 
-volumes:
-  db_data:
+```bash
+# 查看容器日誌
+docker logs netora_app -f --tail 100
+
+# 確認 Fetcher 註冊狀態
+docker logs netora_app 2>&1 | grep -i "registered.*fetcher"
+
+# 確認 Parser 註冊狀態
+docker exec netora_app python -c "
+from app.parsers.registry import parser_registry
+for k in parser_registry.list_parsers():
+    print(f'  {k.device_type} / {k.indicator_type}')
+print(f'Total: {len(parser_registry.list_parsers())} parsers')
+"
+
+# 進容器除錯
+docker exec -it netora_app bash
+
+# 測試 API 連通
+curl -v http://fna-server:8001/api/v1/transceiver/10.1.1.1
+
+# DB 備份
+docker exec netora_db mysqldump -u root -p${DB_ROOT_PASSWORD} netora > backup_$(date +%Y%m%d).sql
+
+# DB 還原
+docker exec -i netora_db mysql -u root -p${DB_ROOT_PASSWORD} netora < backup.sql
 ```
 
-## Dockerfile.prod
+### 重置所有資料
 
-```dockerfile
-FROM coolguazi/network-dashboard-base:v1.0.2
-USER root
-COPY app/fetchers/api_functions.py /app/app/fetchers/
-COPY app/fetchers/implementations.py /app/app/fetchers/
-RUN chown -R appuser:appgroup /app
-USER appuser
+```bash
+docker-compose -f docker-compose.production.yml down -v
+docker-compose -f docker-compose.production.yml up -d
 ```
+
+`-v` 會刪除資料庫 volume，啟動後重新建表。
 
 ---
 
-# 疑難排解
+## 快速參考
 
-| 問題 | 解決方法 |
-|------|----------|
-| 前端打不開 | 確認 `docker compose ps` 顯示 app 為 healthy |
-| 資料庫連線失敗 | 等待 30 秒讓 MariaDB 初始化完成 |
-| Container 一直重啟 | 執行 `docker compose logs app` 查看錯誤 |
-| 模組找不到 | 確認使用最新的 base image `v1.0.2` |
+```
+# ========== 一鍵起服務（Mock 演示） ==========
+cp .env.production .env        # 改密碼
+docker-compose -f docker-compose.production.yml up -d
+# → http://localhost:8000  登入 root/admin123
 
----
+# ========== 切換真實 API ==========
+# .env 中設定 USE_MOCK_API=false + 填入 API URL
+docker-compose -f docker-compose.production.yml restart app
 
-# 環境變數說明
+# ========== 開發迴圈 ==========
+1. curl 真實 API    → 拿到 raw output 樣本
+2. 修改 Parser      → app/parsers/plugins/xxx.py
+3. 本地測試         → docker-compose restart app
+4. 打包推送         → bash scripts/build-and-push.sh v1.3.0
 
-| 變數 | 說明 | 預設值 |
-|------|------|--------|
-| `USE_MOCK_API` | true=假資料，false=真實 API | true |
-| `JWT_SECRET` | JWT 密鑰（可自訂） | - |
-| `DB_PASSWORD` | 資料庫密碼（可自訂） | admin |
+# ========== 公司端更新（當前版本 v1.2.0） ==========
+# 修改 docker-compose.production.yml 中的版本號
+sed -i 's/v[0-9.]*\+/v1.3.0/' docker-compose.production.yml
+docker-compose -f docker-compose.production.yml pull
+docker-compose -f docker-compose.production.yml up -d
+```

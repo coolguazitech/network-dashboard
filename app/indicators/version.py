@@ -18,7 +18,6 @@ from app.indicators.base import (
     RawDataRow,
     TimeSeriesPoint,
 )
-from app.core.enums import MaintenancePhase
 from app.repositories.typed_records import VersionRecordRepo
 
 
@@ -35,12 +34,8 @@ class VersionIndicator(BaseIndicator):
         self,
         maintenance_id: str,
         session: AsyncSession,
-        phase: MaintenancePhase | None = None,
     ) -> IndicatorEvaluationResult:
         """評估版本指標。"""
-        if phase is None:
-            phase = MaintenancePhase.NEW
-
         # 從 DB 讀取版本期望
         version_expectations = await self._load_expectations(
             session, maintenance_id
@@ -50,7 +45,6 @@ class VersionIndicator(BaseIndicator):
         if not version_expectations:
             return IndicatorEvaluationResult(
                 indicator_type=self.indicator_type,
-                phase=phase,
                 maintenance_id=maintenance_id,
                 total_count=0,
                 pass_count=0,
@@ -60,9 +54,9 @@ class VersionIndicator(BaseIndicator):
                 summary="無版本期望設定",
             )
 
-        # 查詢所有指定階段的版本數據（每台設備最新一筆）
+        # 查詢版本數據（每台設備最新一筆）
         repo = VersionRecordRepo(session)
-        records = await repo.get_latest_per_device(phase, maintenance_id)
+        records = await repo.get_latest_per_device(maintenance_id)
 
         # 建立 hostname -> 最新版本記錄 的映射
         records_by_hostname: dict[str, VersionRecord] = {}
@@ -74,6 +68,7 @@ class VersionIndicator(BaseIndicator):
         total_count = len(version_expectations)
         pass_count = 0
         failures = []
+        passes = []
 
         # 遍歷每個版本期望
         for hostname, expected_versions in version_expectations.items():
@@ -92,6 +87,13 @@ class VersionIndicator(BaseIndicator):
                 # 比較版本（支援分號分隔的多個期望版本）
                 if actual_version and actual_version in expected_versions:
                     pass_count += 1
+                    if len(passes) < 10:
+                        passes.append({
+                            "device": hostname,
+                            "reason": "版本符合",
+                            "expected": ";".join(expected_versions),
+                            "actual": actual_version,
+                        })
                 else:
                     failures.append({
                         "device": hostname,
@@ -102,7 +104,6 @@ class VersionIndicator(BaseIndicator):
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
-            phase=phase,
             maintenance_id=maintenance_id,
             total_count=total_count,
             pass_count=pass_count,
@@ -112,6 +113,7 @@ class VersionIndicator(BaseIndicator):
                 if total_count > 0 else 0
             },
             failures=failures if failures else None,
+            passes=passes if passes else None,
             summary=(
                 f"版本驗收: {pass_count}/{total_count} 通過 "
                 f"({pass_count / total_count * 100:.1f}%)"
@@ -171,7 +173,6 @@ class VersionIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[TimeSeriesPoint]:
         """獲取時間序列數據。"""
         version_expectations = await self._load_expectations(
@@ -180,7 +181,7 @@ class VersionIndicator(BaseIndicator):
 
         repo = VersionRecordRepo(session)
         records = await repo.get_time_series_records(
-            maintenance_id, phase, limit
+            maintenance_id, limit
         )
 
         time_series = []
@@ -209,7 +210,6 @@ class VersionIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
         version_expectations = await self._load_expectations(
@@ -218,7 +218,7 @@ class VersionIndicator(BaseIndicator):
 
         repo = VersionRecordRepo(session)
         records = await repo.get_latest_records(
-            maintenance_id, phase, limit
+            maintenance_id, limit
         )
 
         raw_data = []

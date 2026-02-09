@@ -6,36 +6,22 @@ All enums are defined here to maintain consistency and type safety.
 from enum import Enum
 
 
-class SiteType(str, Enum):
-    """Site types for network devices."""
+class DeviceType(str, Enum):
+    """
+    Device types — the single enum for parser lookup, API params, and DB storage.
 
-    DEFAULT = "default"
-    T_SITE = "t_site"
-    M_SITE = "m_site"
+    Values match MaintenanceDeviceList.new_vendor / old_vendor column values.
+    Use .api_value for external API parameters (lowercase: hpe, ios, nxos).
+    """
 
+    HPE = "HPE"
+    CISCO_IOS = "Cisco-IOS"
+    CISCO_NXOS = "Cisco-NXOS"
 
-class VendorType(str, Enum):
-    """Network device vendor types."""
-
-    CISCO = "cisco"
-    HPE = "hpe"
-    ARUBA = "aruba"
-
-
-class PlatformType(str, Enum):
-    """Platform/OS types for each vendor."""
-
-    # Cisco platforms
-    CISCO_IOS = "ios"
-    CISCO_NXOS = "nxos"
-
-    # HPE platforms
-    HPE_PROCURVE = "procurve"
-    HPE_COMWARE = "comware"
-
-    # Aruba platforms
-    ARUBA_OS = "aruba_os"
-    ARUBA_CX = "aruba_cx"
+    @property
+    def api_value(self) -> str:
+        """Lowercase value for external API endpoint params: hpe, ios, nxos."""
+        return {"HPE": "hpe", "Cisco-IOS": "ios", "Cisco-NXOS": "nxos"}[self.value]
 
 
 class IndicatorObjectType(str, Enum):
@@ -81,21 +67,6 @@ class MetricType(str, Enum):
     BOOLEAN = "boolean"
     MAPPING = "mapping"
 
-
-class MaintenancePhase(str, Enum):
-    """
-    設備類別（非時間概念）。
-
-    用於區分歲修期間操作的設備類型：
-    - OLD: 舊設備（被更換的設備）
-    - NEW: 新設備（替換上去的設備）
-
-    注意：這與時間軸上的「checkpoint 時間」vs「最新快照時間」是獨立的概念。
-    同一個 phase 的資料可能在不同時間點被採集多次。
-    """
-
-    OLD = "old"
-    NEW = "new"
 
 
 class TenantGroup(str, Enum):
@@ -167,3 +138,49 @@ class UserRole(str, Enum):
     ROOT = "root"
     PM = "pm"
     GUEST = "guest"
+
+
+# ── ParsedData 嚴格枚舉 ─────────────────────────────────────────
+
+
+class OperationalStatus(str, Enum):
+    """硬體元件（風扇、電源）的操作狀態。
+
+    健康狀態判定由 .env OPERATIONAL_HEALTHY_STATUSES 控制，
+    此枚舉僅用於 parser 正規化。
+    """
+
+    OK = "ok"
+    GOOD = "good"
+    NORMAL = "normal"
+    ONLINE = "online"
+    ACTIVE = "active"
+    FAIL = "fail"
+    ABSENT = "absent"
+    UNKNOWN = "unknown"
+
+
+class LinkStatus(str, Enum):
+    """鏈路 / Port-Channel / 介面的連線狀態。"""
+
+    UP = "up"
+    DOWN = "down"
+    UNKNOWN = "unknown"
+
+
+class DuplexMode(str, Enum):
+    """介面雙工模式。"""
+
+    FULL = "full"
+    HALF = "half"
+    AUTO = "auto"
+    UNKNOWN = "unknown"
+
+
+class AggregationProtocol(str, Enum):
+    """鏈路聚合協議。"""
+
+    LACP = "lacp"
+    STATIC = "static"
+    PAGP = "pagp"
+    NONE = "none"

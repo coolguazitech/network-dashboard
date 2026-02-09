@@ -31,6 +31,7 @@ from app.db.models import (
     PortChannelExpectation,
     # Collection
     CollectionBatch,
+    CollectionError,
     IndicatorResult,
     # Typed Records
     TransceiverRecord,
@@ -151,8 +152,8 @@ async def list_maintenances(
     return [
         {
             "id": c.maintenance_id,
-            "name": c.config_data.get("name") or None if c.config_data else None,
-            "is_active": c.config_data.get("is_active", True) if c.config_data else True,
+            "name": c.name,
+            "is_active": c.is_active,
             "created_at": c.created_at,
         }
         for c in configs
@@ -179,20 +180,64 @@ async def create_maintenance(
     
     config = MaintenanceConfig(
         maintenance_id=maintenance.id,
-        config_data={
-            "name": maintenance.name,
-            "is_active": True,
-        },
+        name=maintenance.name,
+        is_active=True,
     )
-    
+
     session.add(config)
     await session.commit()
     await session.refresh(config)
-    
+
+    from app.services.system_log import write_log
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"建立歲修: {maintenance.id}",
+        module="maintenance",
+        maintenance_id=maintenance.id,
+    )
+
     return {
         "id": config.maintenance_id,
-        "name": maintenance.name,
-        "is_active": True,
+        "name": config.name,
+        "is_active": config.is_active,
+        "created_at": config.created_at,
+    }
+
+
+@router.patch("/{maintenance_id}/toggle-active", response_model=MaintenanceResponse)
+async def toggle_maintenance_active(
+    maintenance_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    _: None = Depends(require_root),
+) -> dict:
+    """切換歲修的採集狀態（暫停/恢復）。僅限 ROOT 使用者。"""
+    stmt = select(MaintenanceConfig).where(
+        MaintenanceConfig.maintenance_id == maintenance_id
+    )
+    result = await session.execute(stmt)
+    config = result.scalar_one_or_none()
+
+    if not config:
+        raise HTTPException(status_code=404, detail="歲修不存在")
+
+    config.is_active = not config.is_active
+    await session.commit()
+    await session.refresh(config)
+
+    # 寫入系統日誌
+    from app.services.system_log import write_log
+    action = "恢復採集" if config.is_active else "暫停採集"
+    await write_log(
+        level="info",
+        source="maintenance",
+        summary=f"歲修 {maintenance_id} {action}",
+    )
+
+    return {
+        "id": config.maintenance_id,
+        "name": config.name,
+        "is_active": config.is_active,
         "created_at": config.created_at,
     }
 
@@ -258,6 +303,14 @@ async def delete_maintenance(
         except Exception:
             # 忽略任何錯誤
             deleted_counts[table] = 0
+
+    # === 1.8 刪除 CollectionError ===
+    result = await session.execute(
+        delete(CollectionError).where(
+            CollectionError.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["collection_errors"] = result.rowcount
 
     # === 2. 刪除 CollectionBatch ===
     result = await session.execute(
@@ -416,6 +469,16 @@ async def delete_maintenance(
     # === 11. 清除 MockTimeTracker 快取（避免重建歲修時用到舊的起始時間）===
     from app.fetchers.convergence import MockTimeTracker
     MockTimeTracker.clear_maintenance_cache(maintenance_id)
+
+    from app.services.system_log import write_log
+    total_deleted = sum(deleted_counts.values())
+    await write_log(
+        level="WARNING",
+        source="api",
+        summary=f"刪除歲修: {maintenance_id} (共清除 {total_deleted} 筆資料)",
+        module="maintenance",
+        maintenance_id=maintenance_id,
+    )
 
     return {
         "message": f"歲修 {maintenance_id} 及相關資料已刪除",
@@ -720,5 +783,5 @@ async def _generate_checkpoint_summary(
         "total_switches": 0,
         "total_clients": 0,
         "indicators": {},
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": now_utc().isoformat(),
     }

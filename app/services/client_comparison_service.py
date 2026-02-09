@@ -1,7 +1,7 @@
 """
 Client comparison service.
 
-比較客戶端在 OLD/NEW 階段的變化。
+比較客戶端在不同時間點的變化。
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ClientRecord, ClientComparison
-from app.core.enums import MaintenancePhase
+from app.core.timezone import now_utc
 
 # 快照標記的特殊 MAC 地址（用於在沒有實際資料時記錄時間點）
 SNAPSHOT_MARKER_MAC = "__MARKER__"
@@ -22,8 +22,8 @@ SNAPSHOT_MARKER_MAC = "__MARKER__"
 
 class ClientComparisonService:
     """客戶端比較服務。
-    
-    比較同一個 MAC 地址在 OLD/NEW 階段的變化情況，包括：
+
+    比較同一個 MAC 地址在不同時間點的變化情況，包括：
     - 拓樸角色（access/trunk/uplink）
     - 連接的交換機和埠口
     - 連接速率、雙工模式
@@ -116,7 +116,6 @@ class ClientComparisonService:
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.OLD,
             )
             .order_by(ClientRecord.mac_address, ClientRecord.collected_at.desc())
         )
@@ -137,7 +136,6 @@ class ClientComparisonService:
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.NEW,
             )
             .order_by(ClientRecord.mac_address, ClientRecord.collected_at.desc())
         )
@@ -173,7 +171,7 @@ class ClientComparisonService:
             # 建立比較記錄
             comparison = ClientComparison(
                 maintenance_id=maintenance_id,
-                collected_at=datetime.utcnow(),
+                collected_at=now_utc(),
                 mac_address=mac,
             )
 
@@ -190,12 +188,9 @@ class ClientComparisonService:
                 comparison.old_acl_passes = old_record.acl_passes
 
             # 添加 NEW（新設備）數據
-            # 只有當 client 目前可偵測時才填入 NEW 資料
-            # 若偵測狀態為 NOT_DETECTED，Current 顯示為空（表示目前無法取得資料）
-            detection_status = mac_detection_status.get(mac)
-            is_currently_detectable = detection_status == ClientDetectionStatus.DETECTED
-
-            if new_record and is_currently_detectable:
+            # 直接使用 ClientRecord 判斷是否有數據
+            # 如果 switch_hostname 為 None，代表該 MAC 未被偵測到（None 記錄）
+            if new_record and new_record.switch_hostname is not None:
                 comparison.new_ip_address = new_record.ip_address
                 comparison.new_switch_hostname = new_record.switch_hostname
                 comparison.new_interface_name = new_record.interface_name
@@ -230,7 +225,6 @@ class ClientComparisonService:
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.OLD,
             )
             .order_by(
                 ClientRecord.mac_address,
@@ -253,7 +247,6 @@ class ClientComparisonService:
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.NEW,
             )
             .order_by(
                 ClientRecord.mac_address,
@@ -291,7 +284,7 @@ class ClientComparisonService:
 
             comparison = ClientComparison(
                 maintenance_id=maintenance_id,
-                collected_at=datetime.utcnow(),
+                collected_at=now_utc(),
                 mac_address=mac,
             )
 
@@ -621,13 +614,12 @@ class ClientComparisonService:
 
             before_dt = datetime.fromisoformat(before_time)
 
-            # 獲取最新 NEW 階段時間
+            # 獲取最新階段時間
             from sqlalchemy import func
             latest_stmt = (
                 select(func.max(ClientRecord.collected_at))
                 .where(
                     ClientRecord.maintenance_id == maintenance_id,
-                    ClientRecord.phase == MaintenancePhase.NEW,
                 )
             )
             latest_result = await session.execute(latest_stmt)
@@ -742,18 +734,19 @@ class ClientComparisonService:
             device_mappings[dm.old_hostname.lower()] = dm.new_hostname
 
         # 載入 MaintenanceMacList 作為 MAC 清單基準
-        mac_list_stmt = select(MaintenanceMacList.mac_address).where(
+        mac_list_stmt = select(MaintenanceMacList).where(
             MaintenanceMacList.maintenance_id == maintenance_id
         )
         mac_list_result = await session.execute(mac_list_stmt)
-        mac_list = {m.upper() for m in mac_list_result.scalars().all()}
+        mac_records = mac_list_result.scalars().all()
 
-        # 查詢 OLD phase（舊設備）在 before_time 時間點的記錄
+        mac_list = {m.mac_address.upper() for m in mac_records}
+
+        # 查詢在 before_time 時間點的記錄
         before_stmt = (
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.OLD,
                 ClientRecord.collected_at <= before_time,
             )
             .order_by(
@@ -773,14 +766,12 @@ class ClientComparisonService:
             if mac_upper not in before_by_mac:
                 before_by_mac[mac_upper] = record
 
-        # 查詢 NEW phase（新設備）在 after_time 時間點的記錄
-        # 僅查詢 NEW phase，確保比較的是新設備資料
+        # 查詢在 after_time 時間點的記錄
         if after_time:
             after_stmt = (
                 select(ClientRecord)
                 .where(
                     ClientRecord.maintenance_id == maintenance_id,
-                    ClientRecord.phase == MaintenancePhase.NEW,
                     ClientRecord.collected_at <= after_time,
                 )
                 .order_by(
@@ -793,7 +784,6 @@ class ClientComparisonService:
                 select(ClientRecord)
                 .where(
                     ClientRecord.maintenance_id == maintenance_id,
-                    ClientRecord.phase == MaintenancePhase.NEW,
                 )
                 .order_by(
                     ClientRecord.mac_address,
@@ -826,7 +816,7 @@ class ClientComparisonService:
             
             comparison = ClientComparison(
                 maintenance_id=maintenance_id,
-                collected_at=datetime.utcnow(),
+                collected_at=now_utc(),
                 mac_address=mac,
             )
             
@@ -843,7 +833,9 @@ class ClientComparisonService:
                 comparison.old_acl_passes = before_record.acl_passes
             
             # 添加 AFTER 資料
-            if after_record:
+            # 直接使用 ClientRecord 判斷是否有數據
+            # 如果 switch_hostname 為 None，代表該 MAC 未被偵測到（None 記錄）
+            if after_record and after_record.switch_hostname is not None:
                 comparison.new_ip_address = after_record.ip_address
                 comparison.new_switch_hostname = after_record.switch_hostname
                 comparison.new_interface_name = after_record.interface_name
@@ -888,18 +880,19 @@ class ClientComparisonService:
             device_mappings[dm.old_hostname.lower()] = dm.new_hostname
 
         # 載入 MAC 清單
-        mac_list_stmt = select(MaintenanceMacList.mac_address).where(
+        mac_list_stmt = select(MaintenanceMacList).where(
             MaintenanceMacList.maintenance_id == maintenance_id
         )
         mac_list_result = await session.execute(mac_list_stmt)
-        mac_list = {m.upper() for m in mac_list_result.scalars().all()}
+        mac_records = mac_list_result.scalars().all()
 
-        # 查詢 Checkpoint 時間點的 NEW 階段記錄
+        mac_list = {m.mac_address.upper() for m in mac_records}
+
+        # 查詢 Checkpoint 時間點的記錄
         checkpoint_stmt = (
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == MaintenancePhase.NEW,
                 ClientRecord.collected_at <= checkpoint_time,
             )
             .order_by(
@@ -919,13 +912,12 @@ class ClientComparisonService:
             if mac_upper not in checkpoint_by_mac:
                 checkpoint_by_mac[mac_upper] = record
 
-        # 查詢 Current（最新）時間點的 NEW 階段記錄
+        # 查詢 Current（最新）時間點的記錄
         if current_time:
             current_stmt = (
                 select(ClientRecord)
                 .where(
                     ClientRecord.maintenance_id == maintenance_id,
-                    ClientRecord.phase == MaintenancePhase.NEW,
                     ClientRecord.collected_at <= current_time,
                 )
                 .order_by(
@@ -938,7 +930,6 @@ class ClientComparisonService:
                 select(ClientRecord)
                 .where(
                     ClientRecord.maintenance_id == maintenance_id,
-                    ClientRecord.phase == MaintenancePhase.NEW,
                 )
                 .order_by(
                     ClientRecord.mac_address,
@@ -972,7 +963,7 @@ class ClientComparisonService:
 
             comparison = ClientComparison(
                 maintenance_id=maintenance_id,
-                collected_at=datetime.utcnow(),
+                collected_at=now_utc(),
                 mac_address=mac,
             )
 
@@ -989,7 +980,9 @@ class ClientComparisonService:
                 comparison.old_acl_passes = checkpoint_record.acl_passes
 
             # 添加 Current 資料
-            if current_record:
+            # 直接使用 ClientRecord 判斷是否有數據
+            # 如果 switch_hostname 為 None，代表該 MAC 未被偵測到（None 記錄）
+            if current_record and current_record.switch_hostname is not None:
                 comparison.new_ip_address = current_record.ip_address
                 comparison.new_switch_hostname = current_record.switch_hostname
                 comparison.new_interface_name = current_record.interface_name
@@ -1005,6 +998,167 @@ class ClientComparisonService:
             comparisons.append(comparison)
 
         return comparisons
+
+    async def _generate_checkpoint_diffs_batch(
+        self,
+        maintenance_id: str,
+        checkpoint_times: list[datetime],
+        current_time: datetime,
+        session: AsyncSession,
+    ) -> dict[datetime, list[ClientComparison]]:
+        """批次比較多個 checkpoint vs current。
+
+        相比逐一呼叫 _generate_checkpoint_diff，此方法只執行 4 次 DB 查詢
+        （device_mappings + mac_list + current_records + all_checkpoint_records），
+        不受 checkpoint 數量影響。
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        from app.db.models import MaintenanceDeviceList, MaintenanceMacList
+
+        if not checkpoint_times:
+            return {}
+
+        # 1. 載入 device_mappings (1 query)
+        dev_stmt = select(MaintenanceDeviceList).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
+        dev_result = await session.execute(dev_stmt)
+        device_mappings: dict[str, str] = {}
+        for dm in dev_result.scalars().all():
+            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
+
+        # 2. 載入 MAC 清單 (1 query)
+        mac_list_stmt = select(MaintenanceMacList).where(
+            MaintenanceMacList.maintenance_id == maintenance_id
+        )
+        mac_list_result = await session.execute(mac_list_stmt)
+        mac_records = mac_list_result.scalars().all()
+
+        mac_list = {m.mac_address.upper() for m in mac_records}
+
+        # 3. 載入 current_records → build current_by_mac (1 query)
+        current_stmt = (
+            select(ClientRecord)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.collected_at <= current_time,
+            )
+            .order_by(
+                ClientRecord.mac_address,
+                ClientRecord.collected_at.desc(),
+            )
+        )
+        current_result = await session.execute(current_stmt)
+        current_by_mac: dict[str, ClientRecord] = {}
+        for record in current_result.scalars().all():
+            mac_upper = record.mac_address.upper() if record.mac_address else ""
+            if not mac_upper or mac_upper == SNAPSHOT_MARKER_MAC:
+                continue
+            if mac_upper not in current_by_mac:
+                current_by_mac[mac_upper] = record
+
+        # 4. 載入所有 checkpoint 記錄 (1 query)
+        #    取 collected_at <= max(checkpoint_times)，在 Python 中按 checkpoint 分組
+        max_cp = max(checkpoint_times)
+        all_cp_stmt = (
+            select(ClientRecord)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.collected_at <= max_cp,
+            )
+            .order_by(
+                ClientRecord.mac_address,
+                ClientRecord.collected_at.desc(),
+            )
+        )
+        all_cp_result = await session.execute(all_cp_stmt)
+        all_cp_records = all_cp_result.scalars().all()
+
+        # 按 MAC 分組，轉為升序排列並建立 timestamps 索引供 bisect 使用
+        # SQL 回傳 desc，reverse 後得到 asc（舊→新）
+        from bisect import bisect_right
+        from collections import defaultdict
+        _records_by_mac_desc: dict[str, list[ClientRecord]] = defaultdict(list)
+        for record in all_cp_records:
+            mac_upper = record.mac_address.upper() if record.mac_address else ""
+            if not mac_upper or mac_upper == SNAPSHOT_MARKER_MAC:
+                continue
+            _records_by_mac_desc[mac_upper].append(record)
+
+        # 預處理：每個 MAC 的記錄轉為升序 + 提取 timestamps 陣列
+        records_by_mac: dict[str, list[ClientRecord]] = {}
+        timestamps_by_mac: dict[str, list[datetime]] = {}
+        for mac, recs in _records_by_mac_desc.items():
+            asc = list(reversed(recs))
+            records_by_mac[mac] = asc
+            timestamps_by_mac[mac] = [r.collected_at for r in asc]
+
+        # 5. 對每個 checkpoint 生成比較結果
+        results: dict[datetime, list[ClientComparison]] = {}
+        all_macs = mac_list if mac_list else (
+            set(records_by_mac.keys()) | set(current_by_mac.keys())
+        )
+
+        for cp_time in checkpoint_times:
+            # 為此 checkpoint 建立 checkpoint_by_mac（bisect 二分搜尋 O(log R)）
+            checkpoint_by_mac: dict[str, ClientRecord] = {}
+            for mac in records_by_mac:
+                ts = timestamps_by_mac[mac]
+                idx = bisect_right(ts, cp_time)
+                if idx > 0:
+                    checkpoint_by_mac[mac] = records_by_mac[mac][idx - 1]
+
+            # 生成 comparisons
+            comparisons = []
+            for mac in all_macs:
+                checkpoint_record = checkpoint_by_mac.get(mac)
+                current_record = current_by_mac.get(mac)
+
+                comparison = ClientComparison(
+                    maintenance_id=maintenance_id,
+                    collected_at=now_utc(),
+                    mac_address=mac,
+                )
+
+                if checkpoint_record:
+                    comparison.old_ip_address = checkpoint_record.ip_address
+                    comparison.old_switch_hostname = checkpoint_record.switch_hostname
+                    comparison.old_interface_name = checkpoint_record.interface_name
+                    comparison.old_vlan_id = checkpoint_record.vlan_id
+                    comparison.old_speed = checkpoint_record.speed
+                    comparison.old_duplex = checkpoint_record.duplex
+                    comparison.old_link_status = checkpoint_record.link_status
+                    comparison.old_ping_reachable = checkpoint_record.ping_reachable
+                    comparison.old_acl_passes = checkpoint_record.acl_passes
+
+                # 直接使用 ClientRecord 判斷是否有數據
+                # 如果 switch_hostname 為 None，代表該 MAC 未被偵測到（None 記錄）
+                if current_record and current_record.switch_hostname is not None:
+                    comparison.new_ip_address = current_record.ip_address
+                    comparison.new_switch_hostname = current_record.switch_hostname
+                    comparison.new_interface_name = current_record.interface_name
+                    comparison.new_vlan_id = current_record.vlan_id
+                    comparison.new_speed = current_record.speed
+                    comparison.new_duplex = current_record.duplex
+                    comparison.new_link_status = current_record.link_status
+                    comparison.new_ping_reachable = current_record.ping_reachable
+                    comparison.new_acl_passes = current_record.acl_passes
+
+                comparison = self._compare_records(comparison, device_mappings)
+                comparisons.append(comparison)
+
+            results[cp_time] = comparisons
+
+        logger.info(
+            "Batch checkpoint diff for %s: %d checkpoints, %d MACs",
+            maintenance_id,
+            len(checkpoint_times),
+            len(all_macs),
+        )
+
+        return results
 
     def _compare_records(
         self,

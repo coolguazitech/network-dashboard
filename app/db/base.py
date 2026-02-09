@@ -96,6 +96,17 @@ async def init_db() -> None:
         # Import models to register them with Base
         from app.db import models  # noqa: F401
 
+        # Migration: drop old threshold_config (global single-row)
+        # so create_all can recreate with per-maintenance schema
+        from sqlalchemy import inspect as sa_inspect
+        def _migrate_threshold(connection):
+            inspector = sa_inspect(connection)
+            if "threshold_config" in inspector.get_table_names():
+                cols = {c["name"] for c in inspector.get_columns("threshold_config")}
+                if "maintenance_id" not in cols:
+                    connection.execute(models.ThresholdConfig.__table__.drop(connection))
+        await conn.run_sync(_migrate_threshold)
+
         await conn.run_sync(Base.metadata.create_all)
 
 

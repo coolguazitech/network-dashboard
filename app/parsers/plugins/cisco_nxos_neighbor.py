@@ -1,27 +1,102 @@
 """
-Cisco NX-OS Neighbor Parser Plugin.
+Cisco NX-OS Neighbor (LLDP) Parser Plugin — 解析 Cisco NX-OS LLDP 鄰居資訊。
 
-Parses 'show lldp neighbors detail' output from Cisco NX-OS devices.
+CLI 指令：show lldp neighbors detail
+註冊資訊：
+    device_type = DeviceType.CISCO_NXOS
+    indicator_type = "uplink"    ← 注意是 "uplink" 不是 "neighbor" 或 "lldp"！
+
+輸出模型：list[NeighborData]
+    NeighborData 欄位：
+        local_interface: str      — 本地介面名稱（如 "Ethernet1/49"），自動正規化 Eth→Ethernet
+        remote_hostname: str      — 遠端設備名稱（System Name）
+        remote_interface: str     — 遠端介面名稱（Port id），自動正規化 Eth→Ethernet
+        remote_platform: str|None — 遠端平台描述（System Description）
+
+重要提醒：
+    - NX-OS 使用 LLDP（不是 CDP），因為 NX-OS Spine/Leaf 架構更常用 LLDP
+    - Cisco IOS 使用 CDP（show cdp neighbors detail）
+    - HPE 也使用 LLDP（display lldp neighbor-information）
+    - MockFetcher 必須產生對應的 LLDP 格式（NXOS-LLDP）才能被此 parser 正確解析
 """
 from __future__ import annotations
 
 import re
 
-from app.core.enums import PlatformType, VendorType
+from app.core.enums import DeviceType
 from app.parsers.protocols import BaseParser, NeighborData
 from app.parsers.registry import parser_registry
 
 
 class CiscoNxosNeighborParser(BaseParser[NeighborData]):
     """
-    Parser for Cisco NX-OS LLDP neighbor data.
+    Cisco NX-OS LLDP 鄰居 Parser。
 
-    Parses output from: show lldp neighbors detail
-    Tested with: Nexus 9000 series
+    CLI 指令：show lldp neighbors detail
+    測試設備：Nexus 9000, 9300 系列
+
+    輸入格式（raw_output 範例）：
+    ::
+
+        Chassis id: 0012.3456.789a
+        Port id: Ethernet1/1
+        Local Port id: Eth1/49
+        Port Description: Uplink to Spine-01
+        System Name: spine-01.example.com
+        System Description: Cisco Nexus Operating System (NX-OS) Software 10.3(3)
+        Time remaining: 112 seconds
+        System Capabilities: B, R
+        Enabled Capabilities: B, R
+        Management Address: 10.0.1.1
+        Vlan ID: not advertised
+
+        Chassis id: 0012.3456.789b
+        Port id: Ethernet1/2
+        Local Port id: Eth1/50
+        Port Description: Uplink to Spine-02
+        System Name: spine-02.example.com
+        System Description: Cisco Nexus Operating System (NX-OS) Software 10.3(3)
+        ...
+
+    輸出格式（parse() 回傳值）：
+    ::
+
+        [
+            NeighborData(local_interface="Ethernet1/49",
+                        remote_hostname="spine-01.example.com",
+                        remote_interface="Ethernet1/1",
+                        remote_platform="Cisco Nexus Operating System (NX-OS) Software 10.3(3)"),
+            NeighborData(local_interface="Ethernet1/50",
+                        remote_hostname="spine-02.example.com",
+                        remote_interface="Ethernet1/2",
+                        remote_platform="Cisco Nexus Operating System (NX-OS) Software 10.3(3)"),
+        ]
+
+    解析策略：
+        - 以空行分割鄰居區塊
+        - 在每個區塊中提取：
+          - "Local Port id: XXX" → local_interface（Eth → Ethernet 正規化）
+          - "System Name: XXX" → remote_hostname
+          - "Port id: XXX" → remote_interface（Eth → Ethernet 正規化）
+          - "System Description: XXX" → remote_platform
+        - 注意 "Port id" 和 "Local Port id" 的匹配順序：
+          先匹配 "Local Port id"（較具體），再匹配 "Port id"（較一般）
+
+    介面名稱正規化：
+        NX-OS 的 LLDP 輸出中 Local Port id 常用縮寫 "Eth1/49"
+        此 parser 會自動轉為 "Ethernet1/49"
+        同理 remote_interface 的 "Eth" 也會轉為 "Ethernet"
+
+    已知邊界情況：
+        - 空行是鄰居區塊的分隔符；如果輸出中沒有空行分隔，解析會有問題
+        - "not advertised" 的欄位不會被 regex 匹配到 → 該欄位為 None
+        - 最後一個鄰居區塊後面可能沒有空行，需特別處理
+        - 某些 NX-OS 版本的輸出可能有額外欄位（如 Auto-negotiation）
+          但不影響此 parser（只取已知欄位）
+        - 空輸出 → 回傳空列表 []
     """
 
-    vendor = VendorType.CISCO
-    platform = PlatformType.CISCO_NXOS
+    device_type = DeviceType.CISCO_NXOS
     indicator_type = "uplink"
     command = "show lldp neighbors detail"
 

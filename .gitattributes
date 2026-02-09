@@ -1,0 +1,51 @@
+# =============================================================================
+# Git 跨平台設定
+# 確保 Windows/Mac/Linux 換行符號一致
+# =============================================================================
+
+# 預設使用 LF
+* text=auto eol=lf
+
+# Shell 腳本必須使用 LF
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Python
+*.py text eol=lf
+*.pyi text eol=lf
+
+# JavaScript/TypeScript
+*.js text eol=lf
+*.ts text eol=lf
+*.jsx text eol=lf
+*.tsx text eol=lf
+*.vue text eol=lf
+*.json text eol=lf
+
+# 設定檔
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+*.env text eol=lf
+.env* text eol=lf
+
+# Docker
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+
+# Markdown
+*.md text eol=lf
+
+# 二進制檔案
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.pdf binary

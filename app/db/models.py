@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text, func, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, String, Text, func, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import (
     Column,
@@ -19,7 +19,6 @@ from sqlalchemy import (
 
 from app.core.enums import (
     ClientDetectionStatus,
-    MaintenancePhase,
     MealDeliveryStatus,
     Permission,
     TenantGroup,
@@ -241,14 +240,16 @@ class CollectionBatch(Base):
     """
 
     __tablename__ = "collection_batches"
+    __table_args__ = (
+        Index(
+            "ix_collection_batches_lookup",
+            "collection_type", "maintenance_id", "switch_hostname",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     collection_type: Mapped[str] = mapped_column(String(100), index=True)
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    phase: Mapped[MaintenancePhase] = mapped_column(
-        Enum(MaintenancePhase),
-        default=MaintenancePhase.NEW,
-    )
     maintenance_id: Mapped[str] = mapped_column(
         String(100),
         index=True,
@@ -279,7 +280,6 @@ class TransceiverRecord(Base):
         index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
@@ -288,13 +288,6 @@ class TransceiverRecord(Base):
     rx_power: Mapped[float | None] = mapped_column(Float, nullable=True)
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
     voltage: Mapped[float | None] = mapped_column(Float, nullable=True)
-    current: Mapped[float | None] = mapped_column(Float, nullable=True)
-    serial_number: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )
-    part_number: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )
 
     def __repr__(self) -> str:
         return f"<TransceiverRecord {self.switch_hostname}:{self.interface_name}>"
@@ -311,7 +304,6 @@ class VersionRecord(Base):
         index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
@@ -337,7 +329,6 @@ class NeighborRecord(Base):
         index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
@@ -363,7 +354,6 @@ class PortChannelRecord(Base):
         index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
@@ -390,7 +380,6 @@ class PowerRecord(Base):
         index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
@@ -424,7 +413,6 @@ class FanRecord(Base):
         index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
@@ -448,7 +436,6 @@ class InterfaceErrorRecord(Base):
         index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
@@ -475,7 +462,6 @@ class PingRecord(Base):
         index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    phase: Mapped[MaintenancePhase] = mapped_column(Enum(MaintenancePhase))
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
@@ -499,10 +485,6 @@ class IndicatorResult(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     indicator_type: Mapped[str] = mapped_column(String(100), index=True)
-    phase: Mapped[MaintenancePhase] = mapped_column(
-        Enum(MaintenancePhase),
-        default=MaintenancePhase.NEW,
-    )
     maintenance_id: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
@@ -528,43 +510,112 @@ class IndicatorResult(Base):
     def __repr__(self) -> str:
         return f"<IndicatorResult {self.indicator_type}>"
 
+
+class CollectionError(Base):
+    """
+    採集錯誤記錄（current-state 表）。
+
+    當 DataCollectionService 對某設備採集失敗時，UPSERT 一筆錯誤。
+    成功採集時 DELETE 該筆（錯誤已解決）。
+    用於在 Dashboard 前端顯示「系統異常」，讓用戶區分
+    「尚未採集」與「採集失敗」。
+    """
+
+    __tablename__ = "collection_errors"
+    __table_args__ = (
+        UniqueConstraint(
+            "maintenance_id", "collection_type", "switch_hostname",
+            name="uk_collection_error",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    maintenance_id = Column(String(100), index=True, nullable=False)
+    collection_type = Column(String(100), nullable=False)
+    switch_hostname = Column(String(255), nullable=False)
+    error_message = Column(Text, nullable=False)
+    occurred_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+
+    def __repr__(self) -> str:
+        return f"<CollectionError {self.collection_type}@{self.switch_hostname}>"
+
+
+class SystemLog(Base):
+    """
+    系統日誌（audit log 表）。
+
+    記錄所有系統錯誤和重要事件，供 ROOT 管理員在前端查閱。
+    與 CollectionError 共存：CollectionError 是 current-state（Dashboard 用），
+    SystemLog 是 audit log（管理員日誌頁面用）。
+    """
+
+    __tablename__ = "system_logs"
+
+    id = Column(Integer, primary_key=True)
+    level = Column(String(20), index=True, nullable=False)  # ERROR, WARNING, INFO
+    source = Column(String(50), index=True, nullable=False)  # api, scheduler, frontend, service
+    module = Column(String(200), nullable=True)  # e.g. "data_collection", "auth"
+    summary = Column(String(500), nullable=False)  # 中文摘要
+    detail = Column(Text, nullable=True)  # traceback / 技術細節
+    user_id = Column(Integer, nullable=True)
+    username = Column(String(100), nullable=True)
+    maintenance_id = Column(String(100), nullable=True, index=True)
+    request_path = Column(String(500), nullable=True)
+    request_method = Column(String(10), nullable=True)
+    status_code = Column(Integer, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), index=True)
+
+    def __repr__(self) -> str:
+        return f"<SystemLog [{self.level}] {self.source}: {self.summary[:30]}>"
+
+
 class ClientRecord(Base):
     """客戶端追蹤記錄。"""
     __tablename__ = "client_records"
+    __table_args__ = (
+        Index(
+            "ix_client_records_maint_collected",
+            "maintenance_id", "collected_at",
+        ),
+        Index(
+            "ix_client_records_maint_mac_collected",
+            "maintenance_id", "mac_address", "collected_at",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # 基本信息
     maintenance_id = Column(String(50), index=True)
-    phase = Column(Enum(MaintenancePhase), index=True)
-    collected_at = Column(DateTime, default=datetime.utcnow)
-    
+    collected_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+
     # 客戶端信息
     mac_address = Column(String(17), index=True)  # AA:BB:CC:DD:EE:FF
     ip_address = Column(String(15), index=True, nullable=True)   # IPv4
-    
+
     # 網絡連接信息
     switch_hostname = Column(String(100), index=True)
     interface_name = Column(String(50))
     vlan_id = Column(Integer, nullable=True)
-    
+
     # 性能指標
     speed = Column(String(20), nullable=True)     # 1G, 10G, etc.
     duplex = Column(String(20), nullable=True)    # full, half
     link_status = Column(String(20), nullable=True)  # up, down
-    
+
     # 健康檢查
     ping_reachable = Column(Boolean, nullable=True)
-    
+
     # ACL 檢查
     acl_rules_applied = Column(JSON, nullable=True)
     acl_passes = Column(Boolean, nullable=True)
-    
+
     # 收集的原始數據
     raw_data = Column(Text, nullable=True)
     parsed_data = Column(JSON, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class ClientComparison(Base):
@@ -580,7 +631,7 @@ class ClientComparison(Base):
 
     # 基本信息
     maintenance_id = Column(String(50), index=True)
-    collected_at = Column(DateTime, default=datetime.utcnow, index=True)
+    collected_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), index=True)
 
     # 客戶端識別
     mac_address = Column(String(17), index=True)  # AA:BB:CC:DD:EE:FF
@@ -614,9 +665,9 @@ class ClientComparison(Base):
     
     # 額外信息
     notes = Column(Text, nullable=True)
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
 
 
 class Checkpoint(Base):
@@ -635,7 +686,7 @@ class Checkpoint(Base):
     description = Column(Text, nullable=True)
     summary_data = Column(JSON, nullable=True)  # 存儲該時間點的統計摘要
     created_by = Column(String(100), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class ReferenceClient(Base):
@@ -664,8 +715,8 @@ class ReferenceClient(Base):
     location = Column(String(200), nullable=True)
     reason = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
 
 
 class MaintenanceConfig(Base):
@@ -685,8 +736,8 @@ class MaintenanceConfig(Base):
     anchor_time = Column(DateTime, nullable=True, index=True)  # 歲修開始錨點時間
     is_active = Column(Boolean, default=True, nullable=False)  # 是否為活躍歲修
     config_data = Column(JSON, nullable=True)  # 其他配置數據
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
 
 
 class ClientCategory(Base):
@@ -706,8 +757,8 @@ class ClientCategory(Base):
     color = Column(String(20), nullable=True)  # 用於前端顯示的顏色代碼
     sort_order = Column(Integer, default=0)  # 排序順序
     is_active = Column(Boolean, default=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
     
     # Relationships
     members: Mapped[list["ClientCategoryMember"]] = relationship(
@@ -744,7 +795,7 @@ class ClientCategoryMember(Base):
     # 移除 unique=True，允許同一 MAC 出現在多個分類
     mac_address = Column(String(17), index=True, nullable=False)
     description = Column(String(200), nullable=True)  # 機台備註
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
     
     # Relationships
     category: Mapped["ClientCategory"] = relationship(
@@ -789,9 +840,7 @@ class MaintenanceMacList(Base):
         default=ClientDetectionStatus.NOT_CHECKED,
     )
     description: Mapped[str | None] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow,
-    )
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
     __table_args__ = (
         UniqueConstraint(
@@ -807,31 +856,43 @@ DEVICE_VENDOR_OPTIONS = ["HPE", "Cisco-IOS", "Cisco-NXOS"]
 class MaintenanceDeviceList(Base):
     """
     歲修設備對應清單。
-    
+
     每筆資料包含一組新舊設備的對應關係。
-    若設備不更換，則新舊設備填同一台。
+
+    重要設計原則：
+    - old_hostname / new_hostname 的相同與否 **不代表** 設備是否被物理更換
+    - 設備是否更換由 ``is_replaced`` 欄位明確指定（由管理員在上傳清單時填寫）
+    - 即使 is_replaced=True，new_hostname 和 new_ip 也可能與 old 完全相同
+      （例如：新設備沿用舊 hostname / IP）
+    - 即使 is_replaced=False，new_hostname 和 new_ip 也可能與 old 不同
+      （例如：同一台設備改了 hostname 或 IP）
     """
-    
+
     __tablename__ = "maintenance_device_list"
     __table_args__ = (
         UniqueConstraint(
             'maintenance_id', 'old_hostname', name='uk_maintenance_old_hostname'
         ),
     )
-    
+
     id = Column(Integer, primary_key=True, index=True)
     maintenance_id = Column(String(100), index=True, nullable=False)
-    
+
     # 舊設備資訊（必填）
     old_hostname = Column(String(255), index=True, nullable=False)
     old_ip_address = Column(String(45), nullable=False)
     old_vendor = Column(String(50), nullable=False)  # HPE, Cisco-IOS, Cisco-NXOS
-    
+
     # 新設備資訊（必填）
     new_hostname = Column(String(255), index=True, nullable=False)
     new_ip_address = Column(String(45), nullable=False)
     new_vendor = Column(String(50), nullable=False)  # HPE, Cisco-IOS, Cisco-NXOS
-    
+
+    # 是否為更換設備（由管理員在上傳清單時明確指定）
+    # True = 物理上換了一台新設備（error_count 要求全為 0）
+    # False = 同一台設備（error_count 容許閾值內的錯誤）
+    is_replaced = Column(Boolean, nullable=False, default=False)
+
     # 對應設定
     use_same_port = Column(Boolean, default=True)  # 是否同埠對應
 
@@ -853,9 +914,9 @@ class MaintenanceDeviceList(Base):
         default=TenantGroup.F18,
     )
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
     updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP')
     )
 
     def __repr__(self) -> str:
@@ -881,8 +942,8 @@ class SeverityOverride(Base):
     override_severity = Column(String(20), nullable=False)  # 'critical', 'warning', 'info'
     original_severity = Column(String(20), nullable=True)   # 保存原本的自動判斷值
     note = Column(Text, nullable=True)  # 用戶備註
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
 
     def __repr__(self) -> str:
         return f"<SeverityOverride {self.mac_address}: {self.override_severity}>"
@@ -1129,5 +1190,57 @@ class User(Base):
 
     def __repr__(self) -> str:
         return f"<User {self.username} ({self.role.value})>"
+
+
+class ThresholdConfig(Base):
+    """
+    動態閾值覆寫設定（每歲修一行）。
+
+    NULL 欄位表示使用 .env 預設值；非 NULL 表示覆寫。
+    由 threshold_service 管理快取，indicator 透過 get_threshold() 讀取。
+    """
+
+    __tablename__ = "threshold_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(
+        String(100), unique=True, nullable=False, index=True,
+        comment="歲修 ID（每歲修獨立閾值設定）",
+    )
+
+    # Transceiver 光模塊閾值（雙向 min/max）
+    transceiver_tx_power_min: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="TX Power 下限 (dBm)"
+    )
+    transceiver_tx_power_max: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="TX Power 上限 (dBm)"
+    )
+    transceiver_rx_power_min: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="RX Power 下限 (dBm)"
+    )
+    transceiver_rx_power_max: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="RX Power 上限 (dBm)"
+    )
+    transceiver_temperature_min: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="溫度下限 (°C)"
+    )
+    transceiver_temperature_max: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="溫度上限 (°C)"
+    )
+    transceiver_voltage_min: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="電壓下限 (V)"
+    )
+    transceiver_voltage_max: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="電壓上限 (V)"
+    )
+
+    # Error Count 閾值
+    error_count_same_device_max: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="未換設備 error 容許上限"
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
 
 

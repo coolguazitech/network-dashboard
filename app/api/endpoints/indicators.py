@@ -6,7 +6,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import MaintenancePhase
 from app.db.base import get_async_session
 from app.schemas.indicator import (
     IndicatorMetadataResponse,
@@ -20,6 +19,7 @@ from app.schemas.indicator import (
     CollectionStatusResponse,
 )
 from app.services.indicator_service import IndicatorService
+from app.services.threshold_service import ensure_cache
 
 router = APIRouter()
 
@@ -116,7 +116,6 @@ async def get_indicator_timeseries(
     maintenance_id: str,
     indicator_name: str,
     limit: int = Query(100, ge=1, le=1000, description="資料點數量限制"),
-    phase: str = Query("NEW", description="維護階段 (OLD/NEW)"),
     session: AsyncSession = Depends(get_async_session),
 ) -> TimeSeriesResponse:
     """
@@ -130,16 +129,11 @@ async def get_indicator_timeseries(
             detail=f"Indicator '{indicator_name}' not found"
         )
 
-    maintenance_phase = (
-        MaintenancePhase.OLD if phase.upper() == "OLD"
-        else MaintenancePhase.NEW
-    )
-
+    await ensure_cache(session, maintenance_id)
     time_series = await indicator.get_time_series(
         limit=limit,
         session=session,
         maintenance_id=maintenance_id,
-        phase=maintenance_phase,
     )
     metadata = indicator.get_metadata()
 
@@ -155,12 +149,11 @@ async def get_indicator_timeseries(
             for point in time_series
         ],
         display_config=DisplayConfigSchema(
-            chart_type=metadata.display_config.chart_type,
-            x_axis_label=metadata.display_config.x_axis_label,
-            y_axis_label=metadata.display_config.y_axis_label,
-            y_axis_min=metadata.display_config.y_axis_min,
-            y_axis_max=metadata.display_config.y_axis_max,
-            line_colors=metadata.display_config.line_colors,
+            **{
+                k: v
+                for k, v in metadata.display_config.model_dump().items()
+                if v is not None
+            }
         ),
         last_updated=getattr(indicator, "_last_collection_time", None),
     )
@@ -172,7 +165,6 @@ async def get_indicator_raw_data(
     indicator_name: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    phase: str = Query("NEW", description="維護階段 (OLD/NEW)"),
     session: AsyncSession = Depends(get_async_session),
 ) -> RawDataTableResponse:
     """
@@ -186,17 +178,12 @@ async def get_indicator_raw_data(
             detail=f"Indicator '{indicator_name}' not found"
         )
 
-    maintenance_phase = (
-        MaintenancePhase.OLD if phase.upper() == "OLD"
-        else MaintenancePhase.NEW
-    )
-
+    await ensure_cache(session, maintenance_id)
     # 取得原始資料
     raw_data = await indicator.get_latest_raw_data(
         limit=page_size * page,
         session=session,
         maintenance_id=maintenance_id,
-        phase=maintenance_phase,
     )
     metadata = indicator.get_metadata()
 
@@ -282,7 +269,7 @@ async def trigger_collection(
         collection_id=1,
         indicator_name=indicator_name,
         status="pending",
-        started_at=datetime.utcnow(),
+        started_at=now_utc(),
         total_items=0,
         success_items=0,
         failed_items=0,

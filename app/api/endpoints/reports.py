@@ -44,6 +44,7 @@ async def preview_report(
             "fail_count": result.fail_count,
             "pass_rate": result.pass_rate_percent,
             "failures": result.failures or [],
+            "passes": result.passes or [],
         }
 
     # 使用台灣時區 (UTC+8)

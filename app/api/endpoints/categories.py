@@ -21,6 +21,7 @@ from app.db.models import (
     ClientComparison,
     SeverityOverride,
 )
+from app.services.system_log import write_log
 
 
 # MAC 地址格式驗證正則
@@ -140,7 +141,6 @@ async def get_category_stats(
     from datetime import datetime
     from sqlalchemy import func
     from app.db.models import ClientRecord
-    from app.core.enums import MaintenancePhase
     from app.services.client_comparison_service import ClientComparisonService
 
     async with get_session_context() as session:
@@ -183,7 +183,6 @@ async def get_category_stats(
                 select(func.max(ClientRecord.collected_at))
                 .where(
                     ClientRecord.maintenance_id == maintenance_id,
-                    ClientRecord.phase == MaintenancePhase.NEW,
                 )
             )
             latest_result = await session.execute(latest_stmt)
@@ -456,7 +455,15 @@ async def create_category(data: CategoryCreate) -> dict[str, Any]:
         session.add(category)
         await session.commit()
         await session.refresh(category)
-        
+
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"新增分類: {data.name}",
+            module="category",
+            maintenance_id=data.maintenance_id,
+        )
+
         return {
             "id": category.id,
             "name": category.name,
@@ -515,7 +522,15 @@ async def update_category(
         ).where(ClientCategoryMember.category_id == category_id)
         count_result = await session.execute(count_stmt)
         member_count = count_result.scalar() or 0
-        
+
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"更新分類: {category.name}",
+            module="category",
+            maintenance_id=category.maintenance_id,
+        )
+
         return {
             "id": category.id,
             "name": category.name,
@@ -545,7 +560,15 @@ async def delete_category(category_id: int) -> dict[str, str]:
         # 軟刪除
         category.is_active = False
         await session.commit()
-        
+
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary=f"刪除分類: {category.name}",
+            module="category",
+            maintenance_id=category.maintenance_id,
+        )
+
         return {"message": f"種類 '{category.name}' 已刪除"}
 
 
@@ -632,7 +655,15 @@ async def add_member(
             session.add(member)
             await session.commit()
             await session.refresh(member)
-        
+
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"分類成員: {mac} → {category.name}",
+            module="category",
+            maintenance_id=category.maintenance_id,
+        )
+
         return {
             "id": member.id,
             "mac_address": member.mac_address,
@@ -663,7 +694,15 @@ async def remove_member(
         
         await session.delete(member)
         await session.commit()
-        
+
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary=f"移除分類成員: {mac}",
+            module="category",
+            maintenance_id=None,
+        )
+
         return {"message": f"已移除 {mac}"}
 
 
@@ -743,6 +782,15 @@ async def import_members_csv(
                 imported += 1
         
         await session.commit()
+
+        if imported + updated > 0:
+            await write_log(
+                level="INFO",
+                source="api",
+                summary=f"CSV 匯入分類成員: 新增 {imported}, 更新 {updated}",
+                module="category",
+                maintenance_id=category.maintenance_id,
+            )
 
         return {
             "imported": imported,
@@ -878,6 +926,15 @@ async def bulk_import_categories(
                     members_imported += 1
 
         await session.commit()
+
+        if categories_created + members_imported > 0:
+            await write_log(
+                level="INFO",
+                source="api",
+                summary=f"批量匯入分類: 建立 {categories_created} 分類, 新增 {members_imported} 成員",
+                module="category",
+                maintenance_id=maintenance_id,
+            )
 
         return {
             "categories_created": categories_created,

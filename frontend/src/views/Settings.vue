@@ -1017,7 +1017,7 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
         const res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify(this.selectedUplinks),
+          body: JSON.stringify({ item_ids: this.selectedUplinks }),
         });
 
         if (res.ok) {
@@ -1236,7 +1236,7 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         const res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify(this.selectedVersions),
+          body: JSON.stringify({ item_ids: this.selectedVersions }),
         });
 
         if (res.ok) {
@@ -1457,7 +1457,7 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
         const res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify(this.selectedPortChannels),
+          body: JSON.stringify({ item_ids: this.selectedPortChannels }),
         });
 
         if (res.ok) {

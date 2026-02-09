@@ -1,0 +1,81 @@
+# =============================================================================
+# Dev Container Docker Compose
+# 整合開發容器與資料庫服務
+# =============================================================================
+
+services:
+  # 開發容器
+  devcontainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      # 保留 venv 在 volume 中以提升效能（尤其在 Mac 上）
+      - venv-volume:/workspace/.venv
+      # 保留 node_modules 在 volume 中
+      - node-modules-volume:/workspace/frontend/node_modules
+      # Git credentials
+      - ~/.gitconfig:/home/vscode/.gitconfig:ro
+    # 讓容器持續運行
+    command: sleep infinity
+    # 連接到資料庫網路
+    networks:
+      - dev_network
+    environment:
+      # 資料庫連線
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: netora
+      DB_USER: admin
+      DB_PASSWORD: admin
+      # 開發模式
+      APP_DEBUG: "true"
+      APP_ENV: development
+
+  # MariaDB 資料庫
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MYSQL_DATABASE: netora
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: admin
+    ports:
+      - "3306:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - dev_network
+
+  # phpMyAdmin（選用）
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    restart: unless-stopped
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "8080:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - dev_network
+
+volumes:
+  db-data:
+  venv-volume:
+  node-modules-volume:
+
+networks:
+  dev_network:
+    driver: bridge

@@ -1,20 +1,16 @@
 """Core module - contains enums, base classes, and configuration."""
 from .enums import (
+    DeviceType,
     IndicatorObjectType,
     DataType,
-    VendorType,
-    PlatformType,
     MetricType,
-    MaintenancePhase,
 )
 from .config import settings
 
 __all__ = [
+    "DeviceType",
     "IndicatorObjectType",
     "DataType",
-    "VendorType",
-    "PlatformType",
     "MetricType",
-    "MaintenancePhase",
     "settings",
 ]

@@ -12,7 +12,6 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import MaintenancePhase
 from app.db.models import MaintenanceDeviceList, PingRecord
 from app.indicators.base import (
     BaseIndicator,
@@ -44,7 +43,6 @@ class PingIndicator(BaseIndicator):
         self,
         maintenance_id: str,
         session: AsyncSession,
-        phase: MaintenancePhase | None = None,
     ) -> IndicatorEvaluationResult:
         """
         評估 Ping 指標。
@@ -52,9 +50,6 @@ class PingIndicator(BaseIndicator):
         分母：MaintenanceDeviceList 中的新設備總數
         分子：新設備中 ping 成功（可達且成功率 >= 80%）的數量
         """
-        if phase is None:
-            phase = MaintenancePhase.NEW
-
         # 1. 獲取所有新設備清單（分母來源）
         expected_devices = await self._get_expected_devices(
             session, maintenance_id
@@ -64,7 +59,6 @@ class PingIndicator(BaseIndicator):
         if total_count == 0:
             return IndicatorEvaluationResult(
                 indicator_type=self.indicator_type,
-                phase=phase,
                 maintenance_id=maintenance_id,
                 total_count=0,
                 pass_count=0,
@@ -76,19 +70,19 @@ class PingIndicator(BaseIndicator):
 
         # 2. 獲取採集數據，建立 hostname -> PingRecord 的映射
         collected = await self._get_collected_results(
-            session, maintenance_id, phase
+            session, maintenance_id
         )
 
         # 3. 逐一評估每個新設備
         pass_count = 0
         failures = []
+        passes = []
 
         for device in expected_devices:
             hostname = device["new_hostname"]
             device_status = collected.get(hostname)
 
             if device_status is None:
-                # 該設備不在清單中
                 failures.append({
                     "device": hostname,
                     "interface": "Mgmt",
@@ -96,7 +90,6 @@ class PingIndicator(BaseIndicator):
                     "data": None
                 })
             elif device_status["is_reachable"] is None:
-                # 尚未測試
                 failures.append({
                     "device": hostname,
                     "interface": "Mgmt",
@@ -104,7 +97,6 @@ class PingIndicator(BaseIndicator):
                     "data": None
                 })
             elif not device_status["is_reachable"]:
-                # 不可達
                 failures.append({
                     "device": hostname,
                     "interface": "Mgmt",
@@ -115,12 +107,20 @@ class PingIndicator(BaseIndicator):
                     }
                 })
             else:
-                # 可達，通過
                 pass_count += 1
+                if len(passes) < 10:
+                    passes.append({
+                        "device": hostname,
+                        "interface": "Mgmt",
+                        "reason": "Ping 可達",
+                        "data": {
+                            "is_reachable": True,
+                            "last_check_at": str(device_status["last_check_at"]) if device_status["last_check_at"] else None,
+                        }
+                    })
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
-            phase=phase,
             maintenance_id=maintenance_id,
             total_count=total_count,
             pass_count=pass_count,
@@ -129,6 +129,7 @@ class PingIndicator(BaseIndicator):
                 "reachable": self._calc_percent(pass_count, total_count)
             },
             failures=failures if failures else None,
+            passes=passes if passes else None,
             summary=f"連通性檢查: {pass_count}/{total_count} 新設備可達"
         )
 
@@ -155,7 +156,6 @@ class PingIndicator(BaseIndicator):
         self,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase,
     ) -> dict[str, dict]:
         """
         獲取設備可達性數據。
@@ -211,12 +211,11 @@ class PingIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[TimeSeriesPoint]:
         """獲取時間序列數據。"""
         repo = PingRecordRepo(session)
         records = await repo.get_time_series_records(
-            maintenance_id, phase, limit=limit
+            maintenance_id, limit=limit
         )
 
         # Group records by collected_at to compute reachable rate per timestamp
@@ -247,12 +246,11 @@ class PingIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
         repo = PingRecordRepo(session)
         records = await repo.get_latest_records(
-            maintenance_id, phase, limit=limit
+            maintenance_id, limit=limit
         )
 
         raw_data = []

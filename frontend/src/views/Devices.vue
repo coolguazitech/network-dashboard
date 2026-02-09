@@ -146,9 +146,9 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-700">
-                <tr v-for="mac in macList" :key="mac.id" class="hover:bg-slate-700/50 transition" :class="{ 'bg-cyan-900/20': selectedMacs.includes(mac.mac_address) }">
+                <tr v-for="mac in macList" :key="mac.id" class="hover:bg-slate-700/50 transition" :class="{ 'bg-cyan-900/20': selectedMacs.includes(mac.id) }">
                   <td class="px-2 py-2 text-center">
-                    <input type="checkbox" :value="mac.mac_address" v-model="selectedMacs" class="rounded border-slate-500" />
+                    <input type="checkbox" :value="mac.id" v-model="selectedMacs" class="rounded border-slate-500" />
                   </td>
                   <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ mac.mac_address }}</td>
                   <td class="px-3 py-2 font-mono text-slate-300 text-xs">{{ mac.ip_address }}</td>
@@ -283,6 +283,7 @@
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="3">新設備</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">Tenant</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">同埠</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">換機</th>
                   <th class="px-3 py-2 text-center text-xs font-medium text-slate-400 uppercase" colspan="2">可達性</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">備註</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
@@ -291,10 +292,11 @@
                   <th class="px-2 py-1"></th>
                   <th class="px-2 py-1 text-left text-xs text-slate-500">Hostname</th>
                   <th class="px-2 py-1 text-left text-xs text-slate-500">IP</th>
-                  <th class="px-2 py-1 text-left text-xs text-slate-500">廠商</th>
+                  <th class="px-2 py-1 text-left text-xs text-slate-500">Device Type</th>
                   <th class="px-2 py-1 text-left text-xs text-slate-500">Hostname</th>
                   <th class="px-2 py-1 text-left text-xs text-slate-500">IP</th>
-                  <th class="px-2 py-1 text-left text-xs text-slate-500">廠商</th>
+                  <th class="px-2 py-1 text-left text-xs text-slate-500">Device Type</th>
+                  <th class="px-2 py-1"></th>
                   <th class="px-2 py-1"></th>
                   <th class="px-2 py-1"></th>
                   <th class="px-2 py-1 text-center text-xs text-red-400">舊</th>
@@ -322,6 +324,11 @@
                       {{ device.use_same_port ? '✓' : '✗' }}
                     </span>
                   </td>
+                  <td class="px-2 py-2">
+                    <span :class="device.is_replaced ? 'text-orange-400' : 'text-slate-500'" class="text-xs">
+                      {{ device.is_replaced ? '是' : '否' }}
+                    </span>
+                  </td>
                   <td class="px-2 py-2 text-center">
                     <span v-if="device.old_is_reachable === true" class="text-green-400 text-xs">🟢</span>
                     <span v-else-if="device.old_is_reachable === false" class="text-red-400 text-xs">🔴</span>
@@ -341,7 +348,7 @@
                   </td>
                 </tr>
                 <tr v-if="deviceList.length === 0">
-                  <td colspan="13" class="px-4 py-8 text-center text-slate-500">
+                  <td colspan="14" class="px-4 py-8 text-center text-slate-500">
                     尚無設備資料，請匯入 CSV 或手動新增
                   </td>
                 </tr>
@@ -351,7 +358,7 @@
 
           <!-- 提示 -->
           <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,use_same_port,tenant_group,description（若不更換，新舊填同一台；tenant_group: F18/F6/AP/F14/F12）
+            💡 CSV 格式：old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,is_replaced,use_same_port,tenant_group,description（is_replaced: TRUE/FALSE；若不更換設備填 FALSE，新舊填同一台；tenant_group: F18/F6/AP/F14/F12）
           </p>
         </div>
       </div>
@@ -623,7 +630,7 @@
               <input v-model="newDevice.old_ip_address" type="text" placeholder="10.1.1.1" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-slate-400 mb-1">廠商 <span class="text-red-400">*</span></label>
+              <label class="block text-xs text-slate-400 mb-1">Device Type <span class="text-red-400">*</span></label>
               <select v-model="newDevice.old_vendor" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
                 <option value="HPE">HPE</option>
                 <option value="Cisco-IOS">Cisco-IOS</option>
@@ -644,7 +651,7 @@
               <input v-model="newDevice.new_ip_address" type="text" placeholder="10.1.1.101" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-slate-400 mb-1">廠商 <span class="text-red-400">*</span></label>
+              <label class="block text-xs text-slate-400 mb-1">Device Type <span class="text-red-400">*</span></label>
               <select v-model="newDevice.new_vendor" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
                 <option value="HPE">HPE</option>
                 <option value="Cisco-IOS">Cisco-IOS</option>
@@ -660,6 +667,10 @@
             <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" v-model="newDevice.use_same_port" class="rounded border-slate-500" />
               <span class="text-slate-300 text-sm">使用相同 Port 對應</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" v-model="newDevice.is_replaced" class="rounded border-slate-500" />
+              <span class="text-slate-300 text-sm">會更換設備</span>
             </label>
           </div>
           <div class="grid grid-cols-2 gap-4">
@@ -898,7 +909,7 @@ export default {
         id: null,
         old_hostname: '', old_ip_address: '', old_vendor: 'HPE',
         new_hostname: '', new_ip_address: '', new_vendor: 'HPE',
-        use_same_port: true, tenant_group: 'F18', description: ''
+        use_same_port: true, is_replaced: false, tenant_group: 'F18', description: ''
       },
 
       // 通用訊息 Modal
@@ -1426,7 +1437,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
     // ========== 批量選擇 ==========
     toggleSelectAll() {
       if (this.selectAll) {
-        this.selectedMacs = this.macList.map(m => m.mac_address);
+        this.selectedMacs = this.macList.map(m => m.id);
       } else {
         this.selectedMacs = [];
       }
@@ -1447,10 +1458,13 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
       if (!confirmed) return;
 
       try {
+        // 將選中的 ID 轉換成整數陣列
+        const macIds = this.selectedMacs.map(id => parseInt(id, 10));
+
         const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify(this.selectedMacs),
+          body: JSON.stringify({ mac_ids: macIds }),
         });
 
         if (res.ok) {
@@ -1497,11 +1511,16 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
       const newCategoryIds = new Set(this.batchCategoryIds);
 
       try {
-        for (const mac of this.selectedMacs) {
+        // 將選中的 ID 轉換成 MAC 地址
+        const selectedMacObjects = this.macList.filter(m => this.selectedMacs.includes(m.id));
+
+        for (const macObj of selectedMacObjects) {
+          const macAddress = macObj.mac_address;
+
           // 先從所有分類移除該 MAC
           for (const cat of this.categories) {
             try {
-              await fetch(`/api/v1/categories/${cat.id}/members/${encodeURIComponent(mac)}`, {
+              await fetch(`/api/v1/categories/${cat.id}/members/${encodeURIComponent(macAddress)}`, {
                 method: 'DELETE',
                 headers: getAuthHeaders()
               });
@@ -1515,7 +1534,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
             await fetch(`/api/v1/categories/${catId}/members`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-              body: JSON.stringify({ mac_address: mac }),
+              body: JSON.stringify({ mac_address: macAddress }),
             });
           }
         }
@@ -1656,10 +1675,10 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
     },
 
     downloadDeviceTemplate() {
-      const csv = `old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,use_same_port,tenant_group,description
-OLD-SW-001,10.1.1.1,HPE,NEW-SW-001,10.1.1.101,HPE,TRUE,F18,1F機房更換
-OLD-SW-002,10.1.1.2,Cisco-IOS,NEW-SW-002,10.1.1.102,Cisco-IOS,TRUE,F6,2F機房更換
-SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,不更換設備`;
+      const csv = `old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,is_replaced,use_same_port,tenant_group,description
+OLD-SW-001,10.1.1.1,HPE,NEW-SW-001,10.1.1.101,HPE,TRUE,TRUE,F18,1F機房更換
+OLD-SW-002,10.1.1.2,Cisco-IOS,NEW-SW-002,10.1.1.102,Cisco-IOS,TRUE,TRUE,F6,2F機房更換
+SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,FALSE,TRUE,AP,不更換設備`;
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
@@ -1718,7 +1737,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,�
         id: null,
         old_hostname: '', old_ip_address: '', old_vendor: 'HPE',
         new_hostname: '', new_ip_address: '', new_vendor: 'HPE',
-        use_same_port: true, tenant_group: 'F18', description: ''
+        use_same_port: true, is_replaced: false, tenant_group: 'F18', description: ''
       };
     },
 
@@ -1749,6 +1768,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,�
         new_ip_address: newIp,
         new_vendor: this.newDevice.new_vendor,
         use_same_port: this.newDevice.use_same_port,
+        is_replaced: this.newDevice.is_replaced,
         tenant_group: this.newDevice.tenant_group,
         description: this.newDevice.description?.trim() || null,
       };
@@ -1794,6 +1814,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,�
         new_ip_address: device.new_ip_address || '',
         new_vendor: device.new_vendor || 'HPE',
         use_same_port: device.use_same_port ?? true,
+        is_replaced: device.is_replaced ?? false,
         tenant_group: device.tenant_group || 'F18',
         description: device.description || '',
       };
@@ -1904,7 +1925,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,TRUE,AP,�
         const res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify(this.selectedDevices),
+          body: JSON.stringify({ device_ids: this.selectedDevices }),
         });
 
         if (res.ok) {
@@ -2192,7 +2213,7 @@ DISTRO-SW-01,100,分發層交換機`;
         const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/batch-delete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify(this.selectedArps),
+          body: JSON.stringify({ item_ids: this.selectedArps }),
         });
 
         if (res.ok) {

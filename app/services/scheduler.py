@@ -8,6 +8,7 @@ Handles scheduled jobs for data collection using APScheduler.
 from __future__ import annotations
 
 import logging
+import traceback as tb_module
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -40,14 +41,14 @@ class SchedulerService:
         self.collection_service = DataCollectionService()
         self.client_collection_service = ClientCollectionService()
         self._jobs: dict[str, str] = {}  # job_name -> job_id
+        # 追蹤每個歲修的初始 checkpoint 寫入次數
+        # 新歲修需要至少 2 次寫入才能讓比較頁面有 Before ≠ Current
+        self._initial_checkpoint_counts: dict[str, int] = {}
 
     def add_collection_job(
         self,
         job_name: str,
         interval_seconds: int,
-        url: str | None = None,
-        source: str | None = None,
-        brand: str | None = None,
     ) -> str:
         """
         Add a scheduled collection job.
@@ -57,9 +58,6 @@ class SchedulerService:
         Args:
             job_name: Data type name (e.g., "transceiver", "mac-table")
             interval_seconds: Collection interval in seconds
-            url: External API endpoint URL
-            source: Data source (FNA/DNA)
-            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
 
         Returns:
             str: Job ID
@@ -77,9 +75,6 @@ class SchedulerService:
             id=job_id,
             kwargs={
                 "job_name": job_name,
-                "url": url,
-                "source": source,
-                "brand": brand,
             },
             replace_existing=True,
         )
@@ -130,15 +125,55 @@ class SchedulerService:
         """
         取得所有活躍的歲修 ID。
 
+        自動停用超過 max_collection_days 的歲修。
+
         Returns:
             list: 活躍歲修 ID 列表
         """
+        from datetime import datetime, timedelta, timezone
+
         from sqlalchemy import select
 
+        from app.core.config import settings
         from app.db.base import get_session_context
         from app.db.models import MaintenanceConfig
 
         async with get_session_context() as session:
+            # 自動停用超時歲修
+            cutoff = datetime.now(timezone.utc) - timedelta(
+                days=settings.max_collection_days
+            )
+            expired_stmt = select(MaintenanceConfig).where(
+                MaintenanceConfig.is_active == True,  # noqa: E712
+                MaintenanceConfig.created_at <= cutoff,
+            )
+            expired_result = await session.execute(expired_stmt)
+            expired = expired_result.scalars().all()
+
+            for config in expired:
+                config.is_active = False
+                logger.warning(
+                    "Auto-stopping maintenance %s: exceeded %d-day limit",
+                    config.maintenance_id,
+                    settings.max_collection_days,
+                )
+
+            if expired:
+                await session.commit()
+                from app.services.system_log import write_log
+                for config in expired:
+                    await write_log(
+                        level="WARNING",
+                        source="scheduler",
+                        summary=(
+                            f"歲修 {config.maintenance_id} 已自動停止採集"
+                            f"（超過 {settings.max_collection_days} 天上限）"
+                        ),
+                        module="scheduler",
+                        maintenance_id=config.maintenance_id,
+                    )
+
+            # 查詢仍活躍的歲修
             stmt = select(MaintenanceConfig.maintenance_id).where(
                 MaintenanceConfig.is_active == True  # noqa: E712
             )
@@ -147,22 +182,37 @@ class SchedulerService:
 
         return maintenance_ids
 
+    def _is_checkpoint_time(self) -> bool:
+        """判斷當前是否為 checkpoint 整點。
+
+        根據 settings.checkpoint_interval_minutes 和
+        settings.collection_interval_seconds 判斷。
+        例如 interval=60 時，minute=0 且在一個採集週期內為 True。
+        """
+        from datetime import datetime, timezone
+        from app.core.config import settings
+
+        now = datetime.now(timezone.utc)
+        interval = settings.checkpoint_interval_minutes
+        # 當前分鐘在 checkpoint 間隔內的偏移量
+        offset_minutes = now.minute % interval
+        # 如果偏移量在一個採集週期以內，視為 checkpoint 時間
+        cycle_minutes = settings.collection_interval_seconds / 60
+        return offset_minutes < cycle_minutes
+
     async def _run_collection(
         self,
         job_name: str,
-        url: str | None = None,
-        source: str | None = None,
-        brand: str | None = None,
     ) -> None:
         """
         Run a collection job for ALL active maintenances.
 
         Args:
             job_name: Data type name (e.g., "transceiver", "client-collection")
-            url: External API endpoint URL
-            source: Data source (FNA/DNA)
-            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
         """
+        import time as _time
+
+        t0 = _time.monotonic()
         logger.info("Running scheduled collection for '%s'", job_name)
 
         # 取得所有活躍歲修
@@ -178,6 +228,11 @@ class SchedulerService:
             maintenance_ids,
         )
 
+        # 判斷是否為 checkpoint 整點（強制寫入 DB）
+        force_cp = self._is_checkpoint_time()
+        if force_cp:
+            logger.info("Checkpoint time — forcing DB write for '%s'", job_name)
+
         try:
             if job_name == "cleanup-old-records":
                 # 清理任務對每個歲修執行
@@ -187,17 +242,31 @@ class SchedulerService:
             elif job_name == "mock-client-generation":
                 # Mock 資料生成對每個歲修執行
                 for mid in maintenance_ids:
-                    await self._run_mock_client_generation(mid)
+                    # 新歲修前 2 次採集強制寫入，確保比較頁面 Before ≠ Current
+                    init_count = self._initial_checkpoint_counts.get(mid, 0)
+                    force_initial = init_count < 2
+                    force_cp_for_maint = force_cp or force_initial
+
+                    await self._run_mock_client_generation(
+                        mid, force_checkpoint=force_cp_for_maint,
+                    )
+
+                    if init_count < 2:
+                        self._initial_checkpoint_counts[mid] = init_count + 1
 
             elif job_name == "client-collection":
                 # 客戶端採集對每個歲修執行
                 svc = self.client_collection_service
                 for mid in maintenance_ids:
                     try:
+                        # 新歲修前 2 次採集強制寫入
+                        init_count = self._initial_checkpoint_counts.get(mid, 0)
+                        force_initial = init_count < 2
+                        force_cp_for_maint = force_cp or force_initial
+
                         result = await svc.collect_client_data(
                             maintenance_id=mid,
-                            source=source,
-                            brand=brand,
+                            force_checkpoint=force_cp_for_maint,
                         )
                         logger.info(
                             "Client collection for %s: %d/%d switches, %d records",
@@ -218,47 +287,36 @@ class SchedulerService:
                             detect_result.get("mismatch", 0),
                             detect_result.get("not_detected", 0),
                         )
+
+                        if init_count < 2:
+                            self._initial_checkpoint_counts[mid] = init_count + 1
                     except Exception as e:
                         logger.error(
                             "Client collection failed for %s: %s",
                             mid, e,
                         )
-
-            elif job_name == "ping":
-                # Ping 採集需要針對每個歲修的 maintenance_device_list 設備
-                svc = self.collection_service
-                for mid in maintenance_ids:
-                    try:
-                        result = await svc.collect_indicator_data(
-                            collection_type=job_name,
+                        from app.services.system_log import write_log, format_error_detail
+                        await write_log(
+                            level="ERROR",
+                            source="scheduler",
+                            summary=f"排程任務失敗 ({type(e).__name__}): 客戶端採集 ({mid})",
+                            detail=format_error_detail(
+                                exc=e,
+                                context={"任務": "client-collection", "歲修": mid},
+                            ),
+                            module="client-collection",
                             maintenance_id=mid,
-                            url=url,
-                            source=source,
-                            brand=brand,
-                        )
-                        logger.info(
-                            "Ping collection for %s: %d/%d successful",
-                            mid,
-                            result["success"],
-                            result["total"],
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "Ping collection failed for %s: %s",
-                            mid, e,
                         )
 
             else:
-                # 一般指標採集（對每個歲修執行）
+                # 指標採集（含 ping）— 對每個歲修執行
                 svc = self.collection_service
                 for mid in maintenance_ids:
                     try:
                         result = await svc.collect_indicator_data(
                             collection_type=job_name,
                             maintenance_id=mid,
-                            url=url,
-                            source=source,
-                            brand=brand,
+                            force_checkpoint=force_cp,
                         )
                         logger.info(
                             "%s collection for %s: %d/%d successful",
@@ -272,16 +330,48 @@ class SchedulerService:
                             "%s collection failed for %s: %s",
                             job_name, mid, e,
                         )
+                        from app.services.system_log import write_log, format_error_detail
+                        await write_log(
+                            level="ERROR",
+                            source="scheduler",
+                            summary=f"排程任務失敗 ({type(e).__name__}): {job_name} 採集 ({mid})",
+                            detail=format_error_detail(
+                                exc=e,
+                                context={"任務": job_name, "歲修": mid},
+                            ),
+                            module=job_name,
+                            maintenance_id=mid,
+                        )
 
         except Exception as e:
             logger.error(
                 "Collection failed for '%s': %s",
                 job_name, e,
             )
+            from app.services.system_log import write_log, format_error_detail
+            await write_log(
+                level="ERROR",
+                source="scheduler",
+                summary=f"排程任務整體失敗 ({type(e).__name__}): {job_name}",
+                detail=format_error_detail(
+                    exc=e,
+                    context={"任務": job_name},
+                ),
+                module=job_name,
+            )
+        finally:
+            elapsed = _time.monotonic() - t0
+            logger.info(
+                "'%s' cycle done: %d maintenances, %.2fs",
+                job_name,
+                len(maintenance_ids),
+                elapsed,
+            )
 
     async def _run_mock_client_generation(
         self,
         maintenance_id: str,
+        force_checkpoint: bool = False,
     ) -> None:
         """
         Run mock client data generation for a specific maintenance.
@@ -296,15 +386,12 @@ class SchedulerService:
         - 收斂後 (t >= T/2)：MAC 物理上在 NEW 設備
         - 無論哪個階段，只要 MAC 所在的設備可達，就能採集到
 
-        記錄的 phase 永遠是 NEW（因為我們是在做 NEW 環境的驗收）。
-
         注意：必須先設定 ArpSource 才會生成資料。
         """
         from sqlalchemy import select, func
 
         from app.db.base import get_session_context
         from app.db.models import ClientRecord, ArpSource
-        from app.core.enums import MaintenancePhase
         from app.fetchers.convergence import MockTimeTracker
         from app.core.config import settings
 
@@ -317,16 +404,14 @@ class SchedulerService:
         switch_time = converge_time / 2
         has_converged = elapsed >= switch_time
 
-        # MAC 物理位置的 phase（用於模擬 MAC 在 OLD 還是 NEW 設備上）
-        mac_physical_phase = MaintenancePhase.NEW if has_converged else MaintenancePhase.OLD
-
-        # 記錄的 phase 永遠是 NEW（驗收記錄）
-        record_phase = MaintenancePhase.NEW
+        # ARP 來源（NEW CORE 設備）是否可達？
+        # 收斂前 NEW 設備不可達 → 無法透過 ARP 確認 MAC → ping 未執行 → ping_reachable=None
+        # 收斂後 NEW 設備可達 → ARP 找到 MAC → ping 可執行 → ping_reachable=True/False
+        can_ping = has_converged
 
         logger.debug(
-            "Mock client generation for %s: elapsed=%.1fs, converged=%s, "
-            "MAC physical location=%s",
-            maintenance_id, elapsed, has_converged, mac_physical_phase.value,
+            "Mock client generation for %s: elapsed=%.1fs, converged=%s, can_ping=%s",
+            maintenance_id, elapsed, has_converged, can_ping,
         )
 
         async with get_session_context() as session:
@@ -348,19 +433,17 @@ class SchedulerService:
                 )
                 return
 
-            # 取得最新的 NEW 階段記錄作為基準（驗收記錄都是 NEW）
+            # 取得最新記錄作為基準
             subquery = (
                 select(func.max(ClientRecord.collected_at))
                 .where(
                     ClientRecord.maintenance_id == maintenance_id,
-                    ClientRecord.phase == record_phase,
                 )
                 .scalar_subquery()
             )
 
             stmt = select(ClientRecord).where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.phase == record_phase,
                 ClientRecord.collected_at == subquery,
             )
             result = await session.execute(stmt)
@@ -373,10 +456,10 @@ class SchedulerService:
 
             # 獲取所有可達設備（包含 OLD 和 NEW，模擬查詢所有 ARP 來源）
             old_reachable = generator._get_reachable_devices(
-                device_mapping, MaintenancePhase.OLD
+                device_mapping, is_old=True
             )
             new_reachable = generator._get_reachable_devices(
-                device_mapping, MaintenancePhase.NEW
+                device_mapping, is_old=False
             )
             all_reachable = old_reachable | new_reachable
 
@@ -386,16 +469,15 @@ class SchedulerService:
             )
 
             # 生成記錄
-            # - mac_physical_phase 決定 MAC 物理上在 OLD 還是 NEW 設備
+            # - has_converged 決定 MAC 物理上在 OLD 還是 NEW 設備
             # - all_reachable 決定哪些設備可以被查詢到
-            # - record_phase (NEW) 是記錄的階段標記
             new_records = await generator.generate_client_records_realistic(
                 maintenance_id=maintenance_id,
-                mac_physical_phase=mac_physical_phase,
-                record_phase=record_phase,
+                has_converged=has_converged,
                 reachable_devices=all_reachable,
                 session=session,
                 base_records=latest_records if latest_records else None,
+                can_ping=can_ping,
             )
 
             # 檢查是否有新加入 MaintenanceMacList 但尚未有記錄的 MAC
@@ -417,37 +499,52 @@ class SchedulerService:
                     if mac_upper and mac_upper not in existing_macs:
                         new_record = generator._create_new_record_realistic(
                             mac_entry, maintenance_id,
-                            mac_physical_phase, record_phase,
+                            has_converged,
                             now, device_mapping, all_reachable,
+                            can_ping=can_ping,
                         )
                         if new_record:  # None 表示 MAC「消失」或設備不可達
                             new_records.append(new_record)
                             logger.info("Added new MAC to mock data: %s", mac_upper)
 
-            # 儲存 ClientRecord 到資料庫
-            for record in new_records:
-                session.add(record)
-            await session.commit()
+            # 變更偵測：hash 比對
+            from app.services.change_cache import ClientChangeCache
+            cache = self.client_collection_service.change_cache
+            data_changed = cache.has_changed(maintenance_id, new_records)
 
-            if new_records:
-                logger.info(
-                    "Mock client generation: %d records for %s",
-                    len(new_records),
+            if data_changed or force_checkpoint:
+                # 儲存 ClientRecord 到資料庫
+                for record in new_records:
+                    session.add(record)
+                await session.commit()
+
+                if new_records:
+                    logger.info(
+                        "Mock client generation: %d records for %s%s",
+                        len(new_records),
+                        maintenance_id,
+                        " (checkpoint)" if force_checkpoint and not data_changed else "",
+                    )
+            else:
+                logger.debug(
+                    "No mock client data change for %s, skipping DB write",
                     maintenance_id,
                 )
 
-            # 更新 MaintenanceMacList.detection_status（根據生成的 mock 資料）
+            # 更新 MaintenanceMacList.detection_status（不受快取影響）
+            # can_ping=True → ARP 來源可達，已確認 MAC → DETECTED
+            # can_ping=False → ARP 來源不可達，無法確認 → NOT_DETECTED
             from sqlalchemy import update
             from app.core.enums import ClientDetectionStatus
+
+            detection_status = (
+                ClientDetectionStatus.DETECTED if can_ping
+                else ClientDetectionStatus.NOT_DETECTED
+            )
 
             for record in new_records:
                 if not record.mac_address:
                     continue
-
-                # 如果 ClientRecord 存在，表示該 MAC 已被偵測到
-                # detection_status 代表「是否被偵測到」，與 ping 是否成功無關
-                # ping_reachable 是另一個獨立的指標（Ping 連通性驗收）
-                status = ClientDetectionStatus.DETECTED
 
                 update_stmt = (
                     update(MaintenanceMacList)
@@ -455,7 +552,7 @@ class SchedulerService:
                         MaintenanceMacList.maintenance_id == maintenance_id,
                         MaintenanceMacList.mac_address == record.mac_address,
                     )
-                    .values(detection_status=status)
+                    .values(detection_status=detection_status)
                 )
                 await session.execute(update_stmt)
 
@@ -469,7 +566,6 @@ class SchedulerService:
             # 也生成 VersionRecord（設備版本資料）
             version_records = await generator.generate_version_records(
                 maintenance_id=maintenance_id,
-                phase=MaintenancePhase.NEW,
                 session=session,
             )
 
@@ -556,9 +652,6 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
             Each config should have:
             - name: str (data type, e.g., "transceiver", "mac-table")
             - interval: int (seconds)
-            - url: str (external API endpoint, optional)
-            - source: str (FNA/DNA, optional)
-            - brand: str (HPE/Cisco-IOS/Cisco-NXOS, optional)
     """
     scheduler = get_scheduler_service()
 
@@ -566,9 +659,6 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
         scheduler.add_collection_job(
             job_name=config["name"],
             interval_seconds=config.get("interval", 30),
-            url=config.get("url"),
-            source=config.get("source"),
-            brand=config.get("brand"),
         )
 
     scheduler.start()

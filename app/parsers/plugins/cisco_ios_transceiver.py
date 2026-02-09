@@ -1,27 +1,76 @@
 """
-Cisco IOS Transceiver Parser Plugin.
+Cisco IOS Transceiver Parser Plugin — 解析 Cisco IOS 光模組診斷資料。
 
-Parses 'show interfaces transceiver' output from Cisco IOS devices.
+CLI 指令：show interfaces transceiver
+註冊資訊：
+    device_type = DeviceType.CISCO_IOS
+    indicator_type = "transceiver"
+
+輸出模型：list[TransceiverData]
+    TransceiverData 欄位：
+        interface_name: str       — 介面名稱（如 "Gi1/0/1"）
+        tx_power: float | None    — 發射功率 (dBm)，範圍 -40.0 ~ 10.0
+        rx_power: float | None    — 接收功率 (dBm)，範圍 -40.0 ~ 10.0
+        temperature: float | None — 溫度 (°C)，範圍 -10.0 ~ 100.0
+        voltage: float | None     — 電壓 (V)，範圍 0.0 ~ 10.0
 """
 from __future__ import annotations
 
 import re
 
-from app.core.enums import PlatformType, VendorType
+from app.core.enums import DeviceType
 from app.parsers.protocols import BaseParser, TransceiverData
 from app.parsers.registry import parser_registry
 
 
 class CiscoIosTransceiverParser(BaseParser[TransceiverData]):
     """
-    Parser for Cisco IOS transceiver data.
+    Cisco IOS 光模組 Parser。
 
-    Parses output from: show interfaces transceiver
-    Tested with: Catalyst series
+    CLI 指令：show interfaces transceiver
+    測試設備：Catalyst 3750, 9200, 9300 系列
+
+    輸入格式（raw_output 範例）：
+    ::
+
+        If device is different different different, different header formats may appear.
+        The most common format:
+
+                                         Optical   Optical
+                       Temperature  Voltage  Tx Power  Rx Power
+        Port           (Celsius)    (Volts)  (dBm)     (dBm)
+        ---------      -----------  -------  --------  --------
+        Gi1/0/1        32.5         3.29     -2.1      -3.5
+        Gi1/0/2        31.8         3.30     -1.8      -2.9
+        Te1/1/1        28.0         3.31      0.5      -1.2
+
+    輸出格式（parse() 回傳值）：
+    ::
+
+        [
+            TransceiverData(interface_name="Gi1/0/1", tx_power=-2.1,
+                           rx_power=-3.5, temperature=32.5, voltage=3.29),
+            TransceiverData(interface_name="Gi1/0/2", tx_power=-1.8,
+                           rx_power=-2.9, temperature=31.8, voltage=3.30),
+            TransceiverData(interface_name="Te1/1/1", tx_power=0.5,
+                           rx_power=-1.2, temperature=28.0, voltage=3.31),
+        ]
+
+    解析策略：
+        - 找到 "----" 分隔線後進入資料區
+        - 每行用空白分割：Port  Temp  Voltage  TxPower  RxPower（5 欄位）
+        - N/A 和 "-" 值會解析為 None
+
+    已知邊界情況：
+        - 某些 Catalyst 型號的 header 格式略有不同（多行 header）
+          但分隔線 "----" 下方的資料格式一致
+        - 無 SFP 模組的 port 不會出現在輸出中
+        - Tx/Rx 為 "N/A" 的行會被保留但值為 None
+          → 至少要有 tx_power 或 rx_power 非 None 才產生 TransceiverData
+        - 空輸出或無匹配行 → 回傳空列表 []
     """
 
-    vendor = VendorType.CISCO
-    platform = PlatformType.CISCO_IOS
+    device_type = DeviceType.CISCO_IOS
     indicator_type = "transceiver"
     command = "show interfaces transceiver"
 

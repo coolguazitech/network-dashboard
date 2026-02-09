@@ -9,13 +9,14 @@ import csv
 import io
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query
+from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_async_session as get_session
+from app.services.system_log import write_log
 from app.db.models import (
     UplinkExpectation,
     VersionExpectation,
@@ -340,7 +341,15 @@ async def create_uplink_expectation(
     session.add(item)
     await session.commit()
     await session.refresh(item)
-    
+
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"新增 Uplink 期望: {hostname} → {expected_neighbor}",
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "id": item.id,
         "hostname": item.hostname,
@@ -491,7 +500,15 @@ async def update_uplink_expectation(
     
     await session.commit()
     await session.refresh(item)
-    
+
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"更新 Uplink 期望: {item.hostname}",
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "id": item.id,
         "hostname": item.hostname,
@@ -518,17 +535,26 @@ async def delete_uplink_expectation(
     
     if not item:
         raise HTTPException(status_code=404, detail="Uplink 期望不存在")
-    
+
+    log_summary = f"刪除 Uplink 期望: {item.hostname}:{item.local_interface}"
     await session.delete(item)
     await session.commit()
-    
+
+    await write_log(
+        level="WARNING",
+        source="api",
+        summary=log_summary,
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
+
     return {"status": "deleted"}
 
 
 @router.post("/uplink/{maintenance_id}/batch-delete")
 async def batch_delete_uplink_expectations(
     maintenance_id: str,
-    item_ids: list[int],
+    item_ids: list[int] = Body(..., embed=True),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """批量刪除 Uplink 期望。"""
@@ -545,6 +571,15 @@ async def batch_delete_uplink_expectations(
     )
     result = await session.execute(stmt)
     await session.commit()
+
+    if result.rowcount > 0:
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary=f"批量刪除 Uplink 期望: {result.rowcount} 筆",
+            module="expectations",
+            maintenance_id=maintenance_id,
+        )
 
     return {
         "success": True,
@@ -687,7 +722,16 @@ async def import_uplink_csv(
             errors.append(f"Row {row_num}: {str(e)}")
     
     await session.commit()
-    
+
+    if imported + updated > 0:
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"CSV 匯入 Uplink 期望: 新增 {imported}, 更新 {updated}",
+            module="expectations",
+            maintenance_id=maintenance_id,
+        )
+
     return {
         "imported": imported,
         "updated": updated,
@@ -782,7 +826,15 @@ async def create_version_expectation(
     session.add(item)
     await session.commit()
     await session.refresh(item)
-    
+
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"新增版本期望: {hostname}",
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "id": item.id,
         "hostname": item.hostname,
@@ -841,7 +893,15 @@ async def update_version_expectation(
     
     await session.commit()
     await session.refresh(item)
-    
+
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"更新版本期望: {item.hostname}",
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "id": item.id,
         "hostname": item.hostname,
@@ -867,17 +927,26 @@ async def delete_version_expectation(
     
     if not item:
         raise HTTPException(status_code=404, detail="版本期望不存在")
-    
+
+    log_summary = f"刪除版本期望: {item.hostname}"
     await session.delete(item)
     await session.commit()
-    
+
+    await write_log(
+        level="WARNING",
+        source="api",
+        summary=log_summary,
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
+
     return {"status": "deleted"}
 
 
 @router.post("/version/{maintenance_id}/batch-delete")
 async def batch_delete_version_expectations(
     maintenance_id: str,
-    item_ids: list[int],
+    item_ids: list[int] = Body(..., embed=True),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """批量刪除版本期望。"""
@@ -894,6 +963,15 @@ async def batch_delete_version_expectations(
     )
     result = await session.execute(stmt)
     await session.commit()
+
+    if result.rowcount > 0:
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary=f"批量刪除版本期望: {result.rowcount} 筆",
+            module="expectations",
+            maintenance_id=maintenance_id,
+        )
 
     return {
         "success": True,
@@ -1020,7 +1098,16 @@ async def import_version_csv(
             errors.append(f"Row {row_num}: {str(e)}")
     
     await session.commit()
-    
+
+    if imported + updated > 0:
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"CSV 匯入版本期望: 新增 {imported}, 更新 {updated}",
+            module="expectations",
+            maintenance_id=maintenance_id,
+        )
+
     return {
         "imported": imported,
         "updated": updated,
@@ -1131,6 +1218,14 @@ async def create_arp_source(
     await session.commit()
     await session.refresh(item)
 
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"新增 ARP 來源: {hostname} (優先級 {data.priority})",
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "id": item.id,
         "hostname": item.hostname,
@@ -1202,6 +1297,14 @@ async def update_arp_source(
     await session.commit()
     await session.refresh(item)
 
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"更新 ARP 來源: {item.hostname}",
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "id": item.id,
         "hostname": item.hostname,
@@ -1227,8 +1330,17 @@ async def delete_arp_source(
     if not item:
         raise HTTPException(status_code=404, detail="ARP 來源不存在")
 
+    log_summary = f"刪除 ARP 來源: {item.hostname}"
     await session.delete(item)
     await session.commit()
+
+    await write_log(
+        level="WARNING",
+        source="api",
+        summary=log_summary,
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
 
     return {"status": "deleted"}
 
@@ -1236,7 +1348,7 @@ async def delete_arp_source(
 @router.post("/arp/{maintenance_id}/batch-delete")
 async def batch_delete_arp_sources(
     maintenance_id: str,
-    item_ids: list[int],
+    item_ids: list[int] = Body(..., embed=True),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """批量刪除 ARP 來源。"""
@@ -1253,6 +1365,15 @@ async def batch_delete_arp_sources(
     )
     result = await session.execute(stmt)
     await session.commit()
+
+    if result.rowcount > 0:
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary=f"批量刪除 ARP 來源: {result.rowcount} 筆",
+            module="expectations",
+            maintenance_id=maintenance_id,
+        )
 
     return {
         "success": True,
@@ -1403,6 +1524,15 @@ async def import_arp_csv(
 
     await session.commit()
 
+    if imported + updated > 0:
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"CSV 匯入 ARP 來源: 新增 {imported}, 更新 {updated}",
+            module="expectations",
+            maintenance_id=maintenance_id,
+        )
+
     return {
         "imported": imported,
         "updated": updated,
@@ -1529,6 +1659,14 @@ async def create_port_channel_expectation(
     await session.commit()
     await session.refresh(item)
 
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"新增 Port-Channel 期望: {hostname}:{port_channel}",
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "id": item.id,
         "hostname": item.hostname,
@@ -1606,6 +1744,14 @@ async def update_port_channel_expectation(
     await session.commit()
     await session.refresh(item)
 
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"更新 Port-Channel 期望: {item.hostname}:{item.port_channel}",
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "id": item.id,
         "hostname": item.hostname,
@@ -1633,8 +1779,17 @@ async def delete_port_channel_expectation(
     if not item:
         raise HTTPException(status_code=404, detail="Port-Channel 期望不存在")
 
+    log_summary = f"刪除 Port-Channel 期望: {item.hostname}:{item.port_channel}"
     await session.delete(item)
     await session.commit()
+
+    await write_log(
+        level="WARNING",
+        source="api",
+        summary=log_summary,
+        module="expectations",
+        maintenance_id=maintenance_id,
+    )
 
     return {"status": "deleted"}
 
@@ -1642,7 +1797,7 @@ async def delete_port_channel_expectation(
 @router.post("/port-channel/{maintenance_id}/batch-delete")
 async def batch_delete_port_channel_expectations(
     maintenance_id: str,
-    item_ids: list[int],
+    item_ids: list[int] = Body(..., embed=True),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """批量刪除 Port Channel 期望。"""
@@ -1659,6 +1814,15 @@ async def batch_delete_port_channel_expectations(
     )
     result = await session.execute(stmt)
     await session.commit()
+
+    if result.rowcount > 0:
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary=f"批量刪除 Port-Channel 期望: {result.rowcount} 筆",
+            module="expectations",
+            maintenance_id=maintenance_id,
+        )
 
     return {
         "success": True,
@@ -1796,6 +1960,15 @@ async def import_port_channel_csv(
             errors.append(f"Row {row_num}: {str(e)}")
 
     await session.commit()
+
+    if imported + updated > 0:
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"CSV 匯入 Port-Channel 期望: 新增 {imported}, 更新 {updated}",
+            module="expectations",
+            maintenance_id=maintenance_id,
+        )
 
     return {
         "imported": imported,

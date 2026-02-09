@@ -7,24 +7,24 @@
 #        -t network-dashboard-base:alpine --load .
 #
 #   2. 啟動服務:
-#      docker compose -f docker-compose.dev.yaml up -d
+#      docker-compose -f docker-compose.dev.yaml up -d
 #
 #   3. 查看 logs:
-#      docker compose -f docker-compose.dev.yaml logs -f app
+#      docker-compose -f docker-compose.dev.yaml logs -f app
 #
 #   4. 停止服務:
-#      docker compose -f docker-compose.dev.yaml down
+#      docker-compose -f docker-compose.dev.yaml down
 # =============================================================================
 
 services:
   # MariaDB 資料庫
   db:
     image: mariadb:10.11
-    container_name: network_dashboard_db
+    container_name: netora_db
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-admin}
-      MYSQL_DATABASE: ${DB_NAME:-network_dashboard}
+      MYSQL_DATABASE: ${DB_NAME:-netora}
       MYSQL_USER: ${DB_USER:-admin}
       MYSQL_PASSWORD: ${DB_PASSWORD:-admin}
     ports:
@@ -43,7 +43,7 @@ services:
   # phpMyAdmin (選用)
   phpmyadmin:
     image: phpmyadmin:5.2
-    container_name: network_dashboard_pma
+    container_name: netora_pma
     restart: unless-stopped
     environment:
       PMA_HOST: db
@@ -62,7 +62,7 @@ services:
     # 使用 Alpine 以避免 Critical CVE（預設）
     # 也可改用 :dev 標籤使用 Debian 版本
     image: ${APP_IMAGE:-network-dashboard-base:alpine}
-    container_name: network_dashboard_app
+    container_name: netora_app
     restart: unless-stopped
     env_file:
       - .env
@@ -70,7 +70,7 @@ services:
       # 資料庫連線（覆寫 .env 中的設定，使用 docker 網路）
       DB_HOST: db
       DB_PORT: 3306
-      DB_NAME: ${DB_NAME:-network_dashboard}
+      DB_NAME: ${DB_NAME:-netora}
       DB_USER: ${DB_USER:-admin}
       DB_PASSWORD: ${DB_PASSWORD:-admin}
       # 應用程式設定
@@ -98,9 +98,9 @@ services:
 
 volumes:
   db_data:
-    name: network_dashboard_db_data
+    name: netora_db_data
 
 networks:
   dashboard_net:
-    name: network_dashboard_net
+    name: netora_net
     driver: bridge

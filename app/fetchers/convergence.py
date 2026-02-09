@@ -161,8 +161,12 @@ class MockTimeTracker:
                 return time.time() - self._fallback_start_time
 
         # 計算經過時間
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        # 確保 start_time 是 timezone-aware，如果是 naive 則視為 UTC
+        now = datetime.now(timezone.utc)
         if isinstance(start_time, datetime):
+            if start_time.tzinfo is None:
+                # Treat naive datetime as UTC
+                start_time = start_time.replace(tzinfo=timezone.utc)
             delta = now - start_time
             return delta.total_seconds()
         return time.time() - self._fallback_start_time

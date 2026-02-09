@@ -1,11 +1,11 @@
 services:
   db:
     image: mariadb:10.11
-    container_name: network_dashboard_db
+    container_name: netora_db
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-admin}
-      MYSQL_DATABASE: ${DB_NAME:-network_dashboard}
+      MYSQL_DATABASE: ${DB_NAME:-netora}
       MYSQL_USER: ${DB_USER:-admin}
       MYSQL_PASSWORD: ${DB_PASSWORD:-admin}
     ports:
@@ -20,7 +20,7 @@ services:
 
   phpmyadmin:
     image: phpmyadmin:5.2
-    container_name: network_dashboard_pma
+    container_name: netora_pma
     restart: unless-stopped
     depends_on:
       db:

@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from app.db.base import get_async_session
 from app.db.models import MaintenanceDeviceList, DEVICE_VENDOR_OPTIONS
 from app.core.enums import TenantGroup
 from app.api.endpoints.auth import require_write
+from app.services.system_log import write_log
 from typing import Annotated, Any
 import ipaddress
 
@@ -41,6 +42,8 @@ class DeviceCreate(BaseModel):
     new_hostname: str
     new_ip_address: str
     new_vendor: str  # HPE, Cisco-IOS, Cisco-NXOS
+    # 是否為更換設備（hostname 相同與否不代表是否更換，須明確指定）
+    is_replaced: bool = False
     # 對應設定
     use_same_port: bool = True
     # GNMS Ping tenant group
@@ -57,6 +60,7 @@ class DeviceUpdate(BaseModel):
     new_hostname: str | None = None
     new_ip_address: str | None = None
     new_vendor: str | None = None
+    is_replaced: bool | None = None
     use_same_port: bool | None = None
     tenant_group: TenantGroup | None = None
     is_reachable: bool | None = None
@@ -73,6 +77,7 @@ def serialize_device(d: MaintenanceDeviceList) -> dict:
         "new_hostname": d.new_hostname,
         "new_ip_address": d.new_ip_address,
         "new_vendor": d.new_vendor,
+        "is_replaced": d.is_replaced,
         "use_same_port": d.use_same_port,
         "tenant_group": d.tenant_group.value if d.tenant_group else TenantGroup.F18.value,
         # 舊設備可達性
@@ -348,16 +353,16 @@ async def get_stats(
     # 未檢查數量
     unchecked = total - reachable - unreachable
     
-    # 相同設備（不更換）數量
-    same_device_stmt = (
+    # 更換設備數量（由 is_replaced 欄位明確指定，不以 hostname 推斷）
+    replaced_stmt = (
         select(func.count(MaintenanceDeviceList.id))
         .where(
             MaintenanceDeviceList.maintenance_id == maintenance_id,
-            MaintenanceDeviceList.old_hostname
-            == MaintenanceDeviceList.new_hostname
+            MaintenanceDeviceList.is_replaced == True,  # noqa: E712
         )
     )
-    same_device = (await session.execute(same_device_stmt)).scalar() or 0
+    replaced = (await session.execute(replaced_stmt)).scalar() or 0
+    same_device = total - replaced
     
     return {
         "success": True,
@@ -366,7 +371,7 @@ async def get_stats(
         "unreachable": unreachable,
         "unchecked": unchecked,
         "same_device": same_device,
-        "replaced": total - same_device,
+        "replaced": replaced,
         "reachable_rate": (
             round(reachable / total * 100, 1) if total > 0 else 0
         ),
@@ -424,6 +429,7 @@ async def create_device(
         new_hostname=new_hostname,
         new_ip_address=new_ip_address,
         new_vendor=new_vendor,
+        is_replaced=data.is_replaced,
         use_same_port=data.use_same_port,
         tenant_group=data.tenant_group,
         description=data.description.strip() if data.description else None,
@@ -431,6 +437,14 @@ async def create_device(
     session.add(device)
     await session.commit()
     await session.refresh(device)
+
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"新增設備對應: {old_hostname} → {new_hostname}",
+        module="device",
+        maintenance_id=maintenance_id,
+    )
 
     return {
         "success": True,
@@ -534,13 +548,15 @@ async def update_device(
         device.new_ip_address = new_new_ip_address
     if data.new_vendor is not None:
         device.new_vendor = data.new_vendor.strip()
+    if data.is_replaced is not None:
+        device.is_replaced = data.is_replaced
     if data.use_same_port is not None:
         device.use_same_port = data.use_same_port
     if data.tenant_group is not None:
         device.tenant_group = data.tenant_group
     if data.is_reachable is not None:
         device.is_reachable = data.is_reachable
-        device.last_check_at = datetime.utcnow()
+        device.last_check_at = now_utc()
     if data.description is not None:
         device.description = (
             data.description.strip() if data.description else None
@@ -548,6 +564,14 @@ async def update_device(
 
     await session.commit()
     await session.refresh(device)
+
+    await write_log(
+        level="INFO",
+        source="api",
+        summary=f"更新設備對應: {device.old_hostname} → {device.new_hostname}",
+        module="device",
+        maintenance_id=maintenance_id,
+    )
 
     return {
         "success": True,
@@ -573,10 +597,20 @@ async def delete_device(
     
     if not device:
         raise HTTPException(status_code=404, detail="找不到指定的設備對應")
-    
+
+    old_hostname = device.old_hostname
+    new_hostname = device.new_hostname
     await session.delete(device)
     await session.commit()
-    
+
+    await write_log(
+        level="WARNING",
+        source="api",
+        summary=f"刪除設備對應: {old_hostname} → {new_hostname}",
+        module="device",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "success": True,
         "message": "設備對應已刪除",
@@ -594,13 +628,13 @@ async def import_csv(
     從 CSV 匯入設備對應。
 
     CSV 格式：
-    old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,use_same_port,tenant_group,description
+    old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,is_replaced,use_same_port,tenant_group,description
 
     - vendor: HPE / Cisco-IOS / Cisco-NXOS（必填）
+    - is_replaced: true/false（預設 false）— 設備是否被物理更換（不以 hostname 推斷）
     - use_same_port: true/false（預設 true）
     - tenant_group: F18/F6/AP/F14/F12（預設 F18）
     - description: 選填
-    - 若設備不更換，新舊設備填同一台
 
     **重要**：使用兩階段驗證（全部驗證通過才提交）
     - 階段 1：驗證所有行並收集錯誤
@@ -741,6 +775,9 @@ async def import_csv(
             continue
 
         # 8. 所有驗證通過，加入待處理列表
+        is_replaced_str = row.get('is_replaced', 'false').strip().lower()
+        is_replaced = is_replaced_str in ('true', '1', 'yes', 't')
+
         use_same_port_str = row.get('use_same_port', 'true').strip().lower()
         use_same_port = use_same_port_str in ('true', '1', 'yes', 't', '')
 
@@ -759,6 +796,7 @@ async def import_csv(
             'new_hostname': new_hostname,
             'new_ip': new_ip,
             'new_vendor': new_vendor,
+            'is_replaced': is_replaced,
             'use_same_port': use_same_port,
             'tenant_group': tenant_group,
             'description': row.get('description', '').strip() or None,
@@ -795,6 +833,7 @@ async def import_csv(
             existing.new_hostname = item['new_hostname']  # type: ignore[assignment]
             existing.new_ip_address = item['new_ip']  # type: ignore[assignment]
             existing.new_vendor = item['new_vendor']  # type: ignore[assignment]
+            existing.is_replaced = item['is_replaced']  # type: ignore[assignment]
             existing.use_same_port = item['use_same_port']  # type: ignore[assignment]
             existing.tenant_group = item['tenant_group']  # type: ignore[assignment]
             existing.description = item['description']  # type: ignore[assignment]
@@ -809,6 +848,7 @@ async def import_csv(
                 new_hostname=item['new_hostname'],
                 new_ip_address=item['new_ip'],
                 new_vendor=item['new_vendor'],
+                is_replaced=item['is_replaced'],
                 use_same_port=item['use_same_port'],
                 tenant_group=item['tenant_group'],
                 description=item['description'],
@@ -817,6 +857,15 @@ async def import_csv(
             imported += 1
 
     await session.commit()
+
+    if imported + updated > 0:
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=f"CSV 匯入設備: 新增 {imported} 筆, 更新 {updated} 筆",
+            module="device",
+            maintenance_id=maintenance_id,
+        )
 
     return {
         "success": True,
@@ -840,7 +889,15 @@ async def clear_all(
     )
     result = await session.execute(stmt)
     await session.commit()
-    
+
+    await write_log(
+        level="WARNING",
+        source="api",
+        summary=f"清空設備對應: 共 {result.rowcount} 筆",
+        module="device",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "success": True,
         "message": f"已刪除 {result.rowcount} 筆設備對應",
@@ -851,8 +908,8 @@ async def clear_all(
 @router.post("/{maintenance_id}/batch-delete")
 async def batch_delete_devices(
     maintenance_id: str,
-    device_ids: list[int],
-    _: Annotated[dict[str, Any], Depends(require_write())],
+    device_ids: list[int] = Body(..., embed=True),
+    _: Annotated[dict[str, Any], Depends(require_write())] = None,
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
@@ -878,6 +935,15 @@ async def batch_delete_devices(
     )
     result = await session.execute(stmt)
     await session.commit()
+
+    if result.rowcount > 0:
+        await write_log(
+            level="WARNING",
+            source="api",
+            summary=f"批量刪除設備對應: {result.rowcount} 筆",
+            module="device",
+            maintenance_id=maintenance_id,
+        )
 
     return {
         "success": True,
@@ -943,6 +1009,7 @@ async def export_devices_csv(
         "new_hostname",
         "new_ip_address",
         "new_vendor",
+        "is_replaced",
         "use_same_port",
         "tenant_group",
         "is_reachable",
@@ -958,6 +1025,7 @@ async def export_devices_csv(
             d.new_hostname,
             d.new_ip_address,
             d.new_vendor,
+            str(d.is_replaced).lower() if d.is_replaced is not None else "false",
             str(d.use_same_port).lower(),
             d.tenant_group.value if d.tenant_group else TenantGroup.F18.value,
             str(d.is_reachable) if d.is_reachable is not None else "",
@@ -989,7 +1057,7 @@ async def batch_update_reachability(
     updates 格式: [{"old_hostname": "xxx", "is_reachable": true/false}, ...]
     """
     updated_count = 0
-    now = datetime.utcnow()
+    now = now_utc()
     
     for item in updates:
         old_hostname = item.get('old_hostname')

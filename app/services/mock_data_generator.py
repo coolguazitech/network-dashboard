@@ -21,7 +21,7 @@ from app.db.models import (
     VersionRecord,
     VersionExpectation,
 )
-from app.core.enums import MaintenancePhase, TenantGroup
+from app.core.enums import TenantGroup
 
 
 class MockDataGenerator:
@@ -85,7 +85,7 @@ class MockDataGenerator:
     async def generate_client_records(
         self,
         maintenance_id: str,
-        phase: MaintenancePhase,
+        is_old: bool,
         session: AsyncSession,
         base_records: list[ClientRecord] | None = None,
     ) -> list[ClientRecord]:
@@ -93,14 +93,14 @@ class MockDataGenerator:
         生成 ClientRecord 資料。
 
         模擬真實遷移情境：
-        - OLD 階段：MAC 在其「原始」OLD 設備上
-        - NEW 階段：MAC 應在對應的 NEW 設備上（根據設備對應清單）
+        - is_old=True：MAC 在其「原始」OLD 設備上
+        - is_old=False：MAC 應在對應的 NEW 設備上（根據設備對應清單）
         - 小機率產生異常（未偵測、位置錯誤）以測試比對邏輯
         - **重要**：只有可達的設備才能偵測到 MAC
 
         Args:
             maintenance_id: 歲修 ID
-            phase: 階段（OLD 或 NEW）
+            is_old: 是否為 OLD 階段
             session: DB session
             base_records: 基準記錄（可選，用於產生變化）
 
@@ -113,14 +113,14 @@ class MockDataGenerator:
         # 獲取設備對應清單（包含 old -> new 的映射和可達性狀態）
         device_mapping = await self._get_device_mapping(maintenance_id, session)
 
-        # 構建可達設備集合（根據 phase 決定）
-        reachable_devices = self._get_reachable_devices(device_mapping, phase)
+        # 構建可達設備集合（根據 is_old 決定）
+        reachable_devices = self._get_reachable_devices(device_mapping, is_old=is_old)
 
         if base_records:
             # 基於現有記錄產生變化
             for base in base_records:
                 record = self._create_varied_record(
-                    base, now, device_mapping, phase, reachable_devices
+                    base, now, device_mapping, is_old, reachable_devices
                 )
                 if record:  # None 表示該 MAC 「消失」了
                     records.append(record)
@@ -134,7 +134,7 @@ class MockDataGenerator:
 
             for mac_entry in mac_list:
                 record = self._create_new_record(
-                    mac_entry, maintenance_id, phase, now,
+                    mac_entry, maintenance_id, is_old, now,
                     device_mapping, reachable_devices,
                 )
                 if record:  # None 表示該 MAC 「消失」了
@@ -145,27 +145,30 @@ class MockDataGenerator:
     async def generate_client_records_realistic(
         self,
         maintenance_id: str,
-        mac_physical_phase: MaintenancePhase,
-        record_phase: MaintenancePhase,
+        has_converged: bool,
         reachable_devices: set[str],
         session: AsyncSession,
         base_records: list[ClientRecord] | None = None,
+        can_ping: bool = True,
     ) -> list[ClientRecord]:
         """
         生成 ClientRecord 資料（更真實的模擬）。
 
         模擬真實情境：
         - 系統查詢所有可達的 ARP 來源
-        - MAC 物理位置由 mac_physical_phase 決定
-        - 記錄的 phase 由 record_phase 決定（通常是 NEW）
+        - MAC 物理位置由 has_converged 決定
+        - has_converged=True: MAC 已遷移到 NEW 設備
+        - has_converged=False: MAC 仍在 OLD 設備上
 
         Args:
             maintenance_id: 歲修 ID
-            mac_physical_phase: MAC 物理位置的階段（決定 MAC 在 OLD 還是 NEW 設備上）
-            record_phase: 記錄的階段標記（通常是 NEW）
+            has_converged: MAC 是否已收斂到 NEW 設備
             reachable_devices: 所有可達設備的集合（包含 OLD 和 NEW）
             session: DB session
             base_records: 基準記錄（可選，用於產生變化）
+            can_ping: ARP 來源是否可達（決定 ping_reachable 是否有值）
+                      True → ping 可執行，結果為 True/False
+                      False → ping 未執行，結果為 None
 
         Returns:
             生成的 ClientRecord 列表
@@ -181,7 +184,8 @@ class MockDataGenerator:
             for base in base_records:
                 record = self._create_varied_record_realistic(
                     base, now, device_mapping,
-                    mac_physical_phase, record_phase, reachable_devices
+                    has_converged, reachable_devices,
+                    can_ping=can_ping,
                 )
                 if record:
                     records.append(record)
@@ -196,8 +200,9 @@ class MockDataGenerator:
             for mac_entry in mac_list:
                 record = self._create_new_record_realistic(
                     mac_entry, maintenance_id,
-                    mac_physical_phase, record_phase,
+                    has_converged,
                     now, device_mapping, reachable_devices,
+                    can_ping=can_ping,
                 )
                 if record:
                     records.append(record)
@@ -207,13 +212,13 @@ class MockDataGenerator:
     def _get_reachable_devices(
         self,
         device_mapping: dict[str, dict],
-        phase: MaintenancePhase,
+        is_old: bool = False,
     ) -> set[str]:
-        """根據 phase 獲取可達設備的集合。
+        """根據 is_old 獲取可達設備的集合。
 
         Args:
             device_mapping: 設備對應清單
-            phase: 階段
+            is_old: 是否為 OLD 階段
 
         Returns:
             可達設備的 hostname 集合
@@ -222,7 +227,7 @@ class MockDataGenerator:
         devices = device_mapping.get('_devices', [])
 
         for d in devices:
-            if phase == MaintenancePhase.OLD:
+            if is_old:
                 # OLD 階段：檢查 old_is_reachable
                 if d.old_hostname and d.old_is_reachable:
                     reachable.add(d.old_hostname)
@@ -279,7 +284,6 @@ class MockDataGenerator:
     async def generate_version_records(
         self,
         maintenance_id: str,
-        phase: MaintenancePhase,
         session: AsyncSession,
     ) -> list[VersionRecord]:
         """
@@ -287,10 +291,10 @@ class MockDataGenerator:
 
         根據 MaintenanceDeviceList 中的設備，產生版本採集記錄。
         如果設備有 VersionExpectation，會以一定機率符合期望版本。
+        只對 NEW 設備生成記錄。
 
         Args:
             maintenance_id: 歲修 ID
-            phase: 階段（OLD 或 NEW）
             session: DB session
 
         Returns:
@@ -321,13 +325,9 @@ class MockDataGenerator:
         VERSIONS = ["16.12.4", "17.3.2", "17.3.3", "15.2.4", "9.3(8)", "7.0(3)I7(6)"]
 
         for device in devices:
-            # 根據 phase 選擇 hostname 和檢查可達性
-            if phase == MaintenancePhase.NEW:
-                hostname = device.new_hostname
-                is_reachable = device.is_reachable
-            else:
-                hostname = device.old_hostname
-                is_reachable = device.old_is_reachable
+            # 使用 NEW 設備的 hostname 和可達性
+            hostname = device.new_hostname
+            is_reachable = device.is_reachable
 
             # 只對可達的設備生成版本記錄
             if not hostname or not is_reachable:
@@ -337,7 +337,6 @@ class MockDataGenerator:
             batch = CollectionBatch(
                 collection_type="version",
                 switch_hostname=hostname,
-                phase=phase,
                 maintenance_id=maintenance_id,
                 collected_at=now,
                 raw_data=str({"mock": True}),
@@ -356,7 +355,6 @@ class MockDataGenerator:
             record = VersionRecord(
                 batch_id=batch.id,
                 switch_hostname=hostname,
-                phase=phase,
                 maintenance_id=maintenance_id,
                 collected_at=now,
                 version=version,
@@ -371,17 +369,17 @@ class MockDataGenerator:
     async def _get_valid_switch_hostnames(
         self,
         maintenance_id: str,
-        phase: MaintenancePhase,
+        is_old: bool,
         session: AsyncSession,
         require_reachable: bool = False,
     ) -> list[str]:
         """獲取有效的交換機 hostname 列表。
 
-        根據 phase 決定使用 old_hostname 或 new_hostname。
+        根據 is_old 決定使用 old_hostname 或 new_hostname。
 
         Args:
             maintenance_id: 歲修 ID
-            phase: 階段
+            is_old: 是否為 OLD 階段
             session: DB session
             require_reachable: 是否只返回可達設備（預設 False，用於 Mock 資料）
         """
@@ -391,7 +389,7 @@ class MockDataGenerator:
         result = await session.execute(stmt)
         devices = result.scalars().all()
 
-        if phase == MaintenancePhase.OLD:
+        if is_old:
             if require_reachable:
                 return [
                     d.old_hostname for d in devices
@@ -413,7 +411,7 @@ class MockDataGenerator:
         base: ClientRecord,
         collected_at: datetime,
         device_mapping: dict[str, dict],
-        phase: MaintenancePhase,
+        is_old: bool = False,
         reachable_devices: set[str] | None = None,
     ) -> ClientRecord | None:
         """基於現有記錄創建變化版本。
@@ -425,7 +423,7 @@ class MockDataGenerator:
             base: 基準記錄
             collected_at: 採集時間
             device_mapping: 設備對應清單
-            phase: 階段
+            is_old: 是否為 OLD 階段
             reachable_devices: 可達設備的 hostname 集合
 
         Returns:
@@ -442,7 +440,7 @@ class MockDataGenerator:
 
         # 決定正確的交換機位置
         # 如果是 NEW 階段，應該在對應的 NEW 設備上
-        if phase == MaintenancePhase.NEW and base.switch_hostname:
+        if not is_old and base.switch_hostname:
             # 檢查當前是否在 OLD 設備上
             if base.switch_hostname in device_mapping:
                 # 應該遷移到對應的 NEW 設備
@@ -499,7 +497,6 @@ class MockDataGenerator:
 
         return ClientRecord(
             maintenance_id=base.maintenance_id,
-            phase=base.phase,
             collected_at=collected_at,
             mac_address=base.mac_address,
             ip_address=base.ip_address,
@@ -517,7 +514,7 @@ class MockDataGenerator:
         self,
         mac_entry: MaintenanceMacList,
         maintenance_id: str,
-        phase: MaintenancePhase,
+        is_old: bool,
         collected_at: datetime,
         device_mapping: dict[str, dict],
         reachable_devices: set[str] | None = None,
@@ -531,7 +528,7 @@ class MockDataGenerator:
         Args:
             mac_entry: MAC 清單條目
             maintenance_id: 歲修 ID
-            phase: 階段
+            is_old: 是否為 OLD 階段
             collected_at: 採集時間
             device_mapping: 設備對應清單
             reachable_devices: 可達設備的 hostname 集合
@@ -555,7 +552,7 @@ class MockDataGenerator:
             old_index = self._mac_to_deterministic_index(mac_address, len(old_hostnames))
             original_old_hostname = old_hostnames[old_index]
 
-            if phase == MaintenancePhase.OLD:
+            if is_old:
                 # OLD 階段：MAC 在原始 OLD 設備上
                 switch_hostname = original_old_hostname
             else:
@@ -585,7 +582,7 @@ class MockDataGenerator:
 
         # 小機率：出現在錯誤的交換機
         if random.random() < self.WRONG_SWITCH_PROB:
-            all_switches = new_hostnames if phase == MaintenancePhase.NEW else old_hostnames
+            all_switches = new_hostnames if not is_old else old_hostnames
             if all_switches and len(all_switches) > 1:
                 wrong_switches = [s for s in all_switches if s != switch_hostname]
                 if wrong_switches:
@@ -598,7 +595,6 @@ class MockDataGenerator:
 
         return ClientRecord(
             maintenance_id=maintenance_id,
-            phase=phase,
             collected_at=collected_at,
             mac_address=mac_entry.mac_address,
             ip_address=mac_entry.ip_address,
@@ -616,27 +612,29 @@ class MockDataGenerator:
         self,
         mac_entry: MaintenanceMacList,
         maintenance_id: str,
-        mac_physical_phase: MaintenancePhase,
-        record_phase: MaintenancePhase,
+        has_converged: bool,
         collected_at: datetime,
         device_mapping: dict[str, dict],
         reachable_devices: set[str],
+        can_ping: bool = True,
     ) -> ClientRecord | None:
         """從 MAC 清單條目創建新記錄（更真實的模擬）。
 
         模擬真實情境：
-        - mac_physical_phase 決定 MAC 物理上在 OLD 還是 NEW 設備
+        - has_converged 決定 MAC 物理上在 OLD 還是 NEW 設備
+        - has_converged=True: MAC 已遷移到 NEW 設備
+        - has_converged=False: MAC 仍在 OLD 設備上
         - 檢查該設備是否在 reachable_devices 中（可被查詢到）
-        - record_phase 是記錄的階段標記
+        - can_ping 決定 ping_reachable 是否有值（ARP 來源不可達時為 None）
 
         Args:
             mac_entry: MAC 清單條目
             maintenance_id: 歲修 ID
-            mac_physical_phase: MAC 物理位置的階段
-            record_phase: 記錄的階段標記
+            has_converged: MAC 是否已收斂到 NEW 設備
             collected_at: 採集時間
             device_mapping: 設備對應清單
             reachable_devices: 所有可達設備的集合
+            can_ping: ARP 來源是否可達
 
         Returns:
             ClientRecord 或 None（表示 MAC 消失/設備不可達）
@@ -657,7 +655,7 @@ class MockDataGenerator:
             old_index = self._mac_to_deterministic_index(mac_address, len(old_hostnames))
             original_old_hostname = old_hostnames[old_index]
 
-            if mac_physical_phase == MaintenancePhase.OLD:
+            if not has_converged:
                 # MAC 物理上在 OLD 設備
                 switch_hostname = original_old_hostname
             else:
@@ -695,9 +693,16 @@ class MockDataGenerator:
             wrong_port = random.randint(1, 48)
             interface_name = f"GE1/0/{wrong_port}"
 
+        # ping_reachable 取決於 ARP 來源是否可達：
+        # - can_ping=True → ARP 來源可達，ping 可執行 → True（含小機率 False）
+        # - can_ping=False → ARP 來源不可達，ping 未執行 → None
+        if can_ping:
+            ping_reachable: bool | None = random.random() >= self.PING_FAIL_PROB
+        else:
+            ping_reachable = None
+
         return ClientRecord(
             maintenance_id=maintenance_id,
-            phase=record_phase,  # 使用 record_phase，通常是 NEW
             collected_at=collected_at,
             mac_address=mac_entry.mac_address,
             ip_address=mac_entry.ip_address,
@@ -707,7 +712,7 @@ class MockDataGenerator:
             speed=random.choice(["1G", "1000M"]),
             duplex="full",
             link_status="up",
-            ping_reachable=True,
+            ping_reachable=ping_reachable,
             acl_passes=True,
         )
 
@@ -716,9 +721,9 @@ class MockDataGenerator:
         base: ClientRecord,
         collected_at: datetime,
         device_mapping: dict[str, dict],
-        mac_physical_phase: MaintenancePhase,
-        record_phase: MaintenancePhase,
+        has_converged: bool,
         reachable_devices: set[str],
+        can_ping: bool = True,
     ) -> ClientRecord | None:
         """基於現有記錄創建變化版本（更真實的模擬）。
 
@@ -726,9 +731,9 @@ class MockDataGenerator:
             base: 基準記錄
             collected_at: 採集時間
             device_mapping: 設備對應清單
-            mac_physical_phase: MAC 物理位置的階段
-            record_phase: 記錄的階段標記
+            has_converged: MAC 是否已收斂到 NEW 設備
             reachable_devices: 所有可達設備的集合
+            can_ping: ARP 來源是否可達
 
         Returns:
             ClientRecord 或 None（表示 MAC 消失/設備不可達）
@@ -742,7 +747,7 @@ class MockDataGenerator:
             old_index = self._mac_to_deterministic_index(mac_address, len(old_hostnames))
             original_old_hostname = old_hostnames[old_index]
 
-            if mac_physical_phase == MaintenancePhase.OLD:
+            if not has_converged:
                 switch_hostname = original_old_hostname
             else:
                 if original_old_hostname in device_mapping:
@@ -765,9 +770,18 @@ class MockDataGenerator:
         speed = base.speed
         duplex = base.duplex
         link_status = base.link_status
-        ping_reachable = base.ping_reachable
         interface_name = base.interface_name
         vlan_id = base.vlan_id
+
+        # ping_reachable 取決於 ARP 來源是否可達：
+        # - can_ping=False → 強制 None（ARP 來源不可達，ping 未執行）
+        # - can_ping=True → 從 base 繼承，含小機率翻轉
+        if not can_ping:
+            ping_reachable: bool | None = None
+        else:
+            ping_reachable = base.ping_reachable
+            if random.random() < self.PING_FAIL_PROB:
+                ping_reachable = not ping_reachable if ping_reachable is not None else False
 
         # 小機率變化
         if random.random() < self.WRONG_SWITCH_PROB:
@@ -787,12 +801,8 @@ class MockDataGenerator:
         if random.random() < self.LINK_DOWN_PROB:
             link_status = "down" if link_status == "up" else "up"
 
-        if random.random() < self.PING_FAIL_PROB:
-            ping_reachable = not ping_reachable if ping_reachable is not None else False
-
         return ClientRecord(
             maintenance_id=base.maintenance_id,
-            phase=record_phase,  # 使用 record_phase
             collected_at=collected_at,
             mac_address=base.mac_address,
             ip_address=base.ip_address,

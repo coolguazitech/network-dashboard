@@ -11,16 +11,17 @@ Responsible for collecting raw data from external API and storing to DB.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.config import settings
-from app.core.enums import MaintenancePhase, PlatformType, VendorType
+from app.core.enums import DeviceType
 from app.db.base import get_session_context
-from app.db.models import MaintenanceDeviceList, UplinkExpectation
+from app.db.models import CollectionError, MaintenanceDeviceList, UplinkExpectation
 from app.fetchers.base import FetchContext
 from app.fetchers.registry import fetcher_registry
 from app.parsers import parser_registry
@@ -45,16 +46,15 @@ class DataCollectionService:
 
     def __init__(self) -> None:
         """Initialize service."""
-        pass
+        from app.services.change_cache import IndicatorChangeCache
+
+        self.change_cache = IndicatorChangeCache()
 
     async def collect_indicator_data(
         self,
         collection_type: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
         maintenance_id: str | None = None,
-        url: str | None = None,
-        source: str | None = None,
-        brand: str | None = None,
+        force_checkpoint: bool = False,
     ) -> dict[str, Any]:
         """
         Collect data for a specific collection type.
@@ -63,30 +63,23 @@ class DataCollectionService:
 
         Args:
             collection_type: Data type (e.g., "transceiver", "ping", "mac-table")
-            phase: Maintenance phase (OLD/NEW)
             maintenance_id: APM maintenance ID
-            url: External API endpoint URL (from scheduler config)
-            source: Data source identifier (FNA/DNA)
-            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
+            force_checkpoint: True 時強制寫入 DB（整點 checkpoint）
 
         Returns:
             dict: Collection summary with success/fail counts
         """
         return await self._collect_for_maintenance_devices(
             collection_type=collection_type,
-            phase=phase,
             maintenance_id=maintenance_id,
-            source=source,
-            brand=brand,
+            force_checkpoint=force_checkpoint,
         )
 
     async def _collect_for_maintenance_devices(
         self,
         collection_type: str,
-        phase: MaintenancePhase,
         maintenance_id: str | None,
-        source: str | None = None,
-        brand: str | None = None,
+        force_checkpoint: bool = False,
     ) -> dict[str, Any]:
         """
         從 MaintenanceDeviceList 取設備進行採集。
@@ -95,7 +88,6 @@ class DataCollectionService:
         """
         results: dict[str, Any] = {
             "collection_type": collection_type,
-            "phase": phase.value,
             "total": 0,
             "success": 0,
             "failed": 0,
@@ -109,6 +101,42 @@ class DataCollectionService:
             )
             return results
 
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                return await self._do_collect(
+                    collection_type=collection_type,
+                    maintenance_id=maintenance_id,
+                    force_checkpoint=force_checkpoint,
+                    results=results,
+                )
+            except Exception as e:
+                if "Deadlock" in str(e) and attempt < max_retries:
+                    logger.warning(
+                        "Deadlock on %s, retrying (%d/%d)",
+                        collection_type, attempt + 1, max_retries,
+                    )
+                    # 重置 results 以便重試
+                    results["success"] = 0
+                    results["failed"] = 0
+                    results["errors"] = []
+                    await asyncio.sleep(0.3 * (attempt + 1))
+                    continue
+                raise
+
+        return results  # unreachable, but satisfies type checker
+
+    async def _do_collect(
+        self,
+        collection_type: str,
+        maintenance_id: str,
+        force_checkpoint: bool,
+        results: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute collection with a fresh session (retryable on deadlock)."""
+        import time as _time
+
+        t0 = _time.monotonic()
         async with httpx.AsyncClient() as http:
             async with get_session_context() as session:
                 typed_repo = get_typed_repo(
@@ -135,17 +163,19 @@ class DataCollectionService:
                         await self._collect_for_maintenance_device(
                             device=device,
                             collection_type=collection_type,
-                            phase=phase,
                             maintenance_id=maintenance_id,
                             typed_repo=typed_repo,
-                            source=source,
-                            brand=brand,
                             http=http,
                             uplink_expectations=uplink_expectations.get(
                                 device.new_hostname, []
                             ),
+                            force_checkpoint=force_checkpoint,
                         )
                         results["success"] += 1
+                        await self._clear_collection_error(
+                            session, maintenance_id,
+                            collection_type, device.new_hostname,
+                        )
 
                     except Exception as e:
                         results["failed"] += 1
@@ -159,20 +189,50 @@ class DataCollectionService:
                             device.new_hostname,
                             e,
                         )
+                        await self._upsert_collection_error(
+                            session, maintenance_id,
+                            collection_type, device.new_hostname,
+                            str(e),
+                        )
+                        # 寫入 SystemLog 以便管理員定位問題
+                        from app.services.system_log import write_log, format_error_detail
+                        await write_log(
+                            level="WARNING",
+                            source="service",
+                            summary=f"設備採集失敗: {device.new_hostname} ({collection_type})",
+                            detail=format_error_detail(
+                                exc=e,
+                                context={
+                                    "設備": device.new_hostname,
+                                    "採集類型": collection_type,
+                                    "歲修": maintenance_id,
+                                    "廠商": device.new_vendor or "unknown",
+                                },
+                            ),
+                            module="data_collection",
+                            maintenance_id=maintenance_id,
+                        )
 
+        elapsed = _time.monotonic() - t0
+        logger.info(
+            "%s for %s: %d/%d ok, %.2fs",
+            collection_type,
+            maintenance_id,
+            results["success"],
+            results["total"],
+            elapsed,
+        )
         return results
 
     async def _collect_for_maintenance_device(
         self,
         device: MaintenanceDeviceList,
         collection_type: str,
-        phase: MaintenancePhase,
         maintenance_id: str,
         typed_repo: TypedRecordRepository,  # type: ignore[type-arg]
-        source: str | None = None,
-        brand: str | None = None,
         http: httpx.AsyncClient | None = None,
         uplink_expectations: list[dict[str, str]] | None = None,
+        force_checkpoint: bool = False,
     ) -> None:
         """
         對單一 MaintenanceDeviceList 設備進行採集。
@@ -180,43 +240,32 @@ class DataCollectionService:
         Args:
             device: MaintenanceDeviceList 記錄
             collection_type: 採集類型
-            phase: 階段
             maintenance_id: 歲修 ID
             typed_repo: Typed record 儲存庫
-            source: Data source identifier (FNA/DNA)
-            brand: Device brand (HPE/Cisco-IOS/Cisco-NXOS)
             http: HTTP client（由外層注入）
             uplink_expectations: Uplink 期望值（供 MockUplinkFetcher 使用）
         """
-        # 使用新設備的 vendor 決定 parser（處理 Cisco-IOS/Cisco-NXOS 等格式）
-        vendor_str = (device.new_vendor or "").lower()
-        if vendor_str.startswith("cisco"):
-            vendor = VendorType.CISCO
-        elif vendor_str.startswith("hpe") or vendor_str.startswith("aruba"):
-            vendor = VendorType.HPE
-        else:
-            vendor = VendorType.HPE
+        # 非 ping 採集須先確認新設備可達；ping 本身就是可達性檢查
+        # 不可達是預期狀態（尚未 ping 通），靜默跳過即可，不記錄為 CollectionError
+        if collection_type != "ping" and device.is_reachable is not True:
+            logger.debug(
+                "跳過 %s/%s 採集：設備不可達 (is_reachable=%s)",
+                device.new_hostname, collection_type, device.is_reachable,
+            )
+            return
 
-        # 根據 vendor 和原始 vendor_str 決定 platform
-        if vendor == VendorType.CISCO:
-            if "nxos" in vendor_str:
-                platform = PlatformType.CISCO_NXOS
-            else:
-                platform = PlatformType.CISCO_IOS
-        else:
-            platform = PlatformType.HPE_COMWARE
+        device_type = DeviceType(device.new_vendor or "HPE")
 
         # 取得 parser
         parser = parser_registry.get(
-            vendor=vendor,
-            platform=platform,
+            device_type=device_type,
             indicator_type=collection_type,
         )
 
         if parser is None:
             raise ValueError(
                 f"No parser found for "
-                f"{vendor}/{platform}/{collection_type}"
+                f"{device_type}/{collection_type}"
             )
 
         # 透過 Fetcher 取得原始資料
@@ -230,15 +279,11 @@ class DataCollectionService:
         ctx = FetchContext(
             switch_ip=device.new_ip_address,
             switch_hostname=device.new_hostname,
-            site="maintenance",
-            source=source,
-            brand=brand,
-            vendor=vendor.value,
-            platform=platform.value,
+            device_type=device_type,
+            is_old_device=False,
+            tenant_group=device.tenant_group,  # 從資料庫讀取
             params=params,
             http=http,
-            base_url=settings.external_api_server,
-            timeout=settings.external_api_timeout,
             maintenance_id=maintenance_id,
         )
         result = await fetcher.fetch(ctx)
@@ -252,68 +297,81 @@ class DataCollectionService:
         # 解析原始資料
         parsed_items = parser.parse(raw_output)
 
-        # 存入 typed table
-        await typed_repo.save_batch(
-            switch_hostname=device.new_hostname,
-            raw_data=raw_output,
-            parsed_items=parsed_items,
-            phase=phase,
-            maintenance_id=maintenance_id,
+        # 變更偵測：hash 比對，跳過未變化的 DB 寫入
+        data_changed = self.change_cache.has_changed(
+            maintenance_id, collection_type,
+            device.new_hostname, parsed_items,
         )
 
         # 同步 ping 可達性到 MaintenanceDeviceList (新設備)
+        # 不受快取影響，每次都更新
         if collection_type == "ping" and parsed_items:
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc)
             device.is_reachable = parsed_items[0].is_reachable
             device.last_check_at = now
 
-        logger.info(
-            "Collected %s from %s: %d items",
-            collection_type,
-            device.new_hostname,
-            len(parsed_items),
-        )
+        if not data_changed and not force_checkpoint:
+            logger.debug(
+                "No change for %s/%s, skipping DB write",
+                collection_type, device.new_hostname,
+            )
+        else:
+            # 有變化或 checkpoint → 寫入 typed table
+            await typed_repo.save_batch(
+                switch_hostname=device.new_hostname,
+                raw_data=raw_output,
+                parsed_items=parsed_items,
+                maintenance_id=maintenance_id,
+            )
+            logger.info(
+                "Collected %s from %s: %d items%s",
+                collection_type,
+                device.new_hostname,
+                len(parsed_items),
+                " (checkpoint)" if force_checkpoint and not data_changed else "",
+            )
 
         # 同步 ping 可達性到 MaintenanceDeviceList (舊設備)
         # 這允許時間軸收斂模型：舊設備從可達變不可達，新設備從不可達變可達
         if collection_type == "ping" and device.old_ip_address:
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc)
+            if device.old_ip_address == device.new_ip_address:
+                # 新舊 IP 相同 → 不需重複 ping，直接同步可達性
+                device.old_is_reachable = device.is_reachable
+                device.old_last_check_at = device.last_check_at
+            else:
+                # 新舊 IP 不同 → 需要分別 ping 舊設備
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
 
-            # 對舊設備執行 ping
-            old_fetcher = fetcher_registry.get_or_raise(collection_type)
-            old_ctx = FetchContext(
-                switch_ip=device.old_ip_address,
-                switch_hostname=device.old_hostname,
-                site="maintenance",
-                source=source,
-                brand=brand,
-                vendor=vendor.value,
-                platform=platform.value,
-                http=http,
-                base_url=settings.external_api_server,
-                timeout=settings.external_api_timeout,
-                maintenance_id=maintenance_id,
-            )
-            try:
-                old_result = await old_fetcher.fetch(old_ctx)
-                if old_result.success:
-                    old_parsed = parser.parse(old_result.raw_output)
-                    if old_parsed:
-                        device.old_is_reachable = old_parsed[0].is_reachable
-                        device.old_last_check_at = now
-                        logger.info(
-                            "Collected ping from OLD device %s: reachable=%s",
-                            device.old_hostname,
-                            device.old_is_reachable,
-                        )
-            except Exception as e:
-                logger.warning(
-                    "Failed to ping OLD device %s: %s",
-                    device.old_hostname,
-                    e,
+                old_fetcher = fetcher_registry.get_or_raise(collection_type)
+                old_ctx = FetchContext(
+                    switch_ip=device.old_ip_address,
+                    switch_hostname=device.old_hostname,
+                    device_type=DeviceType(device.old_vendor or "HPE"),
+                    is_old_device=True,
+                    tenant_group=device.tenant_group,  # 從資料庫讀取
+                    http=http,
+                    maintenance_id=maintenance_id,
                 )
+                try:
+                    old_result = await old_fetcher.fetch(old_ctx)
+                    if old_result.success:
+                        old_parsed = parser.parse(old_result.raw_output)
+                        if old_parsed:
+                            device.old_is_reachable = old_parsed[0].is_reachable
+                            device.old_last_check_at = now
+                            logger.info(
+                                "Collected ping from OLD device %s: reachable=%s",
+                                device.old_hostname,
+                                device.old_is_reachable,
+                            )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to ping OLD device %s: %s",
+                        device.old_hostname,
+                        e,
+                    )
 
     async def _load_uplink_expectations(
         self,
@@ -343,6 +401,54 @@ class DataCollectionService:
             })
 
         return dict(grouped)
+
+    @staticmethod
+    async def _clear_collection_error(
+        session: Any,
+        maintenance_id: str,
+        collection_type: str,
+        hostname: str,
+    ) -> None:
+        """成功採集後清除該設備的錯誤紀錄。"""
+        await session.execute(
+            delete(CollectionError).where(
+                CollectionError.maintenance_id == maintenance_id,
+                CollectionError.collection_type == collection_type,
+                CollectionError.switch_hostname == hostname,
+            )
+        )
+
+    @staticmethod
+    async def _upsert_collection_error(
+        session: Any,
+        maintenance_id: str,
+        collection_type: str,
+        hostname: str,
+        error_msg: str,
+    ) -> None:
+        """採集失敗時 UPSERT 錯誤紀錄。"""
+        from datetime import datetime, timezone
+
+        # 查詢是否已存在
+        stmt = select(CollectionError).where(
+            CollectionError.maintenance_id == maintenance_id,
+            CollectionError.collection_type == collection_type,
+            CollectionError.switch_hostname == hostname,
+        )
+        result = await session.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.error_message = error_msg
+            existing.occurred_at = datetime.now(timezone.utc)
+        else:
+            session.add(CollectionError(
+                maintenance_id=maintenance_id,
+                collection_type=collection_type,
+                switch_hostname=hostname,
+                error_message=error_msg,
+                occurred_at=datetime.now(timezone.utc),
+            ))
 
 
 # Singleton instance

@@ -17,7 +17,6 @@ from app.core.config import settings
 from app.db.base import get_async_session
 from app.db.models import SeverityOverride
 from app.services.client_comparison_service import ClientComparisonService
-from app.core.enums import MaintenancePhase
 
 
 def _get_checkpoint_time_bucket(
@@ -80,7 +79,6 @@ async def get_checkpoints(
     from datetime import timedelta, timezone
     from sqlalchemy import func, distinct
     from app.db.models import ClientRecord, MaintenanceConfig
-    from app.core.enums import MaintenancePhase
 
     # 獲取歲修配置
     config_stmt = select(MaintenanceConfig).where(
@@ -95,12 +93,11 @@ async def get_checkpoints(
     from datetime import datetime
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
 
-    # 獲取所有 NEW 階段的時間點
+    # 獲取所有時間點
     stmt = (
         select(distinct(ClientRecord.collected_at))
         .where(
             ClientRecord.maintenance_id == maintenance_id,
-            ClientRecord.phase == MaintenancePhase.NEW,
             ClientRecord.collected_at >= cutoff,
         )
         .order_by(ClientRecord.collected_at)
@@ -108,12 +105,14 @@ async def get_checkpoints(
     result = await session.execute(stmt)
     all_timepoints = result.scalars().all()
 
-    # 根據設定的 checkpoint 間隔篩選時間桶（每個時間桶取最後一筆）
+    # 根據設定的 checkpoint 間隔篩選時間桶（每個時間桶取第一筆）
+    # 使用第一筆可確保 checkpoint_time ≠ current_time（max collected_at）
     interval_minutes = settings.checkpoint_interval_minutes
     time_bucket_checkpoints: dict[str, datetime] = {}
     for tp in all_timepoints:
         bucket_key = _get_checkpoint_time_bucket(tp, interval_minutes)
-        time_bucket_checkpoints[bucket_key] = tp  # 該時間桶最後一筆
+        if bucket_key not in time_bucket_checkpoints:
+            time_bucket_checkpoints[bucket_key] = tp  # 該時間桶第一筆
 
     checkpoints = sorted(time_bucket_checkpoints.values())
 
@@ -170,7 +169,6 @@ async def get_checkpoint_summaries(
         select(distinct(ClientRecord.collected_at))
         .where(
             ClientRecord.maintenance_id == maintenance_id,
-            ClientRecord.phase == MaintenancePhase.NEW,
             ClientRecord.collected_at >= cutoff,
         )
         .order_by(ClientRecord.collected_at)
@@ -178,12 +176,13 @@ async def get_checkpoint_summaries(
     result = await session.execute(stmt)
     all_timepoints = result.scalars().all()
 
-    # 根據設定的 checkpoint 間隔篩選時間桶
+    # 根據設定的 checkpoint 間隔篩選時間桶（每個時間桶取第一筆）
     interval_minutes = settings.checkpoint_interval_minutes
     time_bucket_checkpoints: dict[str, datetime] = {}
     for tp in all_timepoints:
         bucket_key = _get_checkpoint_time_bucket(tp, interval_minutes)
-        time_bucket_checkpoints[bucket_key] = tp
+        if bucket_key not in time_bucket_checkpoints:
+            time_bucket_checkpoints[bucket_key] = tp  # 該時間桶第一筆
 
     checkpoints = sorted(time_bucket_checkpoints.values())
 
@@ -199,7 +198,6 @@ async def get_checkpoint_summaries(
         select(func.max(ClientRecord.collected_at))
         .where(
             ClientRecord.maintenance_id == maintenance_id,
-            ClientRecord.phase == MaintenancePhase.NEW,
         )
     )
     latest_result = await session.execute(latest_stmt)
@@ -259,23 +257,33 @@ async def get_checkpoint_summaries(
                     mac_to_categories[mac].append(m.category_id)
 
     # 計算每個 checkpoint 的摘要（使用與 /diff 相同的邏輯）
+    import time as _time
+    import logging
+    _perf_logger = logging.getLogger("app.api.endpoints.comparisons")
+    _t0 = _time.monotonic()
+
     summaries = {}
 
-    # 排除等於 current_time 的 checkpoint（比較自己跟自己永遠是 0，沒有意義）
-    # 允許 60 秒的容差，因為 checkpoint 時間可能與 current_time 相差幾秒
+    # 排除與 current_time 完全相同的 checkpoint（比較自己跟自己沒有意義）
+    # 使用 5 秒容差（而非 60 秒），確保初始 checkpoint 不會被過濾掉
     valid_checkpoints = [
         cp for cp in checkpoints
-        if abs((cp - current_time).total_seconds()) > 60
+        if abs((cp - current_time).total_seconds()) > 5
     ]
+    # 如果所有 checkpoint 都被過濾掉但確實有資料，保留全部
+    if not valid_checkpoints and checkpoints:
+        valid_checkpoints = checkpoints
+
+    # 批次查詢所有 checkpoint 的比較結果（4 queries instead of 5*N）
+    all_diffs = await comparison_service._generate_checkpoint_diffs_batch(
+        maintenance_id=maintenance_id,
+        checkpoint_times=valid_checkpoints,
+        current_time=current_time,
+        session=session,
+    )
 
     for cp_time in valid_checkpoints:
-        # 使用 comparison_service 生成比較結果
-        comparisons = await comparison_service._generate_checkpoint_diff(
-            maintenance_id=maintenance_id,
-            checkpoint_time=cp_time,
-            current_time=current_time,
-            session=session,
-        )
+        comparisons = all_diffs.get(cp_time, [])
 
         # 計算異常數量（與 /diff 端點邏輯完全一致）
         issue_count = 0
@@ -325,6 +333,14 @@ async def get_checkpoint_summaries(
 
         summaries[cp_time.isoformat()] = summary_data
 
+    _elapsed = _time.monotonic() - _t0
+    _perf_logger.info(
+        "Summaries for %s: %d checkpoints, %.2fs",
+        maintenance_id,
+        len(valid_checkpoints),
+        _elapsed,
+    )
+
     response = {
         "maintenance_id": maintenance_id,
         "current_time": current_time.isoformat(),
@@ -341,6 +357,9 @@ async def get_checkpoint_summaries(
 async def get_diff(
     maintenance_id: str,
     checkpoint: str = Query(..., description="Checkpoint 時間（ISO 格式）作為 Before"),
+    severity_filter: str | None = Query(None, description="篩選嚴重度: critical/warning/has_issues"),
+    category_id: int | None = Query(None, description="篩選分類 ID（-1=全部, None=未分類）"),
+    search: str | None = Query(None, description="搜尋 MAC / IP"),
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
@@ -348,6 +367,7 @@ async def get_diff(
 
     比較選定的 Checkpoint（Before）與最新 Snapshot（Current）之間的變化。
     兩者都來自 NEW 階段，用於追蹤歲修過程中設備狀態的變化。
+    支援 severity_filter / category_id / search 篩選，結果已排序。
     """
     from datetime import datetime
     from fastapi import HTTPException
@@ -364,13 +384,11 @@ async def get_diff(
     # 獲取最新快照時間
     from sqlalchemy import func
     from app.db.models import ClientRecord
-    from app.core.enums import MaintenancePhase
 
     latest_stmt = (
         select(func.max(ClientRecord.collected_at))
         .where(
             ClientRecord.maintenance_id == maintenance_id,
-            ClientRecord.phase == MaintenancePhase.NEW,
         )
     )
     latest_result = await session.execute(latest_stmt)
@@ -416,13 +434,14 @@ async def get_diff(
     overrides = override_result.scalars().all()
     override_map = {o.mac_address.upper(): o for o in overrides}
 
-    # 獲取 MAC 清單中註冊的總數
+    # 獲取 MAC 清單（用於計算總數）
     from app.db.models import MaintenanceMacList
-    mac_list_stmt = select(func.count()).select_from(MaintenanceMacList).where(
+    mac_list_stmt = select(MaintenanceMacList).where(
         MaintenanceMacList.maintenance_id == maintenance_id
     )
     mac_list_result = await session.execute(mac_list_stmt)
-    registered_total = mac_list_result.scalar() or 0
+    mac_list_records = mac_list_result.scalars().all()
+    registered_total = len(mac_list_records)
 
     # 計算統計（優先使用 MAC 清單總數）
     total = registered_total if registered_total > 0 else len(comparisons)
@@ -483,7 +502,7 @@ async def get_diff(
             "auto_severity": auto_severity,
             "is_overridden": is_overridden,
             "original_severity": original_severity,
-            "differences": comp.differences,
+            "differences": comp.differences or {},
             "before": {
                 "ip_address": comp.old_ip_address,
                 "switch_hostname": comp.old_switch_hostname,
@@ -506,6 +525,37 @@ async def get_diff(
             },
         })
 
+    # ── 後端排序：重大 > 未偵測 > 警告 > 有變化 > 正常 ──
+    _severity_order = {"critical": 1, "undetected": 2, "warning": 3}
+    results.sort(key=lambda r: _severity_order.get(r["severity"], 4 if r["is_changed"] else 5))
+
+    # ── 後端篩選 ──
+    filtered = results
+
+    if severity_filter:
+        if severity_filter == "critical":
+            filtered = [r for r in filtered if r["severity"] == "critical"]
+        elif severity_filter == "warning":
+            filtered = [r for r in filtered if r["severity"] == "warning"]
+        elif severity_filter == "has_issues":
+            filtered = [r for r in filtered if r["is_issue"]]
+
+    if category_id is not None and category_id != -1:
+        if category_id == 0:
+            # 0 代表未分類（category_ids 包含 None）
+            filtered = [r for r in filtered if None in r["category_ids"]]
+        else:
+            filtered = [r for r in filtered if category_id in r["category_ids"]]
+
+    if search:
+        q = search.upper()
+        filtered = [
+            r for r in filtered
+            if q in (r["mac_address"] or "").upper()
+            or q in (r["current"].get("ip_address") or "").upper()
+            or q in (r["before"].get("ip_address") or "").upper()
+        ]
+
     return {
         "maintenance_id": maintenance_id,
         "checkpoint_time": checkpoint_time.isoformat(),
@@ -516,7 +566,8 @@ async def get_diff(
             "normal": total - has_issues,
         },
         "by_category": list(by_category.values()),
-        "results": results,
+        "total_results": len(filtered),
+        "results": filtered,
     }
 
 

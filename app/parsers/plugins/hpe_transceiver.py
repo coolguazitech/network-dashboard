@@ -1,107 +1,82 @@
 """
-HPE Transceiver Parser Plugin.
+HPE Transceiver Parser Plugin — 解析 HPE ProCurve / Comware 光模組診斷資料。
 
-Parses transceiver output from HPE ProCurve/Comware devices.
+本模組包含兩個 Parser：
+    1. HpeProCurveTransceiverParser — 適用於 HPE ProCurve 系列
+       CLI 指令：show interfaces transceiver
+    2. HpeComwareTransceiverParser — 適用於 HPE Comware 系列
+       CLI 指令：display transceiver
+
+註冊資訊：
+    device_type = DeviceType.HPE
+    indicator_type = "transceiver"
+
+輸出模型：list[TransceiverData]
+    TransceiverData 欄位：
+        interface_name: str       — 介面名稱（如 "1", "GigabitEthernet1/0/1"）
+        tx_power: float | None    — 發射功率 (dBm)，範圍 -40.0 ~ 10.0
+        rx_power: float | None    — 接收功率 (dBm)，範圍 -40.0 ~ 10.0
+        temperature: float | None — 溫度 (°C)，範圍 -10.0 ~ 100.0
+        voltage: float | None     — 電壓 (V)，範圍 0.0 ~ 10.0
 """
 from __future__ import annotations
 
 import re
 
-from app.core.enums import PlatformType, VendorType
+from app.core.enums import DeviceType
 from app.parsers.protocols import BaseParser, TransceiverData
 from app.parsers.registry import parser_registry
 
 
-class HpeProCurveTransceiverParser(BaseParser[TransceiverData]):
-    """
-    Parser for HPE ProCurve transceiver data.
-
-    Parses output from: show interfaces transceiver
-    """
-
-    vendor = VendorType.HPE
-    platform = PlatformType.HPE_PROCURVE
-    indicator_type = "transceiver"
-    command = "show interfaces transceiver"
-
-    def parse(self, raw_output: str) -> list[TransceiverData]:
-        """
-        Parse HPE ProCurve transceiver output.
-
-        Example output format:
-        Port  Type        Rx (dBm)  Tx (dBm)  Temp (C)
-        ----  ----------  --------  --------  --------
-        1     SFP+LR      -3.2      -2.1      35.5
-        2     SFP+SR      -2.8      -1.9      34.2
-
-        Args:
-            raw_output: Raw CLI output string
-
-        Returns:
-            list[TransceiverData]: Parsed transceiver data
-        """
-        results: list[TransceiverData] = []
-        lines = raw_output.strip().split("\n")
-
-        in_data_section = False
-
-        for line in lines:
-            if not line.strip():
-                continue
-
-            # Check for separator line
-            if re.match(r"^[\s-]+$", line):
-                in_data_section = True
-                continue
-
-            if not in_data_section:
-                continue
-
-            # Parse data line
-            parts = line.split()
-            if len(parts) >= 4:
-                try:
-                    interface = parts[0]
-                    # Skip type column, get rx, tx, temp
-                    rx_power = self._parse_float(parts[2])
-                    tx_power = self._parse_float(parts[3])
-                    temp = None
-                    if len(parts) >= 5:
-                        temp = self._parse_float(parts[4])
-
-                    if tx_power is not None or rx_power is not None:
-                        results.append(
-                            TransceiverData(
-                                interface_name=interface,
-                                tx_power=tx_power,
-                                rx_power=rx_power,
-                                temperature=temp,
-                            )
-                        )
-                except (ValueError, IndexError):
-                    continue
-
-        return results
-
-    def _parse_float(self, value: str) -> float | None:
-        """Parse float value, returning None for N/A or invalid."""
-        if value.lower() in ("n/a", "-", "--", ""):
-            return None
-        try:
-            return float(value)
-        except ValueError:
-            return None
-
-
 class HpeComwareTransceiverParser(BaseParser[TransceiverData]):
     """
-    Parser for HPE Comware transceiver data.
+    HPE Comware 光模組 Parser。
 
-    Parses output from: display transceiver
+    CLI 指令：display transceiver
+
+    輸入格式（raw_output 範例）：
+    ::
+
+        GigabitEthernet1/0/1 transceiver information:
+          Transceiver Type               : 1000_BASE_SX_SFP
+          Connector Type                 : LC
+          Wavelength(nm)                 : 850
+          Transfer Distance(m)           : 550(50um/125um OM2)
+          Digital Diagnostic Monitoring  : YES
+          Vendor Name                    : HP
+          Ordering Name                  :
+          TX Power    :  -2.31 dBm
+          RX Power    :  -3.45 dBm
+          Temperature :  35.5  C
+          Voltage     :  3.28  V
+
+        GigabitEthernet1/0/2 transceiver information:
+          TX Power    :  -1.88 dBm
+          RX Power    :  -2.56 dBm
+          Temperature :  33.2  C
+
+    輸出格式（parse() 回傳值）：
+    ::
+
+        [
+            TransceiverData(interface_name="GigabitEthernet1/0/1",
+                           tx_power=-2.31, rx_power=-3.45, temperature=35.5),
+            TransceiverData(interface_name="GigabitEthernet1/0/2",
+                           tx_power=-1.88, rx_power=-2.56, temperature=33.2),
+        ]
+
+    解析策略：
+        - 以介面名稱行（GigabitEthernet / Ten-GigabitEthernet）分割區塊
+        - 在每個區塊中用 regex 提取 TX Power / RX Power / Temperature
+        - 至少要有 TX 或 RX Power 才會產生一筆 TransceiverData
+
+    已知邊界情況：
+        - Comware 有時不顯示 Voltage 欄位 → voltage 為 None
+        - 若介面沒有插入光模組，該介面不會出現在輸出中
+        - 空輸出 → 回傳空列表 []
     """
 
-    vendor = VendorType.HPE
-    platform = PlatformType.HPE_COMWARE
+    device_type = DeviceType.HPE
     indicator_type = "transceiver"
     command = "display transceiver"
 
@@ -179,5 +154,4 @@ class HpeComwareTransceiverParser(BaseParser[TransceiverData]):
 
 
 # Register parsers
-parser_registry.register(HpeProCurveTransceiverParser())
 parser_registry.register(HpeComwareTransceiverParser())

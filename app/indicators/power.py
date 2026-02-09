@@ -10,7 +10,7 @@ from collections import defaultdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import MaintenancePhase
+from app.core.config import settings
 from app.db.models import PowerRecord
 from app.indicators.base import (
     BaseIndicator,
@@ -34,14 +34,14 @@ class PowerIndicator(BaseIndicator):
 
     indicator_type = "power"
 
-    # 可接受的狀態字串 (normalized to lowercase)
-    VALID_STATUSES = {"ok", "good", "normal", "online", "active"}
+    @property
+    def VALID_STATUSES(self) -> set[str]:
+        return settings.operational_healthy_set
 
     async def evaluate(
         self,
         maintenance_id: str,
         session: AsyncSession,
-        phase: MaintenancePhase | None = None,
     ) -> IndicatorEvaluationResult:
         """
         評估電源指標。
@@ -49,13 +49,9 @@ class PowerIndicator(BaseIndicator):
         Args:
             maintenance_id: 維護作業 ID
             session: 資料庫 session
-            phase: 階段 (OLD 或 NEW)，預設 NEW
         """
-        if phase is None:
-            phase = MaintenancePhase.NEW
-
         repo = PowerRecordRepo(session)
-        records = await repo.get_latest_per_device(phase, maintenance_id)
+        records = await repo.get_latest_per_device(maintenance_id)
 
         # Group records by device hostname
         devices: dict[str, list[PowerRecord]] = defaultdict(list)
@@ -65,6 +61,7 @@ class PowerIndicator(BaseIndicator):
         total_count = 0
         pass_count = 0
         failures = []
+        passes = []
 
         for hostname, device_records in devices.items():
             if not device_records:
@@ -90,6 +87,16 @@ class PowerIndicator(BaseIndicator):
             total_count += 1
             if device_passed:
                 pass_count += 1
+                if len(passes) < 10:
+                    passes.append({
+                        "device": hostname,
+                        "interface": "Power System",
+                        "reason": f"全部 {len(device_records)} 個電源正常",
+                        "data": [
+                            {"ps_id": r.ps_id, "status": r.status}
+                            for r in device_records
+                        ],
+                    })
             else:
                 failures.append({
                     "device": hostname,
@@ -103,7 +110,6 @@ class PowerIndicator(BaseIndicator):
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
-            phase=phase,
             maintenance_id=maintenance_id,
             total_count=total_count,
             pass_count=pass_count,
@@ -112,6 +118,7 @@ class PowerIndicator(BaseIndicator):
                 "status_ok": self._calc_percent(pass_count, total_count)
             },
             failures=failures if failures else None,
+            passes=passes if passes else None,
             summary=f"電源檢查: {pass_count}/{total_count} 設備正常",
         )
 
@@ -147,13 +154,11 @@ class PowerIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[TimeSeriesPoint]:
         """獲取時間序列數據。"""
         repo = PowerRecordRepo(session)
         records = await repo.get_time_series_records(
             maintenance_id=maintenance_id,
-            phase=phase,
             limit=limit,
         )
 
@@ -189,13 +194,11 @@ class PowerIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
-        phase: MaintenancePhase = MaintenancePhase.NEW,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
         repo = PowerRecordRepo(session)
         records = await repo.get_latest_records(
             maintenance_id=maintenance_id,
-            phase=phase,
             limit=limit,
         )
 

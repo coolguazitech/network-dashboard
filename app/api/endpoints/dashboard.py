@@ -8,10 +8,12 @@ from __future__ import annotations
 from typing import Any, Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.base import get_async_session
+from app.db.models import CollectionError
 from app.services.indicator_service import IndicatorService
 from app.api.endpoints.auth import get_current_user, check_maintenance_access
 
@@ -92,32 +94,71 @@ async def get_indicator_details(
 
     result = results[indicator_type]
 
+    # 查詢採集錯誤
+    err_stmt = select(CollectionError).where(
+        CollectionError.maintenance_id == maintenance_id,
+        CollectionError.collection_type == indicator_type,
+    )
+    err_result = await session.execute(err_stmt)
+    error_map: dict[str, str] = {
+        err.switch_hostname: err.error_message
+        for err in err_result.scalars().all()
+    }
+
+    # 合併失敗清單：有 CollectionError 的設備只顯示一行（系統異常）
+    seen_error_devices: set[str] = set()
+    merged_failures: list[dict] = []
+
+    for f in (result.failures or []):
+        device = f.get("device", "")
+        if device in error_map:
+            # 該設備有系統異常 → 合併為一行，標記為系統異常
+            if device not in seen_error_devices:
+                seen_error_devices.add(device)
+                merged_failures.append({
+                    **f,
+                    "reason": f"系統異常: {error_map[device]}",
+                    "is_system_error": True,
+                })
+        else:
+            merged_failures.append(f)
+
+    # 補上只有 CollectionError 但 indicator 未報告的設備
+    for hostname, msg in error_map.items():
+        if hostname not in seen_error_devices:
+            merged_failures.append({
+                "device": hostname,
+                "interface": "N/A",
+                "reason": f"系統異常: {msg}",
+                "data": None,
+                "is_system_error": True,
+            })
+
+    all_failures = merged_failures
+
+    # CE 算進分母，但只補上 indicator 自己尚未計入的設備
+    # （expectations-based indicator 已把無資料設備當失敗，不需重複加）
+    ce_count = len(error_map)
+    supplement_count = ce_count - len(seen_error_devices)
+    adjusted_total = result.total_count + supplement_count
+    adjusted_fail = result.fail_count + supplement_count
+    adjusted_rate = (
+        (result.pass_count / adjusted_total * 100)
+        if adjusted_total > 0 else 0.0
+    )
+
     return {
         "indicator_type": result.indicator_type,
-        "phase": result.phase.value,
         "maintenance_id": result.maintenance_id,
-        "total_count": result.total_count,
+        "total_count": adjusted_total,
         "pass_count": result.pass_count,
-        "fail_count": result.fail_count,
-        "pass_rate": result.pass_rate_percent,
+        "fail_count": adjusted_fail,
+        "pass_rate": adjusted_rate,
         "pass_rates": result.pass_rates,
         "summary": result.summary,
-        "failures": result.failures or [],
+        "failures": all_failures,
+        "passes": result.passes,
+        "collection_errors": ce_count,
     }
 
 
-@router.get("/maintenance/{maintenance_id}/comparison")
-async def get_maintenance_comparison(
-    maintenance_id: str,
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
-    session: AsyncSession = Depends(get_async_session),
-) -> dict[str, Any]:
-    """
-    獲取維護作業的 PRE/POST 對比。
-    """
-    check_maintenance_access(user, maintenance_id)
-    from app.services.comparison_service import ComparisonService
-
-    service = ComparisonService()
-    comparison = await service.compare_maintenance(maintenance_id, session)
-    return comparison.model_dump()
