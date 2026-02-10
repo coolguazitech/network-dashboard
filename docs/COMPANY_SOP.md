@@ -117,6 +117,47 @@ make docker-all            # 在容器內執行全部步驟
 
 ---
 
+## 當前狀態評估
+
+### Parser 覆蓋情況分析
+
+在開始開發之前，先了解當前系統的 Parser 覆蓋情況：
+
+| Indicator | HPE | Cisco IOS | Cisco NXOS | 說明 |
+|-----------|-----|-----------|------------|------|
+| **error_count** | ✅ hpe_error | ✅ cisco_ios_error | ✅ cisco_nxos_error | 完整覆蓋 |
+| **fan** | ✅ hpe_fan | ✅ cisco_ios_fan | ✅ cisco_nxos_fan | 完整覆蓋 |
+| **port_channel** | ✅ hpe_port_channel | ✅ cisco_ios_port_channel | ✅ cisco_nxos_port_channel | 完整覆蓋 |
+| **power** | ✅ hpe_power | ✅ cisco_ios_power | ✅ cisco_nxos_power | 完整覆蓋 |
+| **transceiver** | ✅ hpe_transceiver | ✅ cisco_ios_transceiver | ✅ cisco_nxos_transceiver | 完整覆蓋 |
+| **version** | ✅ hpe_version | ✅ cisco_ios_version | ✅ cisco_nxos_version | 完整覆蓋 |
+| **uplink** (neighbor) | ✅ hpe_neighbor | ✅ cisco_ios_neighbor | ✅ cisco_nxos_neighbor | 完整覆蓋 |
+| **ping** | ✅ ping (通用) | - | - | 通用 Parser |
+
+**總計**：
+- ✅ **22 個 Parsers 已實現**
+- ✅ **所有 Indicators 都有對應的 Parser**
+- 📊 **覆蓋率**: 100%
+
+### 已知問題與改進空間
+
+雖然所有 Parser 都已存在，但在公司環境中仍需要：
+
+1. **驗證實際可用性**
+   - 確認所有 API endpoints 在公司內網是否可訪問
+   - 測試所有 Parser 是否能正確解析實際的 raw data
+   - 檢查是否有格式變化或版本差異
+
+2. **處理多端點需求**
+   - **HPE error_count**: 當前只使用一個 API（`display counters error`），但如果需要更詳細的錯誤資訊，可能需要額外的 API（`display interface`）
+   - 使用工具鏈為每個 API 創建獨立的 parser
+
+3. **新增功能（如需要）**
+   - ARP Indicator（如果業務需求）
+   - 其他設備類型（Aruba、Juniper 等）
+
+---
+
 ## 詳細步驟說明
 
 ### 步驟 1: 定義 API
@@ -861,6 +902,305 @@ Content-Type: application/json
 
 ---
 
+## 在公司的工作計劃
+
+基於當前 Parser 覆蓋情況分析，以下是在公司環境下的具體工作計劃：
+
+### 🔴 第一天（高優先級）- 驗證與測試
+
+#### 任務 1.1: 配置真實環境
+
+```bash
+# 1. 獲取最新代碼
+cd /path/to/netora
+git pull origin main
+
+# 2. 配置環境變數
+cp .env.example .env
+vi .env
+# 填入實際的 Token（從公司內部系統獲取）
+```
+
+#### 任務 1.2: 配置測試目標
+
+編輯 `config/api_test.yaml`，將測試目標改為實際的交換機：
+
+```yaml
+test_targets:
+  # 使用公司實際的交換機
+  - name: "SW-F18-CORE-01"
+    params:
+      ip: "10.50.1.1"  # 實際 IP
+      hostname: "SW-F18-CORE-01"
+      device_type: "hpe"
+
+  - name: "SW-F18-DIST-01"
+    params:
+      ip: "10.50.2.1"
+      hostname: "SW-F18-DIST-01"
+      device_type: "cisco_ios"
+
+  - name: "SW-F18-AGG-01"
+    params:
+      ip: "10.50.3.1"
+      hostname: "SW-F18-AGG-01"
+      device_type: "cisco_nxos"
+```
+
+#### 任務 1.3: 驗證 API 連接
+
+```bash
+# 測試所有 API
+make test-apis
+
+# 查看測試報告摘要
+cat reports/api_test_*.json | jq '.summary'
+
+# 範例輸出：
+# {
+#   "total_tests": 24,
+#   "success": 20,
+#   "failed": 4
+# }
+```
+
+**預期問題**：
+- ❌ 401 Unauthorized → Token 過期或錯誤
+- ❌ TimeoutException → API 端點無法連接
+- ❌ 404 Not Found → API endpoint 路徑錯誤
+
+**解決方法**：
+- 檢查 `.env` 的 Token 是否正確
+- 確認 `config/api_test.yaml` 的 `sources.base_url` 是否正確
+- 測試 API 服務是否運行：`curl http://fna:8001/health`
+
+#### 任務 1.4: 驗證 Parser
+
+```bash
+# 驗證所有 Parser
+make test-parsers
+
+# 查看失敗的 Parser
+cat reports/parser_test_*.json | jq '.results[] | select(.status == "failed")'
+```
+
+**如果有失敗的 Parser**：
+1. 記錄失敗的 parser 名稱和錯誤訊息
+2. 查看對應的 raw_data 格式是否與預期不同
+3. 標記為「待修正」，留到第二天處理
+
+**第一天結束時**：
+- ✅ 所有 API 都能成功連接（或已記錄失敗原因）
+- ✅ 知道哪些 Parser 需要修正
+- ✅ 產生完整的測試報告
+
+---
+
+### 🟡 第二天（中優先級）- 修正與擴展
+
+#### 任務 2.1: 修正失敗的 Parser
+
+```bash
+# 1. 找出失敗的 Parser
+FAILED_PARSER=$(cat reports/parser_test_*.json | jq -r '.results[] | select(.status == "failed") | .parser' | head -1)
+echo "修正 Parser: $FAILED_PARSER"
+
+# 2. 查看該 Parser 的測試資料
+cat reports/api_test_*.json | jq '.results[] | select(.api_name == "XXX") | .raw_data'
+
+# 3. 修正 Parser 邏輯
+vi app/parsers/plugins/XXX_parser.py
+
+# 4. 重新測試
+make test-parsers
+```
+
+**修正策略**：
+1. 對比 raw_data 與 parser 的 regex pattern
+2. 使用公司內部 AI 協助：「這是實際的 raw data，請修正 parser 的正則表達式」
+3. 逐步測試，確保所有欄位都正確解析
+
+#### 任務 2.2: 處理多端點 API（HPE error_count）
+
+**背景**：當前 `hpe_error.py` 只使用一個 API (`display counters error`)，如果需要更詳細的錯誤資訊，需要新增第二個 API。
+
+**步驟**：
+
+```bash
+# 1. 編輯配置，新增第二個 API
+vi config/api_test.yaml
+```
+
+```yaml
+apis:
+  # 現有的（簡化版）
+  - name: "get_errors_hpe_summary"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/errors/summary"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "HPE 錯誤計數摘要"
+
+  # 新增的（詳細版）
+  - name: "get_errors_hpe_detail"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/errors/detail"
+    query_params:
+      hosts: "{ip}"
+      interface: "all"
+    requires_auth: false
+    description: "HPE 錯誤計數詳細資訊（逐介面）"
+```
+
+```bash
+# 2. 測試新 API
+make test-apis
+
+# 3. 生成新 Parser 骨架
+make gen-parsers
+# 會生成：app/parsers/plugins/get_errors_hpe_detail_parser.py
+
+# 4. 使用 AI 填寫新 Parser 邏輯
+# 從 reports/api_test_*.json 複製 raw_data
+# 給公司內部 AI：「這是 HPE 錯誤詳細資訊的 raw output，請寫 parser」
+
+# 5. 驗證新 Parser
+make test-parsers
+```
+
+**後續工作**（非本次範圍，標記為 TODO）：
+- 修改 `app/indicators/error_count.py` 來合併兩個 parser 的結果
+- 在 indicator 層實現更智慧的錯誤判斷邏輯
+
+#### 任務 2.3: 新增 ARP Indicator（如果業務需要）
+
+**僅在業務明確需要 ARP 功能時執行**
+
+```bash
+# 1. 定義 ARP API
+vi config/api_test.yaml
+```
+
+```yaml
+apis:
+  - name: "get_arp_hpe"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/arp"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "HPE ARP 表"
+
+  - name: "get_arp_ios"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/ios/arp"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Cisco IOS ARP 表"
+
+  - name: "get_arp_nxos"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/nxos/arp"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Cisco NXOS ARP 表"
+```
+
+```bash
+# 2. 完整流程
+make test-apis      # 測試 ARP API
+make gen-parsers    # 生成 3 個 ARP parser 骨架
+# 使用 AI 填寫每個 parser 的邏輯
+make test-parsers   # 驗證
+
+# 3. 後續：創建 ARP Indicator（需要額外開發）
+```
+
+**第二天結束時**：
+- ✅ 所有失敗的 Parser 已修正
+- ✅ HPE error_count 的雙 API 架構已完成
+- ✅ （可選）ARP 相關 Parser 已完成
+
+---
+
+### 🟢 後續工作（低優先級）
+
+#### 任務 3.1: 性能優化
+
+```bash
+# 如果 API 測試很慢，可以調整 timeout
+vi scripts/batch_test_apis.py
+# 將 timeout=10.0 改為適合的值（如 30.0）
+
+# 如果需要調整並發數，修改 httpx.AsyncClient 設置
+```
+
+#### 任務 3.2: 新增其他設備類型
+
+如果公司有 Aruba、Juniper 等其他設備：
+
+```yaml
+# config/api_test.yaml
+test_targets:
+  - name: "SW-ARUBA-01"
+    params:
+      ip: "10.60.1.1"
+      hostname: "SW-ARUBA-01"
+      device_type: "aruba"
+
+apis:
+  - name: "get_fan_aruba"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/aruba/fan"
+    query_params:
+      hosts: "{ip}"
+```
+
+然後執行標準流程：`make test-apis` → `make gen-parsers` → 填寫邏輯 → `make test-parsers`
+
+#### 任務 3.3: 文檔維護
+
+```bash
+# 記錄所有實際的 API endpoints
+# 更新 .env.example 的註解
+# 記錄常見問題和解決方法
+```
+
+---
+
+### 工作檢查清單
+
+**第一天**：
+- [ ] 配置 `.env`（Token）
+- [ ] 更新 `config/api_test.yaml`（真實 IP）
+- [ ] 執行 `make test-apis`
+- [ ] 檢查 API 連接狀態
+- [ ] 執行 `make test-parsers`
+- [ ] 記錄失敗的 API 和 Parser
+
+**第二天**：
+- [ ] 修正所有失敗的 Parser
+- [ ] 新增 HPE error_count 的第二個 API
+- [ ] 生成並填寫新 Parser
+- [ ] 全部測試通過（`make test-parsers`）
+- [ ] （可選）新增 ARP 相關功能
+
+**後續**：
+- [ ] 性能優化（如需要）
+- [ ] 新增其他設備類型（如需要）
+- [ ] 更新文檔和註解
+
+---
+
 ## 清理與維護
 
 ### 清理測試報告
@@ -931,4 +1271,4 @@ docker-compose -f docker-compose.production.yml restart
 ---
 
 **最後更新**: 2026-02-09
-**版本**: v1.0
+**版本**: v1.1 - 新增 Parser 覆蓋情況分析和工作計劃
