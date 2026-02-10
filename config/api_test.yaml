@@ -1,0 +1,170 @@
+# =============================================================================
+# API Test Configuration
+# =============================================================================
+# Define all APIs to test and their test targets.
+# This config is de-coupled from indicators - focus on "how to call APIs" only.
+#
+# Usage:
+#   make test-apis           # Test all APIs (local Python)
+#   make docker-test-apis    # Test all APIs (inside container)
+# =============================================================================
+
+# =============================================================================
+# Global Settings
+# =============================================================================
+settings:
+  # Source definitions (base_url + optional token)
+  sources:
+    FNA:
+      base_url: "http://fna:8001"
+      token_env: "FNA_TOKEN"  # Read from .env file
+
+    DNA:
+      base_url: "http://dna:8001"
+      token_env: null  # No auth required
+
+    GNMSPING:
+      # Multiple base_urls based on tenant_group
+      base_urls:
+        F18: "https://gnmsping.dev.f18.com"
+        F6: "https://gnmsping.dev.f6.com"
+        AP: "https://gnmsping.dev.ap.com"
+        F14: "https://gnmsping.dev.f14.com"
+        F12: "https://gnmsping.dev.f12.com"
+
+# =============================================================================
+# Test Targets (Generic - not limited to switches)
+# =============================================================================
+test_targets:
+  # Example: Network switches
+  - name: "SW-CORE-01"
+    params:
+      ip: "10.1.1.1"
+      hostname: "SW-CORE-01"
+      device_type: "hpe"
+
+  - name: "SW-DIST-01"
+    params:
+      ip: "10.1.1.2"
+      hostname: "SW-DIST-01"
+      device_type: "cisco_ios"
+
+  - name: "SW-AGG-01"
+    params:
+      ip: "10.1.1.3"
+      hostname: "SW-AGG-01"
+      device_type: "cisco_nxos"
+
+  # Example: Ping batch (for GNMS Ping API)
+  - name: "Ping-Batch-F18"
+    params:
+      tenant_group: "F18"
+      ips: ["10.1.1.1", "10.1.1.2", "10.1.1.3"]
+
+# =============================================================================
+# API Definitions (De-coupled from indicators)
+# =============================================================================
+# Each API defines:
+#   - name: Unique identifier
+#   - method: GET or POST
+#   - source: One of the sources defined above
+#   - endpoint: URL path (supports {placeholders})
+#   - url_params: List of param names to substitute in endpoint
+#   - query_params: Dict of query parameters (supports {placeholders})
+#   - request_body_template: For POST, template string with {placeholders}
+#   - tenant_group: For GNMSPING, which tenant_group to use
+#   - requires_auth: Whether to inject token from source.token_env
+# =============================================================================
+
+apis:
+  # ── FNA APIs (Transceiver, Port Channel) ──
+
+  - name: "get_transceiver_fna"
+    method: "GET"
+    source: "FNA"
+    endpoint: "/switch/network/get_transceiver/{ip}"
+    url_params:
+      - ip
+    requires_auth: true
+    description: "Fetch transceiver Tx/Rx power from FNA API"
+
+  - name: "get_port_channel_fna"
+    method: "GET"
+    source: "FNA"
+    endpoint: "/switch/network/get_port_channel/{ip}"
+    url_params:
+      - ip
+    requires_auth: true
+    description: "Fetch port-channel status from FNA API"
+
+  # ── DNA APIs (Fan, Power, Error Count) ──
+
+  - name: "get_fan_hpe"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/fan"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch HPE fan status from DNA API"
+
+  - name: "get_fan_ios"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/ios/fan"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch Cisco IOS fan status from DNA API"
+
+  - name: "get_fan_nxos"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/nxos/fan"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch Cisco NXOS fan status from DNA API"
+
+  - name: "get_power_hpe"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/power"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch HPE power supply status from DNA API"
+
+  - name: "get_errors_hpe_input"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/errors/input"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch HPE input errors from DNA API"
+
+  - name: "get_errors_hpe_output"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/errors/output"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch HPE output errors from DNA API (multi-endpoint example)"
+
+  # ── GNMS Ping API (POST with request body) ──
+
+  - name: "ping_batch"
+    method: "POST"
+    source: "GNMSPING"
+    tenant_group: "{tenant_group}"  # Used to select base_url
+    endpoint: "/api/ping"
+    request_body_template: |
+      {
+        "tenant": "{tenant_group}",
+        "ips": {ips},
+        "timeout": 5
+      }
+    requires_auth: false
+    description: "Batch ping multiple IPs via GNMS Ping API"

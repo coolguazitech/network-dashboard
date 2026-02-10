@@ -1,0 +1,9 @@
+# Development Dependencies for Parser Toolchain
+# These are required for running the API testing and parser generation tools locally
+
+httpx>=0.24.0          # Async HTTP client for API testing
+pyyaml>=6.0            # YAML config parsing
+pydantic>=2.0          # Already in main requirements, but listed for completeness
+python-dotenv>=1.0.0   # Environment variable management
+jinja2>=3.1.0          # Template engine for parser skeleton generation
+rich>=13.0.0           # Terminal UI for live progress display
