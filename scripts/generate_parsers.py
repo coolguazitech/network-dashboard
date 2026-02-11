@@ -69,27 +69,24 @@ class {{class_name}}(BaseParser):
     1. Import the ParsedData type and DeviceType enum if needed
     2. Add Generic[YourType] to BaseParser
     3. Set device_type (e.g., DeviceType.HPE) or None for generic
-    4. Set indicator_type to match the indicator that will use this parser
-    5. Implement parse() method
+    4. Implement parse() method
 
     Example after filling in:
         from app.core.enums import DeviceType
-        from app.parsers.protocols import BaseParser, FanData
+        from app.parsers.protocols import BaseParser, FanStatusData
 
-        class {{class_name}}(BaseParser[FanData]):
+        class {{class_name}}(BaseParser[FanStatusData]):
             device_type = DeviceType.HPE
-            indicator_type = "fan"
             command = "{{api_name}}"
 
-            def parse(self, raw_output: str) -> list[FanData]:
+            def parse(self, raw_output: str) -> list[FanStatusData]:
                 # Your parsing logic here
                 ...
     """
 
-    # TODO: Set these fields based on your ParsedData type
+    # TODO: Set device_type based on target device
     device_type = None  # e.g., DeviceType.HPE (or None for generic)
-    indicator_type = "{{api_name}}"  # Adjust if needed
-    command = "{{api_name}}"  # Hint: adjust based on actual API command
+    command = "{{api_name}}"
 
     def parse(self, raw_output: str) -> list:
         """
@@ -213,8 +210,41 @@ def generate_parser(
     return output_path
 
 
+def device_type_short(device_type: str) -> str:
+    """Convert device_type to short form for parser naming.
+
+    Examples:
+        "hpe" -> "hpe"
+        "cisco_ios" -> "ios"
+        "cisco_nxos" -> "nxos"
+    """
+    return device_type.replace("cisco_", "")
+
+
+def make_device_specific_name(api_name: str, device_type: str) -> str:
+    """Insert device_type into API name before the source suffix.
+
+    Examples:
+        ("get_errors_fna", "hpe") -> "get_errors_hpe_fna"
+        ("get_transceiver_fna", "cisco_ios") -> "get_transceiver_ios_fna"
+    """
+    short_dt = device_type_short(device_type)
+    # Split at last underscore to get source suffix (e.g., "fna")
+    parts = api_name.rsplit("_", 1)
+    if len(parts) == 2:
+        return f"{parts[0]}_{short_dt}_{parts[1]}"
+    return f"{api_name}_{short_dt}"
+
+
 def generate_all_parsers(report_path: Path, output_dir: Path) -> int:
-    """Generate parser skeletons for all successful API results."""
+    """Generate parser skeletons for all successful API results.
+
+    Handles two cases:
+    - Device-specific APIs (DNA): one parser per API name
+    - Generic APIs (FNA): one parser per (API name, device_type) combination
+    """
+    from collections import defaultdict
+
     # Load report
     with open(report_path) as f:
         report = json.load(f)
@@ -228,29 +258,52 @@ def generate_all_parsers(report_path: Path, output_dir: Path) -> int:
 
     console.print(f"📊 Found {len(successful_results)} successful API results\n")
 
+    # Group results by api_name to detect generic APIs (multiple device_types)
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for result in successful_results:
+        groups[result["api_name"]].append(result)
+
     # Generate parsers
     generated_count = 0
-    for result in successful_results:
-        api_name = result["api_name"]
-        target_name = result["target_name"]
-        raw_data = result["raw_data"]
 
-        # Extract source and endpoint (not in result, need to infer or store in report)
-        # For now, use placeholder values
-        source = "Unknown"
-        endpoint = result.get("url", "Unknown")
+    for api_name, results in groups.items():
+        # Check how many distinct device_types this API was tested against
+        device_types = set()
+        for r in results:
+            dt = r["target_params"].get("device_type")
+            if dt:
+                device_types.add(dt)
 
-        output_path = generate_parser(
-            api_name=api_name,
-            target_name=target_name,
-            source=source,
-            endpoint=endpoint,
-            raw_data=raw_data,
-            output_dir=output_dir,
-        )
-
-        if output_path:
-            generated_count += 1
+        if len(device_types) > 1:
+            # Generic API (e.g., FNA): generate one parser per device_type
+            for result in results:
+                dt = result["target_params"].get("device_type")
+                if not dt:
+                    continue
+                parser_name = make_device_specific_name(api_name, dt)
+                output_path = generate_parser(
+                    api_name=parser_name,
+                    target_name=result["target_name"],
+                    source=api_name,
+                    endpoint=result.get("url", "Unknown"),
+                    raw_data=result["raw_data"],
+                    output_dir=output_dir,
+                )
+                if output_path:
+                    generated_count += 1
+        else:
+            # Device-specific API (e.g., DNA) or non-switch API (e.g., GNMSPING)
+            result = results[0]
+            output_path = generate_parser(
+                api_name=api_name,
+                target_name=result["target_name"],
+                source=api_name,
+                endpoint=result.get("url", "Unknown"),
+                raw_data=result["raw_data"],
+                output_dir=output_dir,
+            )
+            if output_path:
+                generated_count += 1
 
     return generated_count
 

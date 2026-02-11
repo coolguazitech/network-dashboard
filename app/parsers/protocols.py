@@ -321,20 +321,22 @@ class PingManyData(ParsedData):
 
 class BaseParser(ABC, Generic[TResult]):
     """
-    所有 Parser 的抽象基底類別 — 每個 Parser 負責「一個設備類型 + 一種指標」。
+    所有 Parser 的抽象基底類別 — 每個 Parser 負責解析一個特定 API 的 raw output。
+
+    Parser 與 Indicator 完全解耦：
+    - Parser 只關心「如何將 raw text 轉為結構化資料」
+    - 一個 Parser 可能服務多個 Indicator
+    - 一個 Indicator 可能使用多個 Parser 的資料
 
     =========================================================================
-    如何新增一個 Parser（保姆級步驟）：
+    如何新增一個 Parser：
     =========================================================================
 
-    第 1 步：建立檔案
-        在 app/parsers/plugins/ 目錄下建立新檔案。
-        命名慣例：{vendor}_{indicator_type}.py
-        範例：hpe_version.py, cisco_ios_transceiver.py
+    1. 用 toolchain 自動生成骨架：make gen-parsers
+    2. 填寫 parse() 邏輯（可用 AI 輔助）
+    3. 驗證：make test-parsers
 
-    第 2 步：定義 Parser 類別
-        繼承 BaseParser[你的 ParsedData 子類別]，設定三個必填 class attribute，
-        然後實作 parse() 方法。
+    手動建立範例：
 
         .. code-block:: python
 
@@ -342,75 +344,29 @@ class BaseParser(ABC, Generic[TResult]):
             from app.parsers.protocols import BaseParser, TransceiverData
             from app.parsers.registry import parser_registry
 
-            class HpeTransceiverParser(BaseParser[TransceiverData]):
-                # ── 必填 class attributes ──
-                device_type = DeviceType.HPE         # 設備類型（見 app/core/enums.py）
-                indicator_type = "transceiver"        # 指標類型，必須與 scheduler.yaml
-                                                      #   的 fetcher name 一致！
-                command = "display transceiver"       # 對應的 CLI 指令（供文檔參考）
+            class GetTransceiverHpeFnaParser(BaseParser[TransceiverData]):
+                device_type = DeviceType.HPE
+                command = "get_transceiver_hpe_fna"
 
                 def parse(self, raw_output: str) -> list[TransceiverData]:
-                    # raw_output 是 Fetcher 從設備取回的原始字串
                     results = []
-                    # ... 你的解析邏輯 ...
+                    # ... 解析邏輯 ...
                     return results
 
-    第 3 步：註冊 Parser
-        在檔案底部呼叫 parser_registry.register()：
-
-        .. code-block:: python
-
-            # 檔案最底部
-            parser_registry.register(HpeTransceiverParser())
-
-        然後在 app/parsers/plugins/__init__.py 加上 import：
-
-        .. code-block:: python
-
-            from . import hpe_transceiver  # 新增這行
+            parser_registry.register(GetTransceiverHpeFnaParser())
 
     =========================================================================
-    各 class attribute 說明：
+    Class attributes：
     =========================================================================
 
     device_type : DeviceType | None
-        設備類型。目前支援：HPE, CISCO_IOS, CISCO_NXOS。
-        設為 None 表示此 Parser 為通用型，適用所有設備類型（如 Ping）。
-        Registry 查詢時先精確匹配 device_type，再 fallback 到 None。
-        若需新增設備類型，先在 app/core/enums.py 的 DeviceType 中加入。
-
-    indicator_type : str
-        指標類型字串。常見值：
-        "transceiver", "fan", "power", "error_count", "version",
-        "uplink", "port_channel", "ping"
-        **重要**：此值必須與 scheduler.yaml 的 fetcher name 完全一致！
-        fetcher name == indicator_type 是系統自動配對的關鍵。
+        設備類型。設為 None 表示通用型（如 Ping）。
+        Registry 查詢時先精確匹配，再 fallback 到 None。
 
     command : str
-        對應的 CLI 指令，主要用於文檔參考和除錯時查閱。
-        例如 "show interfaces transceiver", "display fan"。
-
-    =========================================================================
-    parse() 回傳值說明：
-    =========================================================================
-
-    - 回傳 list[TResult]：正常情況下回傳解析出的資料列表。
-    - 回傳空列表 []：表示「沒有找到資料」，這不是 error！
-      例如 transceiver parser 在一台沒有光模組的設備上跑，
-      會回傳 []（空列表），下游 indicator 會處理「無資料」的情況。
-    - 不要拋出例外：如果某行解析失敗，跳過該行即可（continue）。
-      只有整個 raw_output 格式完全錯誤時才考慮 raise。
-
-    =========================================================================
-    ParsedData 驗證機制（你不需要自己做正規化！）：
-    =========================================================================
-
-    ParsedData 的 Pydantic before-validator 會自動幫你處理：
-    - FanStatusData.status: "OK" → "ok", "Normal" → "normal"
-    - PortChannelData.status: "UP" → "up", "DOWN" → "down"
-    - PowerData.status: "Ok" → "ok", "Fail" → "fail"
-    - MacTableData.mac_address: "0012.3456.789a" → "00:12:34:56:78:9A"
-    所以 parser 只需把原始字串塞進去，Pydantic 會自動正規化。
+        此 Parser 對應的 API 名稱（即 api_test.yaml 中的 api name）。
+        這是 Registry 查詢的 key，必須唯一。
+        例如 "get_fan_hpe_dna", "get_errors_hpe_fna", "ping_batch"
 
     Type Parameters:
         TResult: Parser 產出的 Pydantic model 類型（必須是 ParsedData 子類別）
@@ -418,8 +374,7 @@ class BaseParser(ABC, Generic[TResult]):
 
     # ── 子類別必須設定的 class attributes ──
     device_type: DeviceType | None  # None = generic parser (all device types)
-    indicator_type: str  # e.g., "transceiver", "error_count"
-    command: str  # CLI command to execute
+    command: str  # API name, e.g., "get_fan_hpe_dna"
 
     @abstractmethod
     def parse(self, raw_output: str) -> list[TResult]:
@@ -458,26 +413,19 @@ class ParserKey(BaseModel):
     """
     Parser 在 registry 中的唯一識別鍵。
 
-    由兩個維度組成：device_type + indicator_type。
-    這代表「一個 ParserKey 對應一個 Parser」的 1:1 關係。
+    由兩個維度組成：device_type + command。
 
     舉例：
-        ParserKey(device_type=DeviceType.CISCO_NXOS, indicator_type="transceiver")
-        → 對應 CiscoNxosTransceiverParser
-
-    系統使用 ParserKey 來查找正確的 Parser：
-        1. DataCollectionService 拿到設備的 device_type
-        2. 加上要採集的 indicator_type（如 "transceiver"）
-        3. 組成 ParserKey 向 registry 查詢
-        4. 找到對應的 Parser 實例，呼叫 parser.parse(raw_output)
+        ParserKey(device_type=DeviceType.HPE, command="get_fan_hpe_dna")
+        → 對應 GetFanHpeDnaParser
     """
 
     device_type: DeviceType | None
-    indicator_type: str
+    command: str
 
     def __hash__(self) -> int:
         """Make hashable for use as dict key."""
-        return hash((self.device_type, self.indicator_type))
+        return hash((self.device_type, self.command))
 
     def __eq__(self, other: object) -> bool:
         """Equality comparison."""
@@ -485,5 +433,5 @@ class ParserKey(BaseModel):
             return False
         return (
             self.device_type == other.device_type
-            and self.indicator_type == other.indicator_type
+            and self.command == other.command
         )

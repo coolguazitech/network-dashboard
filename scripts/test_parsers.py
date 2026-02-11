@@ -24,9 +24,11 @@ from rich.table import Table
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Import parser registry (this will trigger auto-discovery)
-from app.parsers import plugins  # noqa: F401
-from app.parsers.registry import parser_registry
+# Import parser registry and auto-discover ALL parsers (including new skeletons)
+from app.parsers.registry import auto_discover_parsers, parser_registry
+
+# Discover all parser plugins (including generated skeletons not in __init__.py)
+auto_discover_parsers()
 
 console = Console()
 
@@ -82,31 +84,48 @@ def find_latest_report(reports_dir: Path) -> Path | None:
     return max(reports, key=lambda p: p.stat().st_mtime)
 
 
-def find_parser_for_api(api_name: str) -> Any | None:
+def device_type_short(device_type: str) -> str:
+    """Convert device_type to short form for parser naming."""
+    return device_type.replace("cisco_", "")
+
+
+def make_device_specific_name(api_name: str, device_type: str) -> str:
+    """Insert device_type into API name before the source suffix.
+
+    Examples:
+        ("get_errors_fna", "hpe") -> "get_errors_hpe_fna"
+        ("get_transceiver_fna", "cisco_ios") -> "get_transceiver_ios_fna"
     """
-    Find parser for given API name.
+    short_dt = device_type_short(device_type)
+    parts = api_name.rsplit("_", 1)
+    if len(parts) == 2:
+        return f"{parts[0]}_{short_dt}_{parts[1]}"
+    return f"{api_name}_{short_dt}"
+
+
+def find_parser_for_api(api_name: str, device_type: str | None = None) -> Any | None:
+    """
+    Find parser for given API name by matching parser.command.
 
     Strategy:
-    1. Check if parser with indicator_type == api_name exists
-    2. Check if parser class name contains api_name
+    1. Try exact api_name match against parser.command
+    2. If device_type is provided, also try device-specific name
+       (for FNA APIs: get_errors_fna + hpe -> get_errors_hpe_fna)
 
     Returns None if not found.
     """
-    # List all registered parsers
+    # Build list of candidate names to try
+    candidates = [api_name]
+    if device_type:
+        candidates.append(make_device_specific_name(api_name, device_type))
+
+    # Search by command field
     all_parsers = parser_registry._parsers.values()
 
-    # Strategy 1: Match by indicator_type
-    for parser in all_parsers:
-        if hasattr(parser, "indicator_type") and parser.indicator_type == api_name:
-            return parser
-
-    # Strategy 2: Match by class name pattern
-    # e.g., GetFanHpeParser for api_name="get_fan_hpe"
-    api_name_pascal = "".join(word.capitalize() for word in api_name.split("_"))
-    for parser in all_parsers:
-        class_name = parser.__class__.__name__
-        if api_name_pascal in class_name:
-            return parser
+    for candidate in candidates:
+        for parser in all_parsers:
+            if hasattr(parser, "command") and parser.command == candidate:
+                return parser
 
     return None
 
@@ -117,11 +136,11 @@ def find_parser_for_api(api_name: str) -> Any | None:
 
 
 def test_parser(
-    api_name: str, target_name: str, raw_data: str
+    api_name: str, target_name: str, raw_data: str, device_type: str | None = None
 ) -> ValidationResult:
     """Test a single parser with raw data."""
-    # Find parser
-    parser = find_parser_for_api(api_name)
+    # Find parser (try device-specific name for FNA APIs)
+    parser = find_parser_for_api(api_name, device_type=device_type)
 
     if parser is None:
         return ValidationResult(
@@ -132,7 +151,7 @@ def test_parser(
             error=f"No parser found for API '{api_name}'",
         )
 
-    parser_name = f"{parser.__class__.__name__} (indicator_type={parser.indicator_type})"
+    parser_name = f"{parser.__class__.__name__} (command={parser.command})"
 
     # Test parser
     try:
@@ -159,11 +178,14 @@ def test_parser(
             else:
                 sample_output = str(first_item)
 
+        # count > 0 = passed, count = 0 = empty (skeleton not filled)
+        status = "passed" if parsed_items else "empty"
+
         return ValidationResult(
             parser_name=parser_name,
             api_name=api_name,
             target_name=target_name,
-            status="passed",
+            status=status,
             parsed_count=len(parsed_items),
             sample_output=sample_output,
         )
@@ -203,8 +225,9 @@ def test_all_parsers(report_path: Path) -> list[ValidationResult]:
         api_name = api_result["api_name"]
         target_name = api_result["target_name"]
         raw_data = api_result["raw_data"]
+        device_type = api_result.get("target_params", {}).get("device_type")
 
-        validation_result = test_parser(api_name, target_name, raw_data)
+        validation_result = test_parser(api_name, target_name, raw_data, device_type)
         results.append(validation_result)
 
         # Log result
@@ -212,6 +235,11 @@ def test_all_parsers(report_path: Path) -> list[ValidationResult]:
             console.print(
                 f"  ✅ {validation_result.parser_name}: "
                 f"parsed {validation_result.parsed_count} object(s)"
+            )
+        elif validation_result.status == "empty":
+            console.print(
+                f"  ⚠️  {validation_result.parser_name}: "
+                f"returned 0 objects (parse() not implemented?)"
             )
         elif validation_result.status == "failed":
             console.print(
@@ -240,6 +268,7 @@ def save_validation_report(
 
     # Calculate summary
     passed_count = sum(1 for r in results if r.status == "passed")
+    empty_count = sum(1 for r in results if r.status == "empty")
     failed_count = sum(1 for r in results if r.status == "failed")
     skipped_count = sum(1 for r in results if r.status == "skipped")
 
@@ -249,6 +278,7 @@ def save_validation_report(
         "summary": {
             "total_parsers_tested": len(results),
             "passed": passed_count,
+            "empty": empty_count,
             "failed": failed_count,
             "skipped": skipped_count,
         },
@@ -273,21 +303,23 @@ def print_summary_table(results: list[ValidationResult]):
     for result in results:
         status_emoji = {
             "passed": "✅",
+            "empty": "⚠️",
             "failed": "❌",
             "skipped": "⏭️",
         }[result.status]
 
         status_color = {
             "passed": "green",
+            "empty": "yellow",
             "failed": "red",
-            "skipped": "yellow",
+            "skipped": "dim",
         }[result.status]
 
         table.add_row(
             result.api_name,
             result.parser_name,
             f"[{status_color}]{status_emoji} {result.status}[/{status_color}]",
-            str(result.parsed_count) if result.status == "passed" else "-",
+            str(result.parsed_count) if result.status in ("passed", "empty") else "-",
         )
 
     console.print("\n")
@@ -317,7 +349,7 @@ def main():
     console.print(f"📄 Using report: {report_path.name}")
 
     # Load parsers
-    console.print(f"📦 Loaded {len(parser_registry)} parser(s) from registry")
+    console.print(f"📦 Loaded {len(parser_registry.list_parsers())} parser(s) from registry")
 
     # Test all parsers
     console.print("\n[bold]Testing parsers...[/bold]")
@@ -332,11 +364,13 @@ def main():
 
     # Calculate summary
     passed_count = sum(1 for r in results if r.status == "passed")
+    empty_count = sum(1 for r in results if r.status == "empty")
     failed_count = sum(1 for r in results if r.status == "failed")
     skipped_count = sum(1 for r in results if r.status == "skipped")
 
     console.print("\n[bold]📝 Summary:[/bold]")
     console.print(f"  ✅ Passed: {passed_count}/{len(results)}")
+    console.print(f"  ⚠️  Empty: {empty_count}/{len(results)} (skeleton not filled)")
     console.print(f"  ❌ Failed: {failed_count}/{len(results)}")
     console.print(f"  ⏭️  Skipped: {skipped_count}/{len(results)}\n")
 
@@ -349,6 +383,8 @@ def main():
     if failed_count > 0:
         console.print("[red]❌ Some parsers failed validation[/red]\n")
         sys.exit(1)
+    elif empty_count > 0 and passed_count == 0:
+        console.print("[yellow]⚠️  All parsers are empty skeletons — fill in parse() logic[/yellow]\n")
     else:
         console.print("[bold green]🎉 All parsers passed validation![/bold green]\n")
 

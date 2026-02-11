@@ -1,1274 +1,557 @@
-# 公司操作手冊 - Parser 開發工具鏈
+# 公司操作手冊 - Parser 開發工具鏈 v1.3.0
 
 > **目標對象**: 在公司環境下進行 Parser 開發的工程師
-> **前置條件**: 公司內網環境、可訪問內部 API、Docker 環境
+> **前置條件**: 公司內網環境、可訪問內部 API（FNA / DNA / GNMSPING）
+> **最後更新**: 2026-02-11
+> **工具鏈版本**: v1.3.0（19 APIs、31 parsers、FNA/DNA/GNMSPING 三源架構）
 
 ---
 
-## 📋 目錄
+## 目錄
 
-1. [環境準備](#環境準備)
-2. [日常開發流程](#日常開發流程)
-3. [詳細步驟說明](#詳細步驟說明)
+1. [工具鏈驗證結果](#工具鏈驗證結果)
+2. [到公司後的操作流程（SOP）](#到公司後的操作流程sop)
+3. [日常開發流程](#日常開發流程)
 4. [常見問題排查](#常見問題排查)
-5. [實際範例](#實際範例)
+5. [快速參考](#快速參考)
 
 ---
 
-## 環境準備
+## 工具鏈驗證結果
 
-### 1. 獲取代碼
+以下為 2026-02-11 使用 Mock Server 進行的完整驗證：
+
+| 步驟 | 指令 | 結果 |
+|------|------|------|
+| API 批次測試 | `make test-apis` | 31/31 全部成功 |
+| Parser 骨架生成 | `make gen-parsers` | 31 個骨架全部生成 |
+| Parser 驗證 | `make test-parsers` | 31 個骨架載入成功（empty = 尚未填寫邏輯，正常） |
+| 冪等性測試 | 再次執行 `make gen-parsers` | 全部 Skipped（已存在的檔案不會被覆蓋） |
+
+### 當前 Parser 覆蓋情況
+
+**19 個 API 定義 → 31 個 Parser 骨架**（FNA APIs 為 generic，每個 device_type 各一個 parser）
+
+| 分類 | API 名稱 | 來源 | HPE | IOS | NXOS |
+|------|---------|------|-----|-----|------|
+| Transceiver | `get_transceiver_fna` | FNA | `get_transceiver_hpe_fna` | `get_transceiver_ios_fna` | `get_transceiver_nxos_fna` |
+| Port-Channel | `get_port_channel_fna` | FNA | `get_port_channel_hpe_fna` | `get_port_channel_ios_fna` | `get_port_channel_nxos_fna` |
+| Uplink | `get_uplink_fna` | FNA | `get_uplink_hpe_fna` | `get_uplink_ios_fna` | `get_uplink_nxos_fna` |
+| Error Count | `get_error_count_fna` | FNA | `get_error_count_hpe_fna` | `get_error_count_ios_fna` | `get_error_count_nxos_fna` |
+| ACL | `get_acl_fna` | FNA | `get_acl_hpe_fna` | `get_acl_ios_fna` | `get_acl_nxos_fna` |
+| ARP Table | `get_arp_table_fna` | FNA | `get_arp_table_hpe_fna` | `get_arp_table_ios_fna` | `get_arp_table_nxos_fna` |
+| MAC Table | DNA | DNA | `get_mac_table_hpe_dna` | `get_mac_table_ios_dna` | `get_mac_table_nxos_dna` |
+| Fan | DNA | DNA | `get_fan_hpe_dna` | `get_fan_ios_dna` | `get_fan_nxos_dna` |
+| Power | DNA | DNA | `get_power_hpe_dna` | `get_power_ios_dna` | `get_power_nxos_dna` |
+| Version | DNA | DNA | `get_version_hpe_dna` | `get_version_ios_dna` | `get_version_nxos_dna` |
+| Ping | `ping_batch` | GNMSPING | 通用（1 個 parser） | - | - |
+
+**狀態**: 所有 31 個 parser 為空骨架（`parse()` 返回 `[]`），需到公司拿到真實 raw data 後填寫邏輯。
+
+---
+
+## 到公司後的操作流程（SOP）
+
+### 第零步：拉取最新代碼
 
 ```bash
-# 從 GitHub 獲取最新代碼
-cd /path/to/workspace
-git clone https://github.com/<your-org>/netora.git
-cd netora
-
-# 或更新現有代碼
+cd /path/to/netora
 git pull origin main
+pip install -r requirements-dev.txt
 ```
 
-### 2. 配置環境變數
+---
 
-創建 `.env` 文件並設置 API Token：
+### 第一步：配置真實環境
+
+#### 1.1 設置環境變數
 
 ```bash
-# 複製範本
 cp .env.example .env
-
-# 編輯 .env 文件
 vi .env
 ```
 
-**需要設置的變數**：
+填入真實 Token：
 ```bash
-# FNA API Token (從公司內部系統獲取)
-FNA_TOKEN=your_fna_token_here
-
-# DNA API (如果需要)
-DNA_TOKEN=your_dna_token_here
-
-# GNMS Ping API (如果需要)
-GNMSPING_TOKEN=your_gnmsping_token_here
+FNA_TOKEN=<從公司內部系統獲取>
+GNMSPING_APP_NAME=<GNMSPING app name>
+GNMSPING_TOKEN=<GNMSPING token>
 ```
 
-### 3. 準備執行環境
+#### 1.2 修改 API 測試配置
 
-**選項 A：使用本地 Python (推薦，速度快)**
+編輯 `config/api_test.yaml`，替換以下內容：
 
-```bash
-# 安裝開發依賴
-pip install -r requirements-dev.txt
-
-# 確認安裝成功
-python -c "import httpx, yaml, rich; print('✅ 依賴安裝成功')"
+**sources — 替換 base_url 為真實地址**：
+```yaml
+settings:
+  sources:
+    FNA:
+      base_url: "http://<真實FNA地址>:<port>"
+      token_env: "FNA_TOKEN"
+    DNA:
+      base_url: "http://<真實DNA地址>:<port>"
+      token_env: null
+    GNMSPING:
+      base_urls:
+        Dev: "http://<Dev環境地址>"
+        F18: "http://<F18環境地址>"
+        # ... 依需要填入其他 tenant
+      app_name_env: "GNMSPING_APP_NAME"
+      token_env: "GNMSPING_TOKEN"
 ```
 
-**選項 B：使用 Docker 容器**
+**test_targets — 替換為真實交換機 IP**：
+```yaml
+test_targets:
+  - name: "HPE-Switch-01"
+    type: "switch"
+    params:
+      ip: "10.x.x.x"            # 真實 HPE 交換機 IP
+      hostname: "HPE-Switch-01"
+      device_type: "hpe"
+
+  - name: "IOS-Switch-01"
+    type: "switch"
+    params:
+      ip: "10.x.x.x"            # 真實 Cisco IOS 交換機 IP
+      hostname: "IOS-Switch-01"
+      device_type: "cisco_ios"
+
+  - name: "NXOS-Switch-01"
+    type: "switch"
+    params:
+      ip: "10.x.x.x"            # 真實 Cisco NXOS 交換機 IP
+      hostname: "NXOS-Switch-01"
+      device_type: "cisco_nxos"
+
+  - name: "Ping-Batch-Dev"
+    type: "gnmsping"
+    params:
+      tenant_group: "Dev"
+      addresses: ["10.x.x.x", "10.x.x.x"]
+      app_name: "<app_name>"
+      token: "<token>"
+```
+
+**apis — 確認 endpoint 路徑**：
+- 每個 API 定義的 `endpoint` 欄位有 `# TODO: 確認真實 endpoint` 標記
+- 逐一確認並修正為公司實際的 API 路徑
+- 如果某個 API 不存在，將該 API 定義暫時註解掉
+
+---
+
+### 第二步：批次測試所有 API
 
 ```bash
-# 確認 Docker 運行中
+make test-apis
+```
+
+**觀察重點**：
+
+```
+✅ get_transceiver_fna @ HPE-Switch-01 (189ms)   ← 成功
+❌ get_acl_fna @ IOS-Switch-01 (Timeout)          ← 失敗，記錄原因
+```
+
+**查看測試報告**：
+```bash
+# 摘要
+cat reports/api_test_*.json | python -m json.tool | grep -A5 '"summary"'
+
+# 查看失敗的 API
+cat reports/api_test_*.json | python -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data['results']:
+    if not r['success']:
+        print(f\"  ❌ {r['api_name']} @ {r['target_name']}: {r['error']} - {r.get('error_detail','')[:80]}\")
+"
+```
+
+**常見失敗原因與處理**：
+
+| 錯誤 | 原因 | 處理 |
+|------|------|------|
+| `401 Unauthorized` | Token 錯誤或過期 | 更新 `.env` 中的 Token |
+| `TimeoutException` | API 無法連接 | 確認 base_url 和內網連通性 |
+| `404 Not Found` | endpoint 路徑錯誤 | 修正 `api_test.yaml` 中的 endpoint |
+| `ConnectError` | DNS 或網路問題 | 確認 source 的 base_url 是否可 ping 通 |
+
+**處理完所有失敗後，重新測試**：
+```bash
+make clean && make test-apis
+```
+
+目標：所有 API 都顯示 ✅（或確認不可用的 API 已暫時註解掉）。
+
+---
+
+### 第三步：重新生成 Parser 骨架（使用真實 raw data）
+
+```bash
+# 先刪除舊的骨架（含 Mock 資料的），以真實資料重新生成
+rm app/parsers/plugins/*_parser.py
+
+# 重新生成
+make gen-parsers
+```
+
+**為什麼要重新生成？** 因為骨架的 docstring 中包含 example raw data，用真實資料生成的骨架更方便後續 AI 輔助寫 parse() 邏輯。
+
+---
+
+### 第四步：用 AI 填寫 Parser 邏輯
+
+這是核心工作，對每個 parser 骨架：
+
+#### 4.1 從報告中提取 raw_data
+
+```bash
+# 查看某個 API 的真實回應
+cat reports/api_test_*.json | python -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data['results']:
+    if r['api_name'] == 'get_fan_hpe_dna' and r['success']:
+        print(r['raw_data'])
+"
+```
+
+#### 4.2 準備 AI Prompt
+
+將以下內容交給 AI（ChatGPT / Claude / 公司內部 AI）：
+
+```
+我有一個網路交換機 API 的 raw output，請幫我寫 Python parser。
+
+raw_data：
+---
+<貼上 raw_data>
+---
+
+要求：
+1. 使用 Pydantic model：FanStatusData（欄位：fan_id, status, speed_rpm, speed_percent）
+2. parse(self, raw_output: str) -> list[FanStatusData]
+3. 用正則表達式解析每一行
+4. 跳過標題行和空行
+5. 只返回解析成功的結果
+
+FanStatusData 定義見 app/parsers/protocols.py。
+請直接給我完整的 parse() 方法。
+```
+
+#### 4.3 填入骨架
+
+打開骨架檔案，替換 TODO 區塊：
+
+```bash
+vi app/parsers/plugins/get_fan_hpe_dna_parser.py
+```
+
+**填寫要點**：
+1. 設定 `device_type`（如 `DeviceType.HPE`）
+2. 加上 `Generic[FanStatusData]` 到 BaseParser
+3. 填入 `parse()` 邏輯
+4. 確保 `parser_registry.register()` 在檔案末尾
+
+**完成後的範例**：
+```python
+from __future__ import annotations
+import re
+from app.core.enums import DeviceType
+from app.parsers.protocols import BaseParser, FanStatusData
+from app.parsers.registry import parser_registry
+
+
+class GetFanHpeDnaParser(BaseParser[FanStatusData]):
+    device_type = DeviceType.HPE
+    command = "get_fan_hpe_dna"
+
+    def parse(self, raw_output: str) -> list[FanStatusData]:
+        results = []
+        for line in raw_output.strip().splitlines():
+            match = re.match(r"Fan\s+(\S+)\s+(\w+)\s+(\d+)\s+RPM", line)
+            if match:
+                fan_id, status, speed = match.groups()
+                results.append(FanStatusData(
+                    fan_id=f"Fan {fan_id}",
+                    status=status,
+                    speed_rpm=int(speed),
+                ))
+        return results
+
+
+parser_registry.register(GetFanHpeDnaParser())
+```
+
+#### 4.4 建議的填寫順序（優先級）
+
+| 優先級 | Parser 類別 | 數量 | 說明 |
+|--------|-----------|------|------|
+| 高 | Fan (DNA) | 3 | 風扇狀態，簡單表格格式 |
+| 高 | Power (DNA) | 3 | 電源狀態，與 Fan 類似 |
+| 高 | Version (DNA) | 3 | 韌體版本，key-value 格式 |
+| 高 | Error Count (FNA) | 3 | 錯誤計數，直接影響巡檢判定 |
+| 高 | Transceiver (FNA) | 3 | 光模組功率，核心指標 |
+| 中 | Ping (GNMSPING) | 1 | 可達性，JSON 格式易解析 |
+| 中 | Port-Channel (FNA) | 3 | LAG 狀態 |
+| 中 | Uplink (FNA) | 3 | 鄰居拓撲 |
+| 低 | MAC Table (DNA) | 3 | MAC 表，資料量大 |
+| 低 | ACL (FNA) | 3 | ACL，輔助功能 |
+| 低 | ARP Table (FNA) | 3 | ARP 表，輔助功能 |
+
+---
+
+### 第五步：驗證 Parser
+
+```bash
+make test-parsers
+```
+
+**狀態說明**：
+
+| 狀態 | 意義 | 行動 |
+|------|------|------|
+| ✅ passed | parse() 正常回傳 > 0 筆資料 | 完成！ |
+| ⚠️ empty | parse() 回傳空 list | 尚未填寫邏輯，繼續填寫 |
+| ❌ failed | parse() 拋出例外 | 檢查錯誤訊息，修正 parser |
+| ⏭️ skipped | 找不到對應的 parser | 檢查 command 名稱是否一致 |
+
+**查看失敗詳情**：
+```bash
+cat reports/parser_test_*.json | python -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data['results']:
+    if r['status'] == 'failed':
+        print(f\"  ❌ {r['parser']}: {r['error']}\")
+"
+```
+
+**修正 → 重新測試 → 直到全部 passed**。
+
+---
+
+### 第六步：提交代碼並推送
+
+```bash
+# 查看修改的檔案
+git status
+
+# 添加所有 parser 和配置
+git add app/parsers/plugins/*_parser.py
+git add config/api_test.yaml
+
+# 提交
+git commit -m "feat: implement parser logic with real API data
+
+- Fill parse() logic for all parser skeletons
+- Update api_test.yaml with real endpoints and IPs
+- Tested with make test-parsers, all passed"
+
+# 推送
+git push origin main
+```
+
+---
+
+### 第七步（可選）：打包新版 Docker Image
+
+如果需要部署到生產環境：
+
+```bash
+# 打包新版 image（含新 parser）
+bash scripts/build-and-push.sh v1.3.0
+
+# 在公司部署機器上更新
+sed -i 's/v[0-9.]*$/v1.3.0/' docker-compose.production.yml
+docker-compose -f docker-compose.production.yml pull
 docker-compose -f docker-compose.production.yml up -d
-
-# 確認容器狀態
-docker-compose ps
 ```
 
 ---
 
 ## 日常開發流程
 
-### 完整流程圖
+### 新增一個 API 的完整流程
 
 ```
-┌─────────────────────────────────────────┐
-│ 1. 定義 API (config/api_test.yaml)     │
-│    ↓                                    │
-│ 2. 測試 API (make test-apis)           │
-│    ↓                                    │
-│ 3. 生成 Parser 骨架 (make gen-parsers) │
-│    ↓                                    │
-│ 4. 填寫 Parser 邏輯 (AI 輔助)          │
-│    ↓                                    │
-│ 5. 驗證 Parser (make test-parsers)     │
-│    ↓                                    │
-│ 6. 完成！                               │
-└─────────────────────────────────────────┘
+1. 編輯 config/api_test.yaml  → 新增 API 定義
+2. make test-apis              → 測試 API 拿到 raw_data
+3. make gen-parsers            → 自動生成骨架（已存在的不覆蓋）
+4. 編輯 parser 骨架            → 用 AI 輔助填寫 parse() 邏輯
+5. make test-parsers           → 驗證 parser
+6. git add + commit + push     → 提交到 repo
 ```
 
 ### 快速指令
 
-**本地 Python 執行**：
 ```bash
-make test-apis      # 測試所有 API
-make gen-parsers    # 生成 Parser 骨架
-make test-parsers   # 驗證 Parser
-make all            # 一次執行全部步驟
-```
+# === 本地 Python ===
+make test-apis      # 批次測試所有 API
+make gen-parsers    # 生成 parser 骨架
+make test-parsers   # 驗證 parser
+make all            # 一次執行全部（test-apis → gen-parsers → test-parsers）
+make clean          # 清理 reports/
 
-**Docker 容器執行**：
-```bash
-make docker-test-apis      # 在容器內測試 API
-make docker-gen-parsers    # 在容器內生成 Parser
-make docker-test-parsers   # 在容器內驗證 Parser
-make docker-all            # 在容器內執行全部步驟
-```
-
----
-
-## 當前狀態評估
-
-### Parser 覆蓋情況分析
-
-在開始開發之前，先了解當前系統的 Parser 覆蓋情況：
-
-| Indicator | HPE | Cisco IOS | Cisco NXOS | 說明 |
-|-----------|-----|-----------|------------|------|
-| **error_count** | ✅ hpe_error | ✅ cisco_ios_error | ✅ cisco_nxos_error | 完整覆蓋 |
-| **fan** | ✅ hpe_fan | ✅ cisco_ios_fan | ✅ cisco_nxos_fan | 完整覆蓋 |
-| **port_channel** | ✅ hpe_port_channel | ✅ cisco_ios_port_channel | ✅ cisco_nxos_port_channel | 完整覆蓋 |
-| **power** | ✅ hpe_power | ✅ cisco_ios_power | ✅ cisco_nxos_power | 完整覆蓋 |
-| **transceiver** | ✅ hpe_transceiver | ✅ cisco_ios_transceiver | ✅ cisco_nxos_transceiver | 完整覆蓋 |
-| **version** | ✅ hpe_version | ✅ cisco_ios_version | ✅ cisco_nxos_version | 完整覆蓋 |
-| **uplink** (neighbor) | ✅ hpe_neighbor | ✅ cisco_ios_neighbor | ✅ cisco_nxos_neighbor | 完整覆蓋 |
-| **ping** | ✅ ping (通用) | - | - | 通用 Parser |
-
-**總計**：
-- ✅ **22 個 Parsers 已實現**
-- ✅ **所有 Indicators 都有對應的 Parser**
-- 📊 **覆蓋率**: 100%
-
-### 已知問題與改進空間
-
-雖然所有 Parser 都已存在，但在公司環境中仍需要：
-
-1. **驗證實際可用性**
-   - 確認所有 API endpoints 在公司內網是否可訪問
-   - 測試所有 Parser 是否能正確解析實際的 raw data
-   - 檢查是否有格式變化或版本差異
-
-2. **處理多端點需求**
-   - **HPE error_count**: 當前只使用一個 API（`display counters error`），但如果需要更詳細的錯誤資訊，可能需要額外的 API（`display interface`）
-   - 使用工具鏈為每個 API 創建獨立的 parser
-
-3. **新增功能（如需要）**
-   - ARP Indicator（如果業務需求）
-   - 其他設備類型（Aruba、Juniper 等）
-
----
-
-## 詳細步驟說明
-
-### 步驟 1: 定義 API
-
-編輯 `config/api_test.yaml`，新增要測試的 API：
-
-```bash
-vi config/api_test.yaml
-```
-
-**範例：新增 HPE Fan API**
-
-```yaml
-# 在 test_targets 區塊新增測試目標
-test_targets:
-  - name: "SW-CORE-01"
-    params:
-      ip: "10.1.1.1"
-      hostname: "SW-CORE-01"
-      device_type: "hpe"
-
-# 在 apis 區塊新增 API 定義
-apis:
-  - name: "get_fan_hpe"
-    method: "GET"
-    source: "DNA"
-    endpoint: "/api/v1/hpe/fan"
-    query_params:
-      hosts: "{ip}"
-    requires_auth: false
-    description: "Fetch HPE fan status"
-```
-
-**重要欄位說明**：
-- `name`: API 名稱（用於生成 Parser 檔名）
-- `method`: HTTP 方法（GET/POST）
-- `source`: API 來源（FNA/DNA/GNMSPING）
-- `endpoint`: API 路徑（支援 `{ip}` 等變數）
-- `query_params`: URL 參數（可選）
-- `request_body_template`: POST 請求的 Body（可選）
-
----
-
-### 步驟 2: 測試 API
-
-執行批次測試，獲取所有 raw data：
-
-```bash
-# 本地執行
-make test-apis
-
-# 或在容器內執行
+# === Docker 容器內 ===
 make docker-test-apis
-```
-
-**預期輸出**（即時顯示進度）：
-
-```
-🚀 API Batch Tester
-📄 Config: config/api_test.yaml
-📊 Found 5 APIs × 3 targets = 15 tests
-
-Testing APIs...
-  [████████████████████] 100% (15/15) | 3.2s
-  ✅ get_fan_hpe @ SW-CORE-01 (189ms)
-  ✅ get_fan_ios @ SW-DIST-01 (234ms)
-  ❌ get_errors_hpe @ SW-AGG-01 (Timeout)
-  ...
-
-📝 Summary:
-  ✅ Success: 14/15
-  ❌ Failed: 1/15
-  ⏱️  Duration: 3.45s
-
-💾 Report saved to: reports/api_test_2026-02-09T14-30-00.json
-```
-
-**檢查測試報告**：
-
-```bash
-# 查看最新報告
-ls -lht reports/api_test_*.json | head -1
-
-# 查看報告內容
-cat reports/api_test_2026-02-09T14-30-00.json | jq .
-
-# 查看成功的 API 數量
-cat reports/api_test_*.json | jq '.summary'
-```
-
----
-
-### 步驟 3: 生成 Parser 骨架
-
-基於測試報告自動生成 Parser 檔案：
-
-```bash
-# 本地執行
-make gen-parsers
-
-# 或在容器內執行
 make docker-gen-parsers
-```
-
-**預期輸出**：
-
-```
-📝 Parser Skeleton Generator
-📄 Using report: reports/api_test_2026-02-09T14-30-00.json
-📊 Found 14 successful API results
-
-Generating parser skeletons...
-  ✅ Created app/parsers/plugins/get_fan_hpe_parser.py
-  ✅ Created app/parsers/plugins/get_fan_ios_parser.py
-  ⏭️  Skipped get_fan_nxos_parser.py (already exists)
-  ...
-
-📝 Summary:
-  ✅ Generated: 2 new parser(s)
-  📁 Output directory: app/parsers/plugins/
-
-🎉 Parser skeletons generated successfully!
-
-Next steps:
-  1. Open generated parser files
-  2. Copy raw_data from report
-  3. Ask AI to write parse() method
-  4. Fill AI-generated code into skeleton
-  5. Run 'make test-parsers' to validate
-```
-
-**生成的檔案位置**：
-```
-app/parsers/plugins/
-├── get_fan_hpe_parser.py         (新生成)
-├── get_fan_ios_parser.py         (新生成)
-├── cisco_nxos_fan.py             (已存在，跳過)
-└── ...
-```
-
----
-
-### 步驟 4: 填寫 Parser 邏輯（AI 輔助）
-
-這是核心步驟，使用公司內部 AI 來協助生成 Parser 邏輯。
-
-#### 4.1 獲取 raw_data
-
-```bash
-# 從測試報告中提取特定 API 的 raw_data
-cat reports/api_test_2026-02-09T14-30-00.json | \
-  jq '.results[] | select(.api_name == "get_fan_hpe" and .success == true) | .raw_data'
-```
-
-**範例輸出**：
-```
-"Fan 1/1        Ok            3200 RPM\nFan 1/2        Ok            3150 RPM\nFan 2/1        Failed        0 RPM\n"
-```
-
-#### 4.2 準備 AI Prompt
-
-複製以下 Prompt 到公司內部 AI（如 ChatGPT、內部 LLM）：
-
-```
-我有一個 HPE 交換機 Fan 狀態的 API raw output，格式如下：
-
-```
-Fan 1/1        Ok            3200 RPM
-Fan 1/2        Ok            3150 RPM
-Fan 2/1        Failed        0 RPM
-```
-
-請幫我寫一個 Python parser，要符合以下要求：
-
-1. 使用 Pydantic 的 FanData model（已定義，包含 fan_name, status, speed_rpm 欄位）
-2. parse() 方法接收 raw_output: str，返回 list[FanData]
-3. 使用正則表達式解析每一行
-4. 處理異常情況（如空行、格式錯誤）
-5. 只返回解析成功的結果
-
-FanData 的定義如下：
-```python
-from pydantic import BaseModel
-
-class FanData(BaseModel):
-    fan_name: str
-    status: str
-    speed_rpm: int | None = None
-```
-
-請直接給我完整的 parse() 方法實作。
-```
-
-#### 4.3 填入 AI 生成的代碼
-
-AI 會回傳類似以下的代碼：
-
-```python
-import re
-from app.parsers.protocols import BaseParser, FanData
-from app.core.enums import DeviceType
-from app.parsers.registry import parser_registry
-
-class GetFanHpeParser(BaseParser[FanData]):
-    device_type = DeviceType.HPE
-    indicator_type = "fan"
-    command = "get_fan_hpe"
-
-    def parse(self, raw_output: str) -> list[FanData]:
-        results = []
-        pattern = r"^Fan\s+(\S+)\s+(\S+)\s+(\d+)\s+RPM$"
-
-        for line in raw_output.strip().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-
-            match = re.match(pattern, line)
-            if match:
-                fan_name, status, speed = match.groups()
-                results.append(FanData(
-                    fan_name=f"Fan {fan_name}",
-                    status=status,
-                    speed_rpm=int(speed) if speed != "0" else None
-                ))
-
-        return results
-
-parser_registry.register(GetFanHpeParser())
-```
-
-**將此代碼填入骨架檔案**：
-
-```bash
-# 打開生成的骨架檔案
-vi app/parsers/plugins/get_fan_hpe_parser.py
-
-# 將 AI 生成的代碼替換 TODO 區塊
-# 確保保留以下部分：
-# 1. import statements
-# 2. class definition
-# 3. device_type, indicator_type, command 欄位
-# 4. parse() 方法
-# 5. parser_registry.register() 註冊語句
-```
-
----
-
-### 步驟 5: 驗證 Parser
-
-測試所有 Parser 是否正常工作：
-
-```bash
-# 本地執行
-make test-parsers
-
-# 或在容器內執行
 make docker-test-parsers
+make docker-all
 ```
 
-**預期輸出**：
-
-```
-🧪 Parser Validator
-📄 Using report: reports/api_test_2026-02-09T14-30-00.json
-📦 Loaded 45 parser(s) from registry
-
-Testing parsers...
-📊 Found 14 API results to test
-
-  ✅ GetFanHpeParser (indicator_type=fan): parsed 3 object(s)
-  ✅ GetFanIosParser (indicator_type=fan): parsed 2 object(s)
-  ❌ GetErrorsHpeParser (indicator_type=error_count): ValidationError: field 'interface_name' is required
-  ...
-
-┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┓
-┃ API Name          ┃ Parser                ┃ Status   ┃ Parsed Count┃
-┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━┩
-│ get_fan_hpe       │ GetFanHpeParser       │ ✅ passed│ 3           │
-│ get_fan_ios       │ GetFanIosParser       │ ✅ passed│ 2           │
-│ get_errors_hpe    │ GetErrorsHpeParser    │ ❌ failed│ -           │
-└───────────────────┴───────────────────────┴──────────┴─────────────┘
-
-📝 Summary:
-  ✅ Passed: 12/14
-  ❌ Failed: 2/14
-  ⏭️  Skipped: 0/14
-
-💾 Report saved to: reports/parser_test_2026-02-09T14-35-00.json
-```
-
-**如果有失敗的 Parser**：
+### 本地開發（在家，使用 Mock Server）
 
 ```bash
-# 查看詳細錯誤資訊
-cat reports/parser_test_*.json | jq '.results[] | select(.status == "failed")'
+# 終端 1：啟動 Mock Server
+python scripts/mock_api_server.py
 
-# 範例輸出：
-{
-  "parser": "GetErrorsHpeParser (indicator_type=error_count)",
-  "test_data_source": "api_name=get_errors_hpe, target=SW-CORE-01",
-  "status": "failed",
-  "parsed_count": 0,
-  "error": "ValidationError: 1 validation error for InterfaceErrorData\ninterface_name\n  field required (type=value_error.missing)"
-}
-
-# 修正 Parser
-vi app/parsers/plugins/get_errors_hpe_parser.py
-
-# 重新測試
-make test-parsers
+# 終端 2：執行工具鏈
+make all
 ```
 
----
-
-### 步驟 6: 提交代碼
-
-驗證通過後，提交新的 Parser：
-
-```bash
-# 查看修改的檔案
-git status
-
-# 添加新 Parser
-git add app/parsers/plugins/get_fan_hpe_parser.py
-git add app/parsers/plugins/get_fan_ios_parser.py
-
-# 提交
-git commit -m "feat: add HPE and IOS fan parsers
-
-- Add GetFanHpeParser for HPE fan status
-- Add GetFanIosParser for Cisco IOS fan status
-- Tested with make test-parsers, all passed"
-
-# 推送到 GitHub
-git push origin main
-```
+Mock Server 模擬 19 個 API（6 FNA + 12 DNA + 1 GNMSPING），返回固定的測試資料。
+流程與公司完全相同，只是 raw_data 是 mock 的。
 
 ---
 
 ## 常見問題排查
 
-### Q1: `make test-apis` 失敗，顯示 `401 Unauthorized`
+### Q1: `make test-apis` 顯示 401 Unauthorized
 
-**原因**: Token 未設置或已過期
+**原因**: Token 未設置或已過期。
 
-**解決方法**：
 ```bash
-# 檢查 .env 文件
+# 檢查 .env
 cat .env | grep TOKEN
 
-# 確認 Token 有效性
-curl -H "Authorization: Bearer $FNA_TOKEN" http://fna:8001/health
-
-# 重新獲取 Token（從公司內部系統）
-# 更新 .env 文件
+# 測試 Token 是否有效
+curl -H "Authorization: Bearer $FNA_TOKEN" http://<FNA_BASE_URL>/health
 ```
 
----
+### Q2: `make gen-parsers` 沒有生成任何檔案
 
-### Q2: `make test-apis` 失敗，顯示 `TimeoutException`
+**可能原因**：
+1. 沒有成功的 API 測試 → 先執行 `make test-apis` 並確保有成功項
+2. 所有檔案已存在 → generator 自動跳過已存在的檔案
 
-**原因**: API 端點無法連接或響應過慢
-
-**解決方法**：
 ```bash
-# 檢查網路連接
-ping fna
-ping dna
+# 檢查測試報告
+cat reports/api_test_*.json | python -c "
+import json, sys
+data = json.load(sys.stdin)
+print(f\"Success: {data['summary']['success']}/{data['summary']['total_tests']}\")
+"
 
-# 檢查 API 服務狀態
-curl http://fna:8001/health
-curl http://dna:8001/health
-
-# 檢查 config/api_test.yaml 的 endpoint 是否正確
-vi config/api_test.yaml
-
-# 調整 timeout（在 scripts/batch_test_apis.py 中）
-# 將 timeout=10.0 改為 timeout=30.0
+# 如需重新生成，先刪除舊骨架
+rm app/parsers/plugins/*_parser.py
+make gen-parsers
 ```
 
----
+### Q3: `make test-parsers` 顯示 failed
 
-### Q3: `make gen-parsers` 沒有生成任何檔案
+**常見錯誤**：
 
-**原因**: 沒有成功的 API 測試結果
+| 錯誤訊息 | 原因 | 修正 |
+|---------|------|------|
+| `ValidationError: field 'xxx' is required` | 必填欄位未給值 | 檢查 regex 是否正確擷取了所有必填欄位 |
+| `parse() must return a list` | 回傳類型錯誤 | 確保 `return results`（list） |
+| `ImportError` | import 路徑錯誤 | 檢查 `from app.parsers.protocols import ...` |
 
-**解決方法**：
+**快速除錯**：
 ```bash
-# 檢查最新測試報告
-cat reports/api_test_*.json | jq '.summary'
-
-# 確認至少有一個成功的 API 測試
-# 如果全部失敗，先解決 API 連接問題
-
-# 確認報告中有 raw_data
-cat reports/api_test_*.json | jq '.results[] | select(.success == true) | .raw_data' | head
-```
-
----
-
-### Q4: `make test-parsers` 失敗，顯示 `No parser found for API 'xxx'`
-
-**原因**: Parser 未註冊到 registry
-
-**解決方法**：
-```bash
-# 檢查 Parser 檔案是否存在
-ls -la app/parsers/plugins/*_parser.py
-
-# 確認 Parser 檔案末尾有註冊語句
-tail -5 app/parsers/plugins/get_fan_hpe_parser.py
-# 應該包含：
-# parser_registry.register(GetFanHpeParser())
-
-# 確認 __init__.py 會自動發現 Parser
-cat app/parsers/plugins/__init__.py
-
-# 重啟 Python（如果在互動式環境）
-```
-
----
-
-### Q5: Parser 測試失敗，顯示 `ValidationError`
-
-**原因**: 解析出的資料不符合 Pydantic model 定義
-
-**解決方法**：
-```bash
-# 查看詳細錯誤訊息
-cat reports/parser_test_*.json | jq '.results[] | select(.status == "failed")'
-
-# 檢查 raw_data 格式
-cat reports/api_test_*.json | jq '.results[] | select(.api_name == "get_fan_hpe") | .raw_data'
-
-# 修正 Parser 的正則表達式或欄位映射
-vi app/parsers/plugins/get_fan_hpe_parser.py
-
-# 本地測試 Parser（不需要完整流程）
+# 單獨測試一個 parser
 python -c "
-from app.parsers.plugins.get_fan_hpe_parser import GetFanHpeParser
-raw = 'Fan 1/1        Ok            3200 RPM'
-parser = GetFanHpeParser()
-print(parser.parse(raw))
+from app.parsers.plugins.get_fan_hpe_dna_parser import GetFanHpeDnaParser
+parser = GetFanHpeDnaParser()
+raw = '''Fan 1/1        Ok            3200 RPM
+Fan 1/2        Ok            3150 RPM'''
+result = parser.parse(raw)
+for item in result:
+    print(item.model_dump())
 "
 ```
 
----
+### Q4: Parser 找到了但 parsed count = 0
 
-### Q6: Docker 容器無法啟動
-
-**原因**: 映像檔未拉取或 docker-compose 配置錯誤
-
-**解決方法**：
-```bash
-# 檢查映像檔
-docker images | grep netora
-
-# 拉取最新映像檔（如果需要）
-docker pull company.registry.com/netora:latest
-
-# 檢查 docker-compose 配置
-cat docker-compose.production.yml
-
-# 重新啟動容器
-docker-compose -f docker-compose.production.yml down
-docker-compose -f docker-compose.production.yml up -d
-
-# 查看容器日誌
-docker-compose logs -f app
-```
-
----
-
-## 實際範例
-
-### 範例 1: 新增 Cisco IOS Transceiver Parser
-
-#### 1. 編輯 config/api_test.yaml
-
-```yaml
-test_targets:
-  - name: "SW-IOS-01"
-    params:
-      ip: "10.2.1.1"
-      hostname: "SW-IOS-01"
-      device_type: "cisco_ios"
-
-apis:
-  - name: "get_transceiver_ios"
-    method: "GET"
-    source: "DNA"
-    endpoint: "/api/v1/ios/transceiver"
-    query_params:
-      hosts: "{ip}"
-    requires_auth: false
-    description: "Fetch Cisco IOS transceiver Tx/Rx power"
-```
-
-#### 2. 測試 API
+**原因**: `parse()` 方法的正則表達式與真實 raw_data 格式不匹配。
 
 ```bash
-make test-apis
-```
-
-**輸出**：
-```
-  ✅ get_transceiver_ios @ SW-IOS-01 (345ms)
-💾 Report saved to: reports/api_test_2026-02-09T15-00-00.json
-```
-
-#### 3. 查看 raw_data
-
-```bash
-cat reports/api_test_2026-02-09T15-00-00.json | \
-  jq '.results[] | select(.api_name == "get_transceiver_ios") | .raw_data'
-```
-
-**輸出**：
-```json
-"Gi1/0/1               -2.5 dBm      -3.1 dBm\nGi1/0/2               -2.3 dBm      -3.0 dBm\n"
-```
-
-#### 4. 生成 Parser 骨架
-
-```bash
-make gen-parsers
-```
-
-**輸出**：
-```
-  ✅ Created app/parsers/plugins/get_transceiver_ios_parser.py
-```
-
-#### 5. 使用 AI 生成 Parser 邏輯
-
-**給 AI 的 Prompt**：
-```
-我有一個 Cisco IOS 交換機 Transceiver 的 API raw output：
-
-Gi1/0/1               -2.5 dBm      -3.1 dBm
-Gi1/0/2               -2.3 dBm      -3.0 dBm
-
-請寫一個 parser，使用 TransceiverData model：
-- interface_name: str (如 "Gi1/0/1")
-- tx_power_dbm: float | None
-- rx_power_dbm: float | None
-
-返回完整的 parse() 方法。
-```
-
-**AI 生成的代碼**：
-```python
-def parse(self, raw_output: str) -> list[TransceiverData]:
-    results = []
-    pattern = r"^(\S+)\s+([-\d.]+)\s+dBm\s+([-\d.]+)\s+dBm$"
-
-    for line in raw_output.strip().splitlines():
-        match = re.match(pattern, line.strip())
-        if match:
-            interface, tx, rx = match.groups()
-            results.append(TransceiverData(
-                interface_name=interface,
-                tx_power_dbm=float(tx),
-                rx_power_dbm=float(rx)
-            ))
-
-    return results
-```
-
-#### 6. 填入骨架並完成 Parser
-
-```bash
-vi app/parsers/plugins/get_transceiver_ios_parser.py
-```
-
-**完整代碼**：
-```python
-"""Parser for 'get_transceiver_ios' API."""
-from __future__ import annotations
-
-import re
-from app.parsers.protocols import BaseParser, TransceiverData
-from app.core.enums import DeviceType
-from app.parsers.registry import parser_registry
-
-
-class GetTransceiverIosParser(BaseParser[TransceiverData]):
-    device_type = DeviceType.CISCO_IOS
-    indicator_type = "transceiver"
-    command = "get_transceiver_ios"
-
-    def parse(self, raw_output: str) -> list[TransceiverData]:
-        results = []
-        pattern = r"^(\S+)\s+([-\d.]+)\s+dBm\s+([-\d.]+)\s+dBm$"
-
-        for line in raw_output.strip().splitlines():
-            match = re.match(pattern, line.strip())
-            if match:
-                interface, tx, rx = match.groups()
-                results.append(TransceiverData(
-                    interface_name=interface,
-                    tx_power_dbm=float(tx),
-                    rx_power_dbm=float(rx)
-                ))
-
-        return results
-
-
-parser_registry.register(GetTransceiverIosParser())
-```
-
-#### 7. 驗證 Parser
-
-```bash
-make test-parsers
-```
-
-**輸出**：
-```
-  ✅ GetTransceiverIosParser (indicator_type=transceiver): parsed 2 object(s)
-
-📝 Summary:
-  ✅ Passed: 1/1
-```
-
-#### 8. 提交代碼
-
-```bash
-git add app/parsers/plugins/get_transceiver_ios_parser.py
-git commit -m "feat: add Cisco IOS transceiver parser"
-git push origin main
-```
-
----
-
-### 範例 2: 處理多端點 API（HPE Error Count 需要 2 個 API）
-
-#### 1. 定義兩個獨立的 API
-
-```yaml
-apis:
-  - name: "get_errors_hpe_input"
-    method: "GET"
-    source: "DNA"
-    endpoint: "/api/v1/hpe/errors/input"
-    query_params:
-      hosts: "{ip}"
-    requires_auth: false
-
-  - name: "get_errors_hpe_output"
-    method: "GET"
-    source: "DNA"
-    endpoint: "/api/v1/hpe/errors/output"
-    query_params:
-      hosts: "{ip}"
-    requires_auth: false
-```
-
-#### 2. 測試並生成 2 個 Parser
-
-```bash
-make test-apis
-make gen-parsers
-```
-
-**生成的檔案**：
-- `app/parsers/plugins/get_errors_hpe_input_parser.py`
-- `app/parsers/plugins/get_errors_hpe_output_parser.py`
-
-#### 3. 分別填寫兩個 Parser 的邏輯
-
-每個 Parser 處理自己的 raw_data 格式。
-
-#### 4. 在 Indicator 層合併結果
-
-```python
-# app/indicators/error_count.py
-class ErrorCountIndicator:
-    async def evaluate(self, device: Device) -> IndicatorResult:
-        # 查詢兩個 Parser 的結果
-        input_errors = await repo.get_by_parser("get_errors_hpe_input")
-        output_errors = await repo.get_by_parser("get_errors_hpe_output")
-
-        # 合併計算總錯誤數
-        total_errors = sum(e.error_count for e in input_errors + output_errors)
-
-        # 評估是否通過
-        passed = total_errors < threshold
-        return IndicatorResult(passed=passed, details={...})
-```
-
----
-
-### 範例 3: 使用 POST 請求（GNMS Ping）
-
-#### 1. 定義 POST API with request body
-
-```yaml
-test_targets:
-  - name: "Ping-Batch-F18"
-    params:
-      tenant_group: "F18"
-      ips: ["10.1.1.1", "10.1.1.2", "10.1.1.3"]
-
-apis:
-  - name: "ping_batch"
-    method: "POST"
-    source: "GNMSPING"
-    tenant_group: "{tenant_group}"  # 用於選擇 base_url
-    endpoint: "/api/ping"
-    request_body_template: |
-      {
-        "tenant": "{tenant_group}",
-        "ips": {ips},
-        "timeout": 5
-      }
-    requires_auth: false
-```
-
-#### 2. 測試 API
-
-```bash
-make test-apis
-```
-
-**實際發送的請求**：
-```http
-POST https://gnmsping.dev.f18.com/api/ping
-Content-Type: application/json
-
-{
-  "tenant": "F18",
-  "ips": ["10.1.1.1", "10.1.1.2", "10.1.1.3"],
-  "timeout": 5
-}
-```
-
-#### 3. 後續流程與 GET 相同
-
-生成 Parser → 填寫邏輯 → 驗證 → 提交。
-
----
-
-## 在公司的工作計劃
-
-基於當前 Parser 覆蓋情況分析，以下是在公司環境下的具體工作計劃：
-
-### 🔴 第一天（高優先級）- 驗證與測試
-
-#### 任務 1.1: 配置真實環境
-
-```bash
-# 1. 獲取最新代碼
-cd /path/to/netora
-git pull origin main
-
-# 2. 配置環境變數
-cp .env.example .env
-vi .env
-# 填入實際的 Token（從公司內部系統獲取）
-```
-
-#### 任務 1.2: 配置測試目標
-
-編輯 `config/api_test.yaml`，將測試目標改為實際的交換機：
-
-```yaml
-test_targets:
-  # 使用公司實際的交換機
-  - name: "SW-F18-CORE-01"
-    params:
-      ip: "10.50.1.1"  # 實際 IP
-      hostname: "SW-F18-CORE-01"
-      device_type: "hpe"
-
-  - name: "SW-F18-DIST-01"
-    params:
-      ip: "10.50.2.1"
-      hostname: "SW-F18-DIST-01"
-      device_type: "cisco_ios"
-
-  - name: "SW-F18-AGG-01"
-    params:
-      ip: "10.50.3.1"
-      hostname: "SW-F18-AGG-01"
-      device_type: "cisco_nxos"
-```
-
-#### 任務 1.3: 驗證 API 連接
-
-```bash
-# 測試所有 API
-make test-apis
-
-# 查看測試報告摘要
-cat reports/api_test_*.json | jq '.summary'
-
-# 範例輸出：
-# {
-#   "total_tests": 24,
-#   "success": 20,
-#   "failed": 4
-# }
-```
-
-**預期問題**：
-- ❌ 401 Unauthorized → Token 過期或錯誤
-- ❌ TimeoutException → API 端點無法連接
-- ❌ 404 Not Found → API endpoint 路徑錯誤
-
-**解決方法**：
-- 檢查 `.env` 的 Token 是否正確
-- 確認 `config/api_test.yaml` 的 `sources.base_url` 是否正確
-- 測試 API 服務是否運行：`curl http://fna:8001/health`
-
-#### 任務 1.4: 驗證 Parser
-
-```bash
-# 驗證所有 Parser
-make test-parsers
-
-# 查看失敗的 Parser
-cat reports/parser_test_*.json | jq '.results[] | select(.status == "failed")'
-```
-
-**如果有失敗的 Parser**：
-1. 記錄失敗的 parser 名稱和錯誤訊息
-2. 查看對應的 raw_data 格式是否與預期不同
-3. 標記為「待修正」，留到第二天處理
-
-**第一天結束時**：
-- ✅ 所有 API 都能成功連接（或已記錄失敗原因）
-- ✅ 知道哪些 Parser 需要修正
-- ✅ 產生完整的測試報告
-
----
-
-### 🟡 第二天（中優先級）- 修正與擴展
-
-#### 任務 2.1: 修正失敗的 Parser
-
-```bash
-# 1. 找出失敗的 Parser
-FAILED_PARSER=$(cat reports/parser_test_*.json | jq -r '.results[] | select(.status == "failed") | .parser' | head -1)
-echo "修正 Parser: $FAILED_PARSER"
-
-# 2. 查看該 Parser 的測試資料
-cat reports/api_test_*.json | jq '.results[] | select(.api_name == "XXX") | .raw_data'
-
-# 3. 修正 Parser 邏輯
-vi app/parsers/plugins/XXX_parser.py
-
-# 4. 重新測試
-make test-parsers
-```
-
-**修正策略**：
-1. 對比 raw_data 與 parser 的 regex pattern
-2. 使用公司內部 AI 協助：「這是實際的 raw data，請修正 parser 的正則表達式」
-3. 逐步測試，確保所有欄位都正確解析
-
-#### 任務 2.2: 處理多端點 API（HPE error_count）
-
-**背景**：當前 `hpe_error.py` 只使用一個 API (`display counters error`)，如果需要更詳細的錯誤資訊，需要新增第二個 API。
-
-**步驟**：
-
-```bash
-# 1. 編輯配置，新增第二個 API
-vi config/api_test.yaml
-```
-
-```yaml
-apis:
-  # 現有的（簡化版）
-  - name: "get_errors_hpe_summary"
-    method: "GET"
-    source: "DNA"
-    endpoint: "/api/v1/hpe/errors/summary"
-    query_params:
-      hosts: "{ip}"
-    requires_auth: false
-    description: "HPE 錯誤計數摘要"
-
-  # 新增的（詳細版）
-  - name: "get_errors_hpe_detail"
-    method: "GET"
-    source: "DNA"
-    endpoint: "/api/v1/hpe/errors/detail"
-    query_params:
-      hosts: "{ip}"
-      interface: "all"
-    requires_auth: false
-    description: "HPE 錯誤計數詳細資訊（逐介面）"
-```
-
-```bash
-# 2. 測試新 API
-make test-apis
-
-# 3. 生成新 Parser 骨架
-make gen-parsers
-# 會生成：app/parsers/plugins/get_errors_hpe_detail_parser.py
-
-# 4. 使用 AI 填寫新 Parser 邏輯
-# 從 reports/api_test_*.json 複製 raw_data
-# 給公司內部 AI：「這是 HPE 錯誤詳細資訊的 raw output，請寫 parser」
-
-# 5. 驗證新 Parser
-make test-parsers
-```
-
-**後續工作**（非本次範圍，標記為 TODO）：
-- 修改 `app/indicators/error_count.py` 來合併兩個 parser 的結果
-- 在 indicator 層實現更智慧的錯誤判斷邏輯
-
-#### 任務 2.3: 新增 ARP Indicator（如果業務需要）
-
-**僅在業務明確需要 ARP 功能時執行**
-
-```bash
-# 1. 定義 ARP API
-vi config/api_test.yaml
-```
-
-```yaml
-apis:
-  - name: "get_arp_hpe"
-    method: "GET"
-    source: "DNA"
-    endpoint: "/api/v1/hpe/arp"
-    query_params:
-      hosts: "{ip}"
-    requires_auth: false
-    description: "HPE ARP 表"
-
-  - name: "get_arp_ios"
-    method: "GET"
-    source: "DNA"
-    endpoint: "/api/v1/ios/arp"
-    query_params:
-      hosts: "{ip}"
-    requires_auth: false
-    description: "Cisco IOS ARP 表"
-
-  - name: "get_arp_nxos"
-    method: "GET"
-    source: "DNA"
-    endpoint: "/api/v1/nxos/arp"
-    query_params:
-      hosts: "{ip}"
-    requires_auth: false
-    description: "Cisco NXOS ARP 表"
-```
-
-```bash
-# 2. 完整流程
-make test-apis      # 測試 ARP API
-make gen-parsers    # 生成 3 個 ARP parser 骨架
-# 使用 AI 填寫每個 parser 的邏輯
-make test-parsers   # 驗證
-
-# 3. 後續：創建 ARP Indicator（需要額外開發）
-```
-
-**第二天結束時**：
-- ✅ 所有失敗的 Parser 已修正
-- ✅ HPE error_count 的雙 API 架構已完成
-- ✅ （可選）ARP 相關 Parser 已完成
-
----
-
-### 🟢 後續工作（低優先級）
-
-#### 任務 3.1: 性能優化
-
-```bash
-# 如果 API 測試很慢，可以調整 timeout
-vi scripts/batch_test_apis.py
-# 將 timeout=10.0 改為適合的值（如 30.0）
-
-# 如果需要調整並發數，修改 httpx.AsyncClient 設置
-```
-
-#### 任務 3.2: 新增其他設備類型
-
-如果公司有 Aruba、Juniper 等其他設備：
-
-```yaml
-# config/api_test.yaml
-test_targets:
-  - name: "SW-ARUBA-01"
-    params:
-      ip: "10.60.1.1"
-      hostname: "SW-ARUBA-01"
-      device_type: "aruba"
-
-apis:
-  - name: "get_fan_aruba"
-    method: "GET"
-    source: "DNA"
-    endpoint: "/api/v1/aruba/fan"
-    query_params:
-      hosts: "{ip}"
-```
-
-然後執行標準流程：`make test-apis` → `make gen-parsers` → 填寫邏輯 → `make test-parsers`
-
-#### 任務 3.3: 文檔維護
-
-```bash
-# 記錄所有實際的 API endpoints
-# 更新 .env.example 的註解
-# 記錄常見問題和解決方法
-```
-
----
-
-### 工作檢查清單
-
-**第一天**：
-- [ ] 配置 `.env`（Token）
-- [ ] 更新 `config/api_test.yaml`（真實 IP）
-- [ ] 執行 `make test-apis`
-- [ ] 檢查 API 連接狀態
-- [ ] 執行 `make test-parsers`
-- [ ] 記錄失敗的 API 和 Parser
-
-**第二天**：
-- [ ] 修正所有失敗的 Parser
-- [ ] 新增 HPE error_count 的第二個 API
-- [ ] 生成並填寫新 Parser
-- [ ] 全部測試通過（`make test-parsers`）
-- [ ] （可選）新增 ARP 相關功能
-
-**後續**：
-- [ ] 性能優化（如需要）
-- [ ] 新增其他設備類型（如需要）
-- [ ] 更新文檔和註解
-
----
-
-## 清理與維護
-
-### 清理測試報告
-
-```bash
-# 清理所有測試報告
-make clean
-
-# 或手動刪除
-rm -f reports/api_test_*.json
-rm -f reports/parser_test_*.json
-```
-
-### 查看所有已註冊的 Parser
-
-```bash
-python -c "
-from app.parsers import plugins
-from app.parsers.registry import parser_registry
-
-print(f'Total parsers: {len(parser_registry)}')
-for key, parser in parser_registry._parsers.items():
-    print(f'  - {key}: {parser.__class__.__name__} (indicator_type={parser.indicator_type})')
+# 查看真實 raw_data
+cat reports/api_test_*.json | python -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data['results']:
+    if r['api_name'] == '<你的API名稱>' and r['success']:
+        print(repr(r['raw_data']))  # 用 repr 看清楚換行和空白
 "
 ```
 
-### 定期同步代碼
+將 raw_data 和正則表達式一起交給 AI 修正。
+
+### Q5: Docker 容器內執行失敗
 
 ```bash
-# 拉取最新代碼
-git pull origin main
+# 確認容器在運行
+docker-compose -f docker-compose.production.yml ps
 
-# 檢查是否有新的依賴
-pip install -r requirements-dev.txt
+# 進入容器手動測試
+docker-compose exec app bash
+python scripts/batch_test_apis.py
 
-# 重啟服務（如果在運行）
-docker-compose -f docker-compose.production.yml restart
+# 確認容器內有最新代碼
+docker-compose exec app git log --oneline -3
 ```
 
 ---
 
-## 附錄
+## 快速參考
 
-### A. 快速參考卡
+### 一頁式 SOP 摘要
 
-| 操作 | 本地指令 | Docker 指令 |
-|------|----------|-------------|
-| 測試 API | `make test-apis` | `make docker-test-apis` |
-| 生成 Parser | `make gen-parsers` | `make docker-gen-parsers` |
-| 驗證 Parser | `make test-parsers` | `make docker-test-parsers` |
-| 全部執行 | `make all` | `make docker-all` |
-| 清理報告 | `make clean` | `make clean` |
-| 查看幫助 | `make help` | `make help` |
+```
+到公司後的操作（按順序執行）：
 
-### B. 相關文件
+1. git pull origin main                          # 拉最新代碼
+2. vi .env                                       # 填 Token
+3. vi config/api_test.yaml                       # 填真實 IP 和 endpoint
+4. make test-apis                                # 測試 API → 看哪些通了
+5. rm app/parsers/plugins/*_parser.py            # 刪 mock 骨架
+6. make gen-parsers                              # 用真實 raw_data 重新生成
+7. 逐個 parser 填寫 parse() 邏輯（AI 輔助）      # 核心工作
+8. make test-parsers                             # 驗證結果
+9. git add + commit + push                       # 推上 repo
+```
 
-- [README.md](../README.md) - 專案總覽
-- [.env.example](../.env.example) - 環境變數範本
-- [config/api_test.yaml](../config/api_test.yaml) - API 測試配置
-- [app/parsers/protocols.py](../app/parsers/protocols.py) - ParsedData 類型定義
+### ParsedData 型別速查
 
-### C. 聯絡方式
+| Parser 用途 | ParsedData 類型 | 必填欄位 |
+|------------|----------------|---------|
+| Fan | `FanStatusData` | fan_id, status |
+| Power | `PowerData` | ps_id, status |
+| Version | `VersionData` | version |
+| Error Count | `InterfaceErrorData` | interface_name |
+| Transceiver | `TransceiverData` | interface_name |
+| Port-Channel | `PortChannelData` | interface_name, status, members |
+| Uplink | `NeighborData` | local_interface, remote_hostname, remote_interface |
+| Ping | `PingManyData` | ip_address, is_reachable |
+| MAC Table | `MacTableData` | mac_address, interface_name, vlan_id |
+| ACL | `AclData` | interface_name, acl_number |
+| ARP Table | `ArpData` | ip_address, mac_address |
 
-如有問題，請聯絡：
-- 技術負責人: [填入聯絡資訊]
-- 內部 Slack: #netora-dev
+完整定義見 `app/parsers/protocols.py`。
 
----
+### 相關文件
 
-**最後更新**: 2026-02-09
-**版本**: v1.1 - 新增 Parser 覆蓋情況分析和工作計劃
+| 文件 | 說明 |
+|------|------|
+| `config/api_test.yaml` | API 測試配置（endpoint, target, source） |
+| `app/parsers/protocols.py` | ParsedData 類型定義 + BaseParser 介面 |
+| `app/parsers/registry.py` | Parser 註冊中心 + auto_discover |
+| `app/parsers/plugins/` | Parser 實作檔案（自動發現） |
+| `reports/api_test_*.json` | API 測試報告（含 raw_data） |
+| `reports/parser_test_*.json` | Parser 驗證報告 |
+| `docs/DEPLOYMENT_SOP.md` | Docker 部署 + Image 打包 SOP |
+| `docs/LOCAL_TESTING.md` | 本地 Mock Server 測試指南 |

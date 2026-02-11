@@ -1,170 +1,341 @@
 # =============================================================================
-# API Test Configuration
+# API Test Configuration — 對齊 scheduler.yaml 所有 Fetcher
 # =============================================================================
-# Define all APIs to test and their test targets.
-# This config is de-coupled from indicators - focus on "how to call APIs" only.
+# 用途：定義所有需要測試的外部 API，供開發工具鏈使用。
 #
-# Usage:
-#   make test-apis           # Test all APIs (local Python)
-#   make docker-test-apis    # Test all APIs (inside container)
+# 使用流程：
+#   1. 填入真實的 source base_url 和 test target IP
+#   2. make test-apis       → 批次測試所有 API，產生 reports/api_test_*.json
+#   3. make gen-parsers     → 根據測試結果自動生成 parser 骨架
+#   4. 用 AI 填寫 parse() 邏輯
+#   5. make test-parsers    → 驗證 parser 是否正確解析
+#
+# Fetcher → api_test.yaml 對應關係：
+#
+# ┌─────────────────┬─────────┬──────────────────────────────────────────────┐
+# │ Fetcher Name    │ Source  │ api_test.yaml APIs                          │
+# ├─────────────────┼─────────┼──────────────────────────────────────────────┤
+# │ transceiver     │ FNA     │ get_transceiver_fna (generic → 3 parsers)   │
+# │ port_channel    │ FNA     │ get_port_channel_fna (generic → 3 parsers)  │
+# │ uplink          │ FNA     │ get_uplink_fna (generic → 3 parsers)        │
+# │ error_count     │ FNA     │ get_error_count_fna (generic → 3 parsers)   │
+# │ acl             │ FNA     │ get_acl_fna (generic → 3 parsers)           │
+# │ arp_table       │ FNA     │ get_arp_table_fna (generic → 3 parsers)     │
+# │ mac_table       │ DNA     │ get_mac_table_{hpe,ios,nxos}_dna            │
+# │ fan             │ DNA     │ get_fan_{hpe,ios,nxos}_dna                  │
+# │ power           │ DNA     │ get_power_{hpe,ios,nxos}_dna                │
+# │ version         │ DNA     │ get_version_{hpe,ios,nxos}_dna              │
+# │ ping            │ GNMSPING│ ping_batch                                  │
+# └─────────────────┴─────────┴──────────────────────────────────────────────┘
+#
+# Total: 6 FNA + 12 DNA (4×3) + 1 GNMSPING = 19 APIs
 # =============================================================================
 
-# =============================================================================
-# Global Settings
-# =============================================================================
 settings:
-  # Source definitions (base_url + optional token)
   sources:
     FNA:
-      base_url: "http://fna:8001"
-      token_env: "FNA_TOKEN"  # Read from .env file
+      base_url: "http://localhost:8001"    # TODO: 填入真實 FNA base URL
+      token_env: null                       # TODO: 若需認證改為 "FNA_TOKEN"
 
     DNA:
-      base_url: "http://dna:8001"
-      token_env: null  # No auth required
+      base_url: "http://localhost:8001"    # TODO: 填入真實 DNA base URL
+      token_env: null
 
     GNMSPING:
-      # Multiple base_urls based on tenant_group
       base_urls:
-        F18: "https://gnmsping.dev.f18.com"
-        F6: "https://gnmsping.dev.f6.com"
-        AP: "https://gnmsping.dev.ap.com"
-        F14: "https://gnmsping.dev.f14.com"
-        F12: "https://gnmsping.dev.f12.com"
+        Dev: "http://localhost:8001"        # 開發測試用
+        F18: "http://localhost:8001"        # TODO: 填入真實 per-tenant URLs
+        F6: "http://localhost:8001"
+        AP: "http://localhost:8001"
+        F14: "http://localhost:8001"
+        F12: "http://localhost:8001"
+      app_name_env: "GNMSPING_APP_NAME"
+      token_env: "GNMSPING_TOKEN"
 
 # =============================================================================
-# Test Targets (Generic - not limited to switches)
+# Test Targets — 每種 device_type 至少一台
 # =============================================================================
 test_targets:
-  # Example: Network switches
-  - name: "SW-CORE-01"
+  # ── Switch Targets ──
+  - name: "Mock-HPE-Switch"               # TODO: 換成真實設備名稱
+    type: "switch"
     params:
-      ip: "10.1.1.1"
-      hostname: "SW-CORE-01"
+      ip: "10.1.1.1"                      # TODO: 換成真實 IP
+      hostname: "Mock-HPE-Switch"
       device_type: "hpe"
 
-  - name: "SW-DIST-01"
+  - name: "Mock-IOS-Switch"
+    type: "switch"
     params:
       ip: "10.1.1.2"
-      hostname: "SW-DIST-01"
+      hostname: "Mock-IOS-Switch"
       device_type: "cisco_ios"
 
-  - name: "SW-AGG-01"
+  - name: "Mock-NXOS-Switch"
+    type: "switch"
     params:
       ip: "10.1.1.3"
-      hostname: "SW-AGG-01"
+      hostname: "Mock-NXOS-Switch"
       device_type: "cisco_nxos"
 
-  # Example: Ping batch (for GNMS Ping API)
-  - name: "Ping-Batch-F18"
+  # ── GNMSPING Targets ──
+  - name: "Ping-Batch-Dev"
+    type: "gnmsping"
     params:
-      tenant_group: "F18"
-      ips: ["10.1.1.1", "10.1.1.2", "10.1.1.3"]
+      tenant_group: "Dev"
+      addresses: ["10.1.1.1", "10.1.1.2", "10.1.1.3"]  # TODO: 填入真實 IP
+      app_name: "netora-dev"               # TODO: 填入真實 app_name
+      token: "mock-token-dev"              # TODO: 填入真實 token
 
 # =============================================================================
-# API Definitions (De-coupled from indicators)
+# API Definitions
 # =============================================================================
-# Each API defines:
-#   - name: Unique identifier
-#   - method: GET or POST
-#   - source: One of the sources defined above
-#   - endpoint: URL path (supports {placeholders})
-#   - url_params: List of param names to substitute in endpoint
-#   - query_params: Dict of query parameters (supports {placeholders})
-#   - request_body_template: For POST, template string with {placeholders}
-#   - tenant_group: For GNMSPING, which tenant_group to use
-#   - requires_auth: Whether to inject token from source.token_env
-# =============================================================================
-
 apis:
-  # ── FNA APIs (Transceiver, Port Channel) ──
 
+  # ══════════════════════════════════════════════════════════════════════════
+  # FNA APIs — Generic endpoints (同一 endpoint，所有 device_type 共用)
+  # ══════════════════════════════════════════════════════════════════════════
+  # FNA 內部自動偵測廠牌，同一個 endpoint 對所有 switch 都適用。
+  # gen-parsers 會自動為每個 device_type 生成獨立 parser：
+  #   get_transceiver_fna → get_transceiver_hpe_fna, get_transceiver_ios_fna, ...
+
+  # ── Transceiver (scheduler: transceiver) ──
   - name: "get_transceiver_fna"
     method: "GET"
     source: "FNA"
-    endpoint: "/switch/network/get_transceiver/{ip}"
-    url_params:
-      - ip
+    endpoint: "/switch/get_transceiver/{ip}"    # TODO: 確認真實 endpoint
     requires_auth: true
-    description: "Fetch transceiver Tx/Rx power from FNA API"
+    target_filter:
+      type: "switch"
+    description: "光模組 Tx/Rx 功率 (FNA)"
 
+  # ── Port-Channel (scheduler: port_channel) ──
   - name: "get_port_channel_fna"
     method: "GET"
     source: "FNA"
-    endpoint: "/switch/network/get_port_channel/{ip}"
-    url_params:
-      - ip
+    endpoint: "/switch/get_port_channel/{ip}"   # TODO: 確認真實 endpoint
     requires_auth: true
-    description: "Fetch port-channel status from FNA API"
+    target_filter:
+      type: "switch"
+    description: "Port-Channel 狀態及成員 (FNA)"
 
-  # ── DNA APIs (Fan, Power, Error Count) ──
+  # ── Uplink / Neighbors (scheduler: uplink) ──
+  - name: "get_uplink_fna"
+    method: "GET"
+    source: "FNA"
+    endpoint: "/switch/get_neighbors/{ip}"      # TODO: 確認真實 endpoint
+    requires_auth: true
+    target_filter:
+      type: "switch"
+    description: "Uplink 鄰居拓撲 (FNA)"
 
-  - name: "get_fan_hpe"
+  # ── Error Count (scheduler: error_count) ──
+  - name: "get_error_count_fna"
+    method: "GET"
+    source: "FNA"
+    endpoint: "/switch/get_error_count/{ip}"    # TODO: 確認真實 endpoint
+    requires_auth: true
+    target_filter:
+      type: "switch"
+    description: "Interface 錯誤計數 (FNA)"
+
+  # ── ACL (scheduler: acl) ──
+  - name: "get_acl_fna"
+    method: "GET"
+    source: "FNA"
+    endpoint: "/switch/get_acl/{ip}"            # TODO: 確認真實 endpoint
+    requires_auth: true
+    target_filter:
+      type: "switch"
+    description: "ACL 編號 (FNA)"
+
+  # ── ARP Table (scheduler: arp_table) ──
+  - name: "get_arp_table_fna"
+    method: "GET"
+    source: "FNA"
+    endpoint: "/switch/get_arp_table/{ip}"      # TODO: 確認真實 endpoint
+    requires_auth: true
+    target_filter:
+      type: "switch"
+    description: "ARP 表 (FNA)"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # DNA APIs — Device-specific endpoints (每種 device_type 獨立定義)
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # --------------------------------------------------------------------------
+  # MAC Table (scheduler: mac_table, source: DNA)
+  # --------------------------------------------------------------------------
+  - name: "get_mac_table_hpe_dna"
     method: "GET"
     source: "DNA"
-    endpoint: "/api/v1/hpe/fan"
+    endpoint: "/api/v1/hpe/mac-table"           # TODO: 確認真實 endpoint
     query_params:
       hosts: "{ip}"
     requires_auth: false
-    description: "Fetch HPE fan status from DNA API"
+    target_filter:
+      type: "switch"
+      device_type: "hpe"
+    description: "MAC 表 — HPE (DNA)"
 
-  - name: "get_fan_ios"
+  - name: "get_mac_table_ios_dna"
     method: "GET"
     source: "DNA"
-    endpoint: "/api/v1/ios/fan"
+    endpoint: "/api/v1/ios/mac-table"           # TODO: 確認真實 endpoint
     query_params:
       hosts: "{ip}"
     requires_auth: false
-    description: "Fetch Cisco IOS fan status from DNA API"
+    target_filter:
+      type: "switch"
+      device_type: "cisco_ios"
+    description: "MAC 表 — Cisco IOS (DNA)"
 
-  - name: "get_fan_nxos"
+  - name: "get_mac_table_nxos_dna"
     method: "GET"
     source: "DNA"
-    endpoint: "/api/v1/nxos/fan"
+    endpoint: "/api/v1/nxos/mac-table"          # TODO: 確認真實 endpoint
     query_params:
       hosts: "{ip}"
     requires_auth: false
-    description: "Fetch Cisco NXOS fan status from DNA API"
+    target_filter:
+      type: "switch"
+      device_type: "cisco_nxos"
+    description: "MAC 表 — Cisco NXOS (DNA)"
 
-  - name: "get_power_hpe"
+  # --------------------------------------------------------------------------
+  # Fan (scheduler: fan, source: DNA)
+  # --------------------------------------------------------------------------
+  - name: "get_fan_hpe_dna"
     method: "GET"
     source: "DNA"
-    endpoint: "/api/v1/hpe/power"
+    endpoint: "/api/v1/hpe/fan"                 # TODO: 確認真實 endpoint
     query_params:
       hosts: "{ip}"
     requires_auth: false
-    description: "Fetch HPE power supply status from DNA API"
+    target_filter:
+      type: "switch"
+      device_type: "hpe"
+    description: "風扇狀態 — HPE (DNA)"
 
-  - name: "get_errors_hpe_input"
+  - name: "get_fan_ios_dna"
     method: "GET"
     source: "DNA"
-    endpoint: "/api/v1/hpe/errors/input"
+    endpoint: "/api/v1/ios/fan"                 # TODO: 確認真實 endpoint
     query_params:
       hosts: "{ip}"
     requires_auth: false
-    description: "Fetch HPE input errors from DNA API"
+    target_filter:
+      type: "switch"
+      device_type: "cisco_ios"
+    description: "風扇狀態 — Cisco IOS (DNA)"
 
-  - name: "get_errors_hpe_output"
+  - name: "get_fan_nxos_dna"
     method: "GET"
     source: "DNA"
-    endpoint: "/api/v1/hpe/errors/output"
+    endpoint: "/api/v1/nxos/fan"                # TODO: 確認真實 endpoint
     query_params:
       hosts: "{ip}"
     requires_auth: false
-    description: "Fetch HPE output errors from DNA API (multi-endpoint example)"
+    target_filter:
+      type: "switch"
+      device_type: "cisco_nxos"
+    description: "風扇狀態 — Cisco NXOS (DNA)"
 
-  # ── GNMS Ping API (POST with request body) ──
+  # --------------------------------------------------------------------------
+  # Power (scheduler: power, source: DNA)
+  # --------------------------------------------------------------------------
+  - name: "get_power_hpe_dna"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/power"               # TODO: 確認真實 endpoint
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    target_filter:
+      type: "switch"
+      device_type: "hpe"
+    description: "電源供應器狀態 — HPE (DNA)"
 
+  - name: "get_power_ios_dna"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/ios/power"               # TODO: 確認真實 endpoint
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    target_filter:
+      type: "switch"
+      device_type: "cisco_ios"
+    description: "電源供應器狀態 — Cisco IOS (DNA)"
+
+  - name: "get_power_nxos_dna"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/nxos/power"              # TODO: 確認真實 endpoint
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    target_filter:
+      type: "switch"
+      device_type: "cisco_nxos"
+    description: "電源供應器狀態 — Cisco NXOS (DNA)"
+
+  # --------------------------------------------------------------------------
+  # Version (scheduler: version, source: DNA)
+  # --------------------------------------------------------------------------
+  - name: "get_version_hpe_dna"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/version"             # TODO: 確認真實 endpoint
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    target_filter:
+      type: "switch"
+      device_type: "hpe"
+    description: "韌體版本 — HPE (DNA)"
+
+  - name: "get_version_ios_dna"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/ios/version"             # TODO: 確認真實 endpoint
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    target_filter:
+      type: "switch"
+      device_type: "cisco_ios"
+    description: "韌體版本 — Cisco IOS (DNA)"
+
+  - name: "get_version_nxos_dna"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/nxos/version"            # TODO: 確認真實 endpoint
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    target_filter:
+      type: "switch"
+      device_type: "cisco_nxos"
+    description: "韌體版本 — Cisco NXOS (DNA)"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # GNMSPING APIs — Ping 可達性檢查
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # ── Ping Batch (scheduler: ping, source: GNMSPING) ──
   - name: "ping_batch"
     method: "POST"
     source: "GNMSPING"
-    tenant_group: "{tenant_group}"  # Used to select base_url
-    endpoint: "/api/ping"
+    tenant_group: "{tenant_group}"
+    endpoint: "/api/v1/ping"                    # TODO: 確認真實 endpoint
     request_body_template: |
       {
-        "tenant": "{tenant_group}",
-        "ips": {ips},
-        "timeout": 5
+        "app_name": "{app_name}",
+        "token": "{token}",
+        "addresses": {addresses}
       }
-    requires_auth: false
-    description: "Batch ping multiple IPs via GNMS Ping API"
+    requires_auth: false                        # Auth is in body, not header
+    target_filter:
+      type: "gnmsping"
+    description: "批量 Ping 可達性檢查 (GNMSPING)"

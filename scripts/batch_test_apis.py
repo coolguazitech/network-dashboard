@@ -304,19 +304,53 @@ async def test_api(
         )
 
 
+def match_target_filter(api_def: dict[str, Any], target: dict[str, Any]) -> bool:
+    """Check if a target matches the API's target_filter."""
+    target_filter = api_def.get("target_filter")
+    if not target_filter:
+        # No filter = match all targets
+        return True
+
+    # Check type filter (e.g., "switch" or "gnmsping")
+    filter_type = target_filter.get("type")
+    if filter_type and target.get("type") != filter_type:
+        return False
+
+    # Check device_type filter (e.g., "hpe", "cisco_ios", "cisco_nxos")
+    filter_device_type = target_filter.get("device_type")
+    if filter_device_type:
+        target_device_type = target.get("params", {}).get("device_type")
+        if target_device_type != filter_device_type:
+            return False
+
+    return True
+
+
+def build_test_matrix(
+    apis: list[dict[str, Any]], targets: list[dict[str, Any]]
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Build test matrix by matching APIs to targets using target_filter."""
+    tests = []
+    for api in apis:
+        for target in targets:
+            if match_target_filter(api, target):
+                tests.append((api, target))
+    return tests
+
+
 async def test_all_apis(
     config: dict[str, Any], progress: Progress, task_id: TaskID
 ) -> list[TestResult]:
-    """Test all APIs against all targets with live progress."""
+    """Test all APIs against matched targets with live progress."""
     sources = config["settings"]["sources"]
     targets = config["test_targets"]
     apis = config["apis"]
 
-    # Build test matrix
-    tests = [(api, target) for api in apis for target in targets]
+    # Build test matrix with target_filter matching
+    tests = build_test_matrix(apis, targets)
     total_tests = len(tests)
 
-    console.print(f"📊 Found {len(apis)} APIs × {len(targets)} targets = {total_tests} tests\n")
+    console.print(f"📊 Found {len(apis)} APIs, {len(targets)} targets -> {total_tests} matched tests\n")
 
     results: list[TestResult] = []
 
@@ -396,7 +430,7 @@ async def main():
     # Test all APIs with progress bar
     console.print("\n[bold]Testing APIs...[/bold]")
 
-    total_tests = len(config["apis"]) * len(config["test_targets"])
+    total_tests = len(build_test_matrix(config["apis"], config["test_targets"]))
 
     with Progress(
         TextColumn("[progress.description]{task.description}"),

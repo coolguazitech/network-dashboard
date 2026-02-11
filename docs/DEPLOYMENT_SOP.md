@@ -190,37 +190,95 @@ Indicator（評估通過/失敗）
 
 ### 2.2 Fetcher / Parser 對應表
 
-| fetch_type | API 來源 | Endpoint 模板 | 說明 |
-|-----------|---------|--------------|------|
-| transceiver | FNA | `/api/v1/transceiver/{switch_ip}` | 光模組 Tx/Rx 功率 |
-| port_channel | FNA | `/api/v1/port-channel/{switch_ip}` | Port-Channel 狀態 |
-| version | DNA | `/api/v1/version/{switch_ip}` | 韌體版本 |
-| uplink | DNA | `/api/v1/neighbors/{switch_ip}` | Uplink 鄰居拓撲 |
-| fan | DNA | `/api/v1/fan/{switch_ip}` | 風扇狀態 |
-| power | DNA | `/api/v1/power/{switch_ip}` | 電源供應器 |
-| error_count | DNA | `/api/v1/error-count/{switch_ip}` | Interface 錯誤計數 |
-| ping | GNMSPING | `/api/v1/ping/batch` | 設備可達性 |
+| Fetcher Name | API 來源 | 說明 | Parser 數量 |
+|-------------|---------|------|------------|
+| transceiver | FNA | 光模組 Tx/Rx 功率 | 3 (generic → per device_type) |
+| port_channel | FNA | Port-Channel 狀態 | 3 |
+| uplink | FNA | Uplink 鄰居拓撲 | 3 |
+| error_count | FNA | Interface 錯誤計數 | 3 |
+| acl | FNA | ACL 編號 | 3 |
+| arp_table | FNA | ARP 表 | 3 |
+| mac_table | DNA | MAC 表 | 3 (per device_type) |
+| fan | DNA | 風扇狀態 | 3 |
+| power | DNA | 電源供應器 | 3 |
+| version | DNA | 韌體版本 | 3 |
+| ping | GNMSPING | 設備可達性 | 1 |
 
-每個 fetch_type 有三組 Parser（按設備類型）：
+Parser 按設備類型分：
 
-| 設備類型 | Parser 檔案前綴 | device_type 枚舉 |
-|---------|---------------|-----------------|
-| HPE Comware | `hpe_` | `DeviceType.HPE` |
-| Cisco IOS | `cisco_ios_` | `DeviceType.CISCO_IOS` |
-| Cisco NXOS | `cisco_nxos_` | `DeviceType.CISCO_NXOS` |
+| 設備類型 | device_type | FNA Parser 命名 | DNA Parser 命名 |
+|---------|-------------|----------------|----------------|
+| HPE Comware | `DeviceType.HPE` | `get_{indicator}_hpe_fna` | `get_{indicator}_hpe_dna` |
+| Cisco IOS | `DeviceType.CISCO_IOS` | `get_{indicator}_ios_fna` | `get_{indicator}_ios_dna` |
+| Cisco NXOS | `DeviceType.CISCO_NXOS` | `get_{indicator}_nxos_fna` | `get_{indicator}_nxos_dna` |
 
-### 2.3 開發流程
+### 2.3 Parser 開發工具鏈（推薦流程）
 
-當你要從 Mock 模式切換到真實 API 時：
+使用工具鏈可以快速驗證 API 串接並生成 Parser：
 
 ```
-1. curl 真實 API → 拿到 raw output 樣本
-2. 比對現有 Parser 的 parse() 邏輯
-3. 如果格式不同 → 修改 parse() 方法
-4. 本地測試：USE_MOCK_API=false + 設好 API URL
-5. 確認 Dashboard 正常顯示
-6. 打包新 image（見 Part 3）
+┌─ config/api_test.yaml ─────────────────────────────────┐
+│ 定義所有 API（endpoint, source, target_filter）         │
+│ → 到公司只需填入真實 base_url 和 IP                      │
+└───────────────┬─────────────────────────────────────────┘
+                │
+     make test-apis  (或 make docker-test-apis)
+                │
+                ▼
+┌─ reports/api_test_*.json ──────────────────────────────┐
+│ 每個 API 的測試結果：status, raw_data, response_time   │
+│ → 確認哪些 API 能正常打通                               │
+└───────────────┬─────────────────────────────────────────┘
+                │
+     make gen-parsers  (或 make docker-gen-parsers)
+                │
+                ▼
+┌─ app/parsers/plugins/*_parser.py ──────────────────────┐
+│ 自動生成骨架，含 raw_data 範例在 docstring 中            │
+│ → 複製 raw_data 給 AI，請 AI 寫 parse() 邏輯           │
+└───────────────┬─────────────────────────────────────────┘
+                │
+     make test-parsers  (或 make docker-test-parsers)
+                │
+                ▼
+┌─ reports/parser_test_*.json ───────────────────────────┐
+│ passed: parse() 正常回傳 > 0 筆資料                     │
+│ empty: 骨架尚未填寫 parse() 邏輯                        │
+│ failed: parse() 拋出例外                               │
+└─────────────────────────────────────────────────────────┘
 ```
+
+**本地開發（在家）**：
+
+```bash
+# 1. 啟動 Mock Server（另一個終端機）
+python scripts/mock_api_server.py
+
+# 2. 執行完整工具鏈
+make test-apis       # 批次測試所有 API
+make gen-parsers     # 生成 parser 骨架
+make test-parsers    # 驗證 parser
+
+# 或一次全部跑完
+make all
+```
+
+**公司環境（容器內執行）**：
+
+```bash
+# 在容器內執行
+make docker-test-apis
+make docker-gen-parsers
+make docker-test-parsers
+```
+
+**填寫 Parser 邏輯（AI 輔助）**：
+
+1. 打開 `reports/api_test_*.json`，找到該 API 的 `raw_data`
+2. 複製 raw_data 給 AI（ChatGPT / 公司內部 AI）
+3. 告訴 AI 目標的 ParsedData 類型（見 2.7 節）
+4. 將 AI 產出的 `parse()` 邏輯貼入骨架檔案
+5. `make test-parsers` 驗證結果
 
 ### 2.4 設定外部 API 連線（.env）
 
@@ -254,73 +312,58 @@ FETCHER_ENDPOINT__PING=/api/v1/ping/batch
 
 ### 2.5 修改 Parser（核心工作）
 
-**步驟 1**：確認 API 回傳格式
+Parser 由工具鏈自動生成骨架，開發者只需填寫 `parse()` 邏輯。
 
-```bash
-# curl 你的 API，了解回傳的 raw text 格式
-curl http://your-fna-server:8001/api/v1/transceiver/10.1.1.1
-```
+Parser 檔案位置：`app/parsers/plugins/{api_name}_parser.py`
 
-**步驟 2**：修改對應的 Parser 檔案
-
-Parser 檔案位置：`app/parsers/plugins/{vendor}_{indicator_type}.py`
-
-範例 — 假設真實 API 回傳 JSON 格式：
+範例 — `get_transceiver_hpe_fna_parser.py`（自動生成後填寫）：
 
 ```python
-# app/parsers/plugins/hpe_transceiver.py
-import json
-
 from app.core.enums import DeviceType
 from app.parsers.protocols import BaseParser, TransceiverData
 from app.parsers.registry import parser_registry
 
 
-class HpeTransceiverParser(BaseParser[TransceiverData]):
+class GetTransceiverHpeFnaParser(BaseParser[TransceiverData]):
     device_type = DeviceType.HPE
-    indicator_type = "transceiver"            # ★ 必須與 scheduler.yaml name 一致
-    command = "display transceiver diag"
+    command = "get_transceiver_hpe_fna"       # ★ 與 api_test.yaml 的 API name 對應
 
     def parse(self, raw_output: str) -> list[TransceiverData]:
+        import re
         results = []
-        try:
-            data = json.loads(raw_output)
-        except json.JSONDecodeError:
-            return results
-
-        for intf in data.get("interfaces", []):
-            results.append(
-                TransceiverData(
-                    interface_name=intf["name"],
-                    tx_power=intf.get("tx_dbm"),
-                    rx_power=intf.get("rx_dbm"),
-                    temperature=intf.get("temp_c"),
-                    voltage=intf.get("volt"),
-                )
+        for line in raw_output.strip().splitlines():
+            match = re.match(
+                r"(\S+)\s+([-\d.]+)\s+([-\d.]+)", line
             )
+            if match:
+                results.append(TransceiverData(
+                    interface_name=match.group(1),
+                    tx_power=float(match.group(2)),
+                    rx_power=float(match.group(3)),
+                ))
         return results
 
 
-parser_registry.register(HpeTransceiverParser())
+parser_registry.register(GetTransceiverHpeFnaParser())
 ```
 
-**步驟 3**：確認 `app/parsers/plugins/__init__.py` 有 import（已存在的 parser 不用加）
-
-```python
-from . import hpe_transceiver    # 確認這行存在
-```
+> **注意**：`__init__.py` 不需要手動 import，系統使用 `auto_discover_parsers()` 自動掃描 plugins/ 目錄。
 
 ### 2.6 三處命名必須一致（關鍵！）
 
 ```
 1. scheduler.yaml   →  fetchers:
-                          transceiver:        ← name
+                          transceiver:        ← fetcher name
                             source: FNA
 
 2. .env             →  FETCHER_ENDPOINT__TRANSCEIVER=...    ← 大寫版
 
-3. Parser class     →  indicator_type = "transceiver"       ← 完全一致
+3. Parser class     →  command = "get_transceiver_hpe_fna"  ← 與 api_test.yaml 對應
+                        device_type = DeviceType.HPE
 ```
+
+Parser 的 `command` 對應 `api_test.yaml` 中的 API name（含廠牌後綴），
+而非 scheduler.yaml 的 fetcher name。
 
 名稱不一致 = 系統找不到 Parser = 資料流斷裂 → 顯示「無採集數據」。
 
@@ -467,7 +510,7 @@ docker logs netora_app 2>&1 | grep -i "registered.*fetcher"
 docker exec netora_app python -c "
 from app.parsers.registry import parser_registry
 for k in parser_registry.list_parsers():
-    print(f'  {k.device_type} / {k.indicator_type}')
+    print(f'  {k.device_type} / {k.command}')
 print(f'Total: {len(parser_registry.list_parsers())} parsers')
 "
 
@@ -507,11 +550,12 @@ docker-compose -f docker-compose.production.yml up -d
 # .env 中設定 USE_MOCK_API=false + 填入 API URL
 docker-compose -f docker-compose.production.yml restart app
 
-# ========== 開發迴圈 ==========
-1. curl 真實 API    → 拿到 raw output 樣本
-2. 修改 Parser      → app/parsers/plugins/xxx.py
-3. 本地測試         → docker-compose restart app
-4. 打包推送         → bash scripts/build-and-push.sh v1.3.0
+# ========== 開發迴圈（工具鏈） ==========
+1. make test-apis   → 批次打 API，拿到 raw_data（reports/api_test_*.json）
+2. make gen-parsers → 生成 parser 骨架（app/parsers/plugins/）
+3. 填 parse() 邏輯  → 複製 raw_data 給 AI 產出程式碼
+4. make test-parsers→ 驗證 parser 輸出
+5. 打包推送         → bash scripts/build-and-push.sh v1.3.0
 
 # ========== 公司端更新（當前版本 v1.2.0） ==========
 # 修改 docker-compose.production.yml 中的版本號

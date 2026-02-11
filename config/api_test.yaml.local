@@ -1,0 +1,106 @@
+# =============================================================================
+# Local Testing Configuration
+# =============================================================================
+# This config file is for testing the toolchain locally without real API access.
+# Usage: Copy this to api_test.yaml when testing at home
+#   cp config/api_test.yaml.local config/api_test.yaml
+#   python scripts/mock_api_server.py  # Start mock server in another terminal
+#   make test-apis
+
+settings:
+  # Local mock server
+  sources:
+    DNA:
+      base_url: "http://localhost:8001"
+      token_env: null  # No auth for local testing
+
+    FNA:
+      base_url: "http://localhost:8001"
+      token_env: null
+
+# =============================================================================
+# Test Targets
+# =============================================================================
+test_targets:
+  - name: "Mock-HPE-Switch"
+    params:
+      ip: "10.1.1.1"
+      hostname: "Mock-HPE-Switch"
+      device_type: "hpe"
+
+  - name: "Mock-IOS-Switch"
+    params:
+      ip: "10.1.1.2"
+      hostname: "Mock-IOS-Switch"
+      device_type: "cisco_ios"
+
+  - name: "Mock-NXOS-Switch"
+    params:
+      ip: "10.1.1.3"
+      hostname: "Mock-NXOS-Switch"
+      device_type: "cisco_nxos"
+
+# =============================================================================
+# API Definitions
+# =============================================================================
+apis:
+  # ── HPE APIs ──
+  - name: "get_fan_hpe"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/fan"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch HPE fan status (MOCK)"
+
+  - name: "get_errors_hpe"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/errors/summary"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch HPE error counts (MOCK)"
+
+  - name: "get_transceiver_hpe"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/hpe/transceiver"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch HPE transceiver Tx/Rx power (MOCK)"
+
+  # ── Cisco IOS APIs ──
+  - name: "get_fan_ios"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/ios/fan"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch Cisco IOS fan status (MOCK)"
+
+  # ── Cisco NXOS APIs ──
+  - name: "get_fan_nxos"
+    method: "GET"
+    source: "DNA"
+    endpoint: "/api/v1/nxos/fan"
+    query_params:
+      hosts: "{ip}"
+    requires_auth: false
+    description: "Fetch Cisco NXOS fan status (MOCK)"
+
+  # ── POST Example ──
+  - name: "ping_batch"
+    method: "POST"
+    source: "DNA"
+    endpoint: "/api/ping"
+    request_body_template: |
+      {
+        "ips": {ips},
+        "timeout": 5
+      }
+    requires_auth: false
+    description: "Batch ping (MOCK)"
