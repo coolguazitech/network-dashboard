@@ -1,4 +1,4 @@
-.PHONY: help test-apis gen-parsers test-parsers all clean docker-test-apis docker-gen-parsers docker-test-parsers docker-all
+.PHONY: help test-apis gen-parsers test-parsers all clean reset docker-test-apis docker-gen-parsers docker-test-parsers docker-all
 
 # Default target
 help:
@@ -20,6 +20,7 @@ help:
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean          - Clean generated reports"
+	@echo "  make reset          - Delete all parser skeletons + reports"
 	@echo ""
 
 # ============================================================================
@@ -82,3 +83,11 @@ clean:
 	@rm -f reports/api_test_*.json
 	@rm -f reports/parser_test_*.json
 	@echo "✅ Reports cleaned"
+
+# Reset: delete all parser skeletons and reports, keep __init__.py
+reset:
+	@echo "🔄 Resetting parsers and reports..."
+	@find app/parsers/plugins -name '*_parser.py' -delete
+	@rm -f reports/api_test_*.json
+	@rm -f reports/parser_test_*.json
+	@echo "✅ All parser skeletons and reports deleted"

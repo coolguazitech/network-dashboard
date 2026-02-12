@@ -12,6 +12,7 @@ Usage:
 """
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -42,82 +43,40 @@ Target: {{target_name}}
 """
 from __future__ import annotations
 
-from app.parsers.protocols import BaseParser
+{% if device_type_enum %}
+from app.core.enums import DeviceType
+{% endif %}
+from app.parsers.protocols import BaseParser{% if parsed_data %}, {{parsed_data}}{% endif %}
+{% for extra_import in extra_imports %}
+from app.parsers.protocols import {{extra_import}}
+{% endfor %}
 from app.parsers.registry import parser_registry
 
 
-class {{class_name}}(BaseParser):
+class {{class_name}}(BaseParser{% if parsed_data %}[{{parsed_data}}]{% endif %}):
     """
     Parser for {{api_name}} API response.
+{% if parsed_data_source %}
 
-    Example raw output from {{target_name}}:
+    Target data model ({{parsed_data}}):
+    ```python
+{{parsed_data_source}}
+    ```
+{% endif %}
+
+    Raw output example from {{target_name}}:
     ```
 {{example_raw_data}}
     ```
-
-    TODO: Determine the appropriate ParsedData type for this API.
-    Common types:
-    - FanData (for fan status)
-    - InterfaceErrorData (for error counts)
-    - TransceiverData (for transceiver Tx/Rx power)
-    - PowerData (for power supply status)
-    - PortChannelData (for port-channel status)
-    - PingData (for ping results)
-    - ... (see app/parsers/protocols.py for full list)
-
-    Once you determine the type, update this class:
-    1. Import the ParsedData type and DeviceType enum if needed
-    2. Add Generic[YourType] to BaseParser
-    3. Set device_type (e.g., DeviceType.HPE) or None for generic
-    4. Implement parse() method
-
-    Example after filling in:
-        from app.core.enums import DeviceType
-        from app.parsers.protocols import BaseParser, FanStatusData
-
-        class {{class_name}}(BaseParser[FanStatusData]):
-            device_type = DeviceType.HPE
-            command = "{{api_name}}"
-
-            def parse(self, raw_output: str) -> list[FanStatusData]:
-                # Your parsing logic here
-                ...
     """
 
-    # TODO: Set device_type based on target device
-    device_type = None  # e.g., DeviceType.HPE (or None for generic)
+    device_type = {{device_type_enum or 'None'}}
     command = "{{api_name}}"
 
-    def parse(self, raw_output: str) -> list:
-        """
-        Parse raw API output into structured data.
+    def parse(self, raw_output: str) -> list[{{parsed_data or 'dict'}}]:
+        results: list[{{parsed_data or 'dict'}}] = []
 
-        Args:
-            raw_output: Raw text response from API
-
-        Returns:
-            List of parsed data objects (type depends on your ParsedData choice)
-
-        TODO: Implement parsing logic here.
-        Steps:
-        1. Choose appropriate ParsedData type (e.g., FanData, TransceiverData)
-        2. Split raw_output into lines or use regex patterns
-        3. Extract fields and create ParsedData instances
-        4. Return list of parsed objects
-
-        Example:
-            import re
-
-            results = []
-            for line in raw_output.strip().splitlines():
-                match = re.match(r"some_pattern", line)
-                if match:
-                    results.append(YourParsedDataType(...))
-            return results
-        """
-        results = []
-
-        # TODO: Add your parsing logic here
+        # TODO: Implement parsing logic
 
         return results
 
@@ -150,19 +109,102 @@ def find_latest_report(reports_dir: Path) -> Path | None:
     return max(reports, key=lambda p: p.stat().st_mtime)
 
 
-def truncate_raw_data(raw_data: str, max_lines: int = 20) -> str:
-    """Truncate raw data for example in docstring."""
-    lines = raw_data.splitlines()
-    if len(lines) <= max_lines:
-        return raw_data
+def _strip_docstrings(source: str) -> str:
+    """Remove docstrings from class source to avoid triple-quote conflicts."""
+    import ast as _ast
+    import textwrap
 
-    truncated = "\n".join(lines[:max_lines])
-    return f"{truncated}\n... (truncated, {len(lines) - max_lines} more lines)"
+    try:
+        dedented = textwrap.dedent(source)
+        tree = _ast.parse(dedented)
+    except SyntaxError:
+        return source
+
+    lines = dedented.splitlines()
+
+    # Collect line ranges to remove (docstring Expr nodes)
+    ranges_to_remove: list[tuple[int, int]] = []
+    for node in _ast.walk(tree):
+        if isinstance(node, (_ast.ClassDef, _ast.FunctionDef, _ast.AsyncFunctionDef)):
+            if (
+                node.body
+                and isinstance(node.body[0], _ast.Expr)
+                and isinstance(node.body[0].value, (_ast.Constant, _ast.Str))
+            ):
+                doc_node = node.body[0]
+                ranges_to_remove.append(
+                    (doc_node.lineno - 1, doc_node.end_lineno)  # type: ignore
+                )
+
+    if not ranges_to_remove:
+        return source
+
+    # Remove docstring lines (reverse order to preserve indices)
+    result_lines = list(lines)
+    for start, end in sorted(ranges_to_remove, reverse=True):
+        del result_lines[start:end]
+
+    return "\n".join(result_lines)
+
+
+def get_parsed_data_source(parsed_data_name: str | None) -> tuple[str, list[str]]:
+    """Get source code of a ParsedData class and any referenced model classes.
+
+    Returns:
+        (source_code, extra_imports) — source indented for docstring,
+        and list of additional class names that need importing.
+    """
+    if not parsed_data_name:
+        return "", []
+
+    try:
+        from app.parsers import protocols
+
+        cls = getattr(protocols, parsed_data_name, None)
+        if cls is None:
+            return "", []
+
+        source = inspect.getsource(cls)
+        # Strip docstrings — they break the outer docstring's triple-quotes
+        source = _strip_docstrings(source)
+        indented = "\n".join(f"    {line}" for line in source.splitlines())
+
+        # Find referenced model classes (e.g., TransceiverChannelData)
+        extra_imports: list[str] = []
+        for _name, field_info in cls.model_fields.items():
+            annotation = field_info.annotation
+            # Unwrap list[], Optional[], etc.
+            for arg in getattr(annotation, "__args__", []):
+                if (
+                    isinstance(arg, type)
+                    and hasattr(protocols, arg.__name__)
+                    and arg.__name__ != parsed_data_name
+                    and issubclass(arg, protocols.BaseModel)
+                ):
+                    extra_imports.append(arg.__name__)
+                    # Also include its source
+                    extra_source = _strip_docstrings(inspect.getsource(arg))
+                    extra_indented = "\n".join(
+                        f"    {line}" for line in extra_source.splitlines()
+                    )
+                    indented = extra_indented + "\n\n" + indented
+
+        return indented, extra_imports
+
+    except Exception:
+        return "", []
 
 
 # =============================================================================
 # Parser Generation
 # =============================================================================
+
+
+DEVICE_TYPE_ENUM_MAP: dict[str, str] = {
+    "hpe": "DeviceType.HPE",
+    "cisco_ios": "DeviceType.CISCO_IOS",
+    "cisco_nxos": "DeviceType.CISCO_NXOS",
+}
 
 
 def generate_parser(
@@ -172,6 +214,8 @@ def generate_parser(
     endpoint: str,
     raw_data: str,
     output_dir: Path,
+    device_type: str | None = None,
+    parsed_data: str | None = None,
 ) -> Path | None:
     """Generate a single parser skeleton file."""
     # Generate class name
@@ -186,10 +230,14 @@ def generate_parser(
         console.print(f"  ⏭️  Skipped {filename} (already exists)")
         return None
 
-    # Truncate raw data for example
-    example_raw_data = truncate_raw_data(raw_data)
-    # Indent for docstring
-    example_raw_data = "\n".join(f"    {line}" for line in example_raw_data.splitlines())
+    # Include full raw data so AI can understand the complete format
+    example_raw_data = "\n".join(f"    {line}" for line in raw_data.splitlines())
+
+    # Resolve device_type to enum expression
+    device_type_enum = DEVICE_TYPE_ENUM_MAP.get(device_type or "")
+
+    # Get ParsedData class source for docstring
+    parsed_data_source, extra_imports = get_parsed_data_source(parsed_data)
 
     # Render template
     template = Template(PARSER_TEMPLATE)
@@ -200,6 +248,10 @@ def generate_parser(
         endpoint=endpoint,
         target_name=target_name,
         example_raw_data=example_raw_data,
+        device_type_enum=device_type_enum,
+        parsed_data=parsed_data,
+        parsed_data_source=parsed_data_source,
+        extra_imports=extra_imports,
     )
 
     # Write file
@@ -274,6 +326,9 @@ def generate_all_parsers(report_path: Path, output_dir: Path) -> int:
             if dt:
                 device_types.add(dt)
 
+        # Get parsed_data from the first result (same for all results of this API)
+        parsed_data_type = results[0].get("parsed_data")
+
         if len(device_types) > 1:
             # Generic API (e.g., FNA): generate one parser per device_type
             for result in results:
@@ -288,12 +343,15 @@ def generate_all_parsers(report_path: Path, output_dir: Path) -> int:
                     endpoint=result.get("url", "Unknown"),
                     raw_data=result["raw_data"],
                     output_dir=output_dir,
+                    device_type=dt,
+                    parsed_data=parsed_data_type,
                 )
                 if output_path:
                     generated_count += 1
         else:
             # Device-specific API (e.g., DNA) or non-switch API (e.g., GNMSPING)
             result = results[0]
+            dt = result["target_params"].get("device_type")
             output_path = generate_parser(
                 api_name=api_name,
                 target_name=result["target_name"],
@@ -301,6 +359,8 @@ def generate_all_parsers(report_path: Path, output_dir: Path) -> int:
                 endpoint=result.get("url", "Unknown"),
                 raw_data=result["raw_data"],
                 output_dir=output_dir,
+                device_type=dt,
+                parsed_data=parsed_data_type,
             )
             if output_path:
                 generated_count += 1
@@ -348,11 +408,9 @@ def main():
             "[bold green]🎉 Parser skeletons generated successfully![/bold green]"
         )
         console.print("\n[bold]Next steps:[/bold]")
-        console.print("  1. Open generated parser files")
-        console.print("  2. Copy raw_data from report")
-        console.print("  3. Ask AI to write parse() method")
-        console.print("  4. Fill AI-generated code into skeleton")
-        console.print("  5. Run 'make test-parsers' to validate\n")
+        console.print("  1. Open a parser file (raw data + ParsedData fields included)")
+        console.print("  2. Ask AI: 'fill in the parse() method'")
+        console.print("  3. Run 'make test-parsers' to validate\n")
 
 
 if __name__ == "__main__":

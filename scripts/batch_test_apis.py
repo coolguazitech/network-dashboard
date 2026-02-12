@@ -59,7 +59,9 @@ class TestResult:
         status_code: int | None = None,
         response_time_ms: float | None = None,
         url: str | None = None,
+        request_body: str | None = None,
         raw_data: str | None = None,
+        parsed_data: str | None = None,
         error: str | None = None,
         error_detail: str | None = None,
     ):
@@ -70,7 +72,9 @@ class TestResult:
         self.status_code = status_code
         self.response_time_ms = response_time_ms
         self.url = url
+        self.request_body = request_body
         self.raw_data = raw_data
+        self.parsed_data = parsed_data
         self.error = error
         self.error_detail = error_detail
 
@@ -84,7 +88,11 @@ class TestResult:
             "status_code": self.status_code,
             "response_time_ms": self.response_time_ms,
             "url": self.url,
+            "request_body": json.loads(self.request_body)
+            if self.request_body
+            else None,
             "raw_data": self.raw_data,
+            "parsed_data": self.parsed_data,
             "error": self.error,
             "error_detail": self.error_detail,
         }
@@ -174,14 +182,31 @@ def build_query_params(
 
 
 def build_request_body(
-    api_def: dict[str, Any], target_params: dict[str, Any]
+    api_def: dict[str, Any],
+    target_params: dict[str, Any],
+    sources: dict[str, Any],
 ) -> str | None:
-    """Build request body from template with placeholder substitution."""
+    """Build request body from template with placeholder substitution.
+
+    Also injects source-level env vars (e.g., app_name_env, token_env)
+    so body templates can use {app_name} and {token} placeholders.
+    """
     body_template = api_def.get("request_body_template")
     if not body_template:
         return None
 
-    return substitute_placeholders(body_template, target_params)
+    # Merge source-level env vars into params for substitution
+    merged_params = dict(target_params)
+    source_name = api_def.get("source")
+    source_config = sources.get(source_name, {})
+    for key in ("app_name", "token"):
+        env_key = source_config.get(f"{key}_env")
+        if env_key:
+            value = os.getenv(env_key)
+            if value:
+                merged_params[key] = value
+
+    return substitute_placeholders(body_template, merged_params)
 
 
 def get_auth_header(api_def: dict[str, Any], sources: dict[str, Any]) -> dict[str, str]:
@@ -221,6 +246,7 @@ async def test_api(
     api_name = api_def["name"]
     target_name = target["name"]
     target_params = target["params"]
+    parsed_data_type = api_def.get("parsed_data")
 
     try:
         # Build request
@@ -233,8 +259,9 @@ async def test_api(
         start_time = time.time()
 
         # Execute request
+        body = None
         if method == "POST":
-            body = build_request_body(api_def, target_params)
+            body = build_request_body(api_def, target_params, sources)
             response = await client.post(
                 url,
                 params=query_params,
@@ -263,8 +290,10 @@ async def test_api(
             success=True,
             status_code=response.status_code,
             response_time_ms=response_time_ms,
-            url=url,
+            url=str(response.request.url),
+            request_body=body,
             raw_data=response.text,
+            parsed_data=parsed_data_type,
         )
 
     except httpx.HTTPStatusError as e:
@@ -277,6 +306,8 @@ async def test_api(
             status_code=e.response.status_code,
             response_time_ms=response_time_ms,
             url=str(e.request.url),
+            request_body=body,
+            parsed_data=parsed_data_type,
             error=f"HTTP {e.response.status_code}",
             error_detail=e.response.text[:200],
         )
@@ -288,6 +319,8 @@ async def test_api(
             target_params=target_params,
             success=False,
             status_code=0,
+            request_body=body,
+            parsed_data=parsed_data_type,
             error="TimeoutException",
             error_detail=f"Connection timeout after 10.0 seconds: {str(e)}",
         )
@@ -299,6 +332,8 @@ async def test_api(
             target_params=target_params,
             success=False,
             status_code=0,
+            request_body=body,
+            parsed_data=parsed_data_type,
             error=type(e).__name__,
             error_detail=str(e),
         )

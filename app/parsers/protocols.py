@@ -23,14 +23,18 @@ ParsedData 是 Parser 與下游程式之間的嚴格契約：
 - 無法匹配枚舉時 → "unknown"（不拋錯，讓 indicator 判為 fail）
 
 ParsedData 子類別一覽：
-    TransceiverData   - 光模組診斷（Tx/Rx 功率、溫度、電壓）
-    InterfaceErrorData - 介面錯誤計數器（CRC、input/output errors）
-    FanStatusData     - 風扇狀態（status 自動正規化為 OperationalStatus）
-    VersionData       - 韌體版本（version, model, serial_number）
-    NeighborData      - 鄰居資訊（CDP/LLDP）
-    PortChannelData   - Port-Channel/LAG 資訊（成員、狀態、協議）
-    PowerData         - 電源供應器狀態
-    PingData          - Ping 可達性結果
+    TransceiverData      - 光模組診斷（多通道 Tx/Rx/Bias、溫度、電壓）
+    InterfaceErrorData   - 介面 CRC 錯誤計數
+    FanStatusData        - 風扇狀態（status 自動正規化為 OperationalStatus）
+    VersionData          - 韌體版本（version, model, serial_number）
+    NeighborData         - 鄰居資訊（CDP/LLDP）
+    PortChannelData      - Port-Channel/LAG 資訊（成員、狀態、協議）
+    PowerData            - 電源供應器狀態
+    MacTableData         - MAC 位址表
+    ArpData              - ARP 表（IP ↔ MAC）
+    AclData              - ACL 編號
+    InterfaceVlanData    - 介面 VLAN 對應（PVID）
+    PingResultData       - 單一 IP Ping 結果
 """
 from __future__ import annotations
 
@@ -118,26 +122,29 @@ class ParsedData(BaseModel):
     pass
 
 
-class TransceiverData(ParsedData):
-    """光模組 (Transceiver) 診斷資料。"""
+class TransceiverChannelData(BaseModel):
+    """單一通道的光模組診斷資料。"""
 
-    interface_name: str
+    channel: int = Field(ge=1, le=4, description="通道編號 (SFP=1, QSFP=1~4)")
     tx_power: float | None = Field(None, ge=-40.0, le=10.0, description="發射功率 (dBm)")
     rx_power: float | None = Field(None, ge=-40.0, le=10.0, description="接收功率 (dBm)")
-    temperature: float | None = Field(None, ge=-10.0, le=100.0, description="溫度 (°C)")
-    voltage: float | None = Field(None, ge=0.0, le=10.0, description="電壓 (V)")
+    bias_current_ma: float | None = Field(None, ge=0.0, description="偏置電流 (mA)")
+
+
+class TransceiverData(ParsedData):
+    """光模組診斷 — 支援 SFP (1 channel) 和 QSFP (4 channels)。"""
+
+    interface_name: str
+    temperature: float | None = Field(None, ge=-10.0, le=100.0, description="模組溫度 (°C)")
+    voltage: float | None = Field(None, ge=0.0, le=10.0, description="模組電壓 (V)")
+    channels: list[TransceiverChannelData] = Field(description="各通道診斷資料")
 
 
 class InterfaceErrorData(ParsedData):
-    """介面錯誤計數器。"""
+    """介面 CRC 錯誤計數 — parser 負責從原始輸出中僅提取 CRC errors。"""
 
     interface_name: str
-    crc_errors: int = Field(0, ge=0)
-    input_errors: int = Field(0, ge=0)
-    output_errors: int = Field(0, ge=0)
-    collisions: int = Field(0, ge=0)
-    giants: int = Field(0, ge=0)
-    runts: int = Field(0, ge=0)
+    crc_errors: int = Field(0, ge=0, description="純 CRC 錯誤數（不含 giants/runts 等）")
 
 
 class FanStatusData(ParsedData):
@@ -229,15 +236,6 @@ class PowerData(ParsedData):
         return _normalize_operational_status(v)
 
 
-class PingData(ParsedData):
-    """設備 Ping 可達性資料。"""
-
-    target: str
-    is_reachable: bool
-    success_rate: float = Field(ge=0.0, le=100.0, description="成功率 0-100%")
-    avg_rtt_ms: float | None = Field(None, ge=0.0)
-
-
 # ── Client Fetcher 中間資料模型 ──────────────────────────────────
 
 
@@ -304,8 +302,15 @@ class AclData(ParsedData):
     acl_number: str | None = None
 
 
-class PingManyData(ParsedData):
-    """Fetcher ping_many 的解析結果。"""
+class InterfaceVlanData(ParsedData):
+    """介面 VLAN 對應 — static 和 dynamic VLAN API 共用。"""
+
+    interface_name: str
+    vlan_id: int = Field(ge=1, le=4094)
+
+
+class PingResultData(ParsedData):
+    """單一 IP 的 Ping 結果。parse() 回傳 list[PingResultData] 代表多個 IP。"""
 
     ip_address: str
     is_reachable: bool
@@ -324,9 +329,9 @@ class BaseParser(ABC, Generic[TResult]):
     所有 Parser 的抽象基底類別 — 每個 Parser 負責解析一個特定 API 的 raw output。
 
     Parser 與 Indicator 完全解耦：
-    - Parser 只關心「如何將 raw text 轉為結構化資料」
-    - 一個 Parser 可能服務多個 Indicator
-    - 一個 Indicator 可能使用多個 Parser 的資料
+    - Parser 只關心「如何將 raw text 轉為對應的 ParsedData」
+    - 一個 ParsedData 可能服務多個 Indicator
+    - 一個 Indicator 可能使用多個 ParsedData 的資料
 
     =========================================================================
     如何新增一個 Parser：

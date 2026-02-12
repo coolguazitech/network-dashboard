@@ -10,15 +10,32 @@ Target: Ping-Batch-Dev
 """
 from __future__ import annotations
 
-from app.parsers.protocols import BaseParser
+
+from app.parsers.protocols import BaseParser, PingResultData
+
 from app.parsers.registry import parser_registry
 
 
-class PingBatchParser(BaseParser):
+class PingBatchParser(BaseParser[PingResultData]):
     """
     Parser for ping_batch API response.
 
-    Example raw output from Ping-Batch-Dev:
+
+    Target data model (PingResultData):
+    ```python
+    class PingResultData(ParsedData):
+    
+        ip_address: str
+        is_reachable: bool
+    
+        @field_validator("ip_address", mode="before")
+        @classmethod
+        def validate_ip(cls, v: str) -> str:
+            return _validate_ipv4(v)
+    ```
+
+
+    Raw output example from Ping-Batch-Dev:
     ```
     {
       "results": [
@@ -40,70 +57,15 @@ class PingBatchParser(BaseParser):
       ]
     }
     ```
-
-    TODO: Determine the appropriate ParsedData type for this API.
-    Common types:
-    - FanData (for fan status)
-    - InterfaceErrorData (for error counts)
-    - TransceiverData (for transceiver Tx/Rx power)
-    - PowerData (for power supply status)
-    - PortChannelData (for port-channel status)
-    - PingData (for ping results)
-    - ... (see app/parsers/protocols.py for full list)
-
-    Once you determine the type, update this class:
-    1. Import the ParsedData type and DeviceType enum if needed
-    2. Add Generic[YourType] to BaseParser
-    3. Set device_type (e.g., DeviceType.HPE) or None for generic
-    4. Implement parse() method
-
-    Example after filling in:
-        from app.core.enums import DeviceType
-        from app.parsers.protocols import BaseParser, FanStatusData
-
-        class PingBatchParser(BaseParser[FanStatusData]):
-            device_type = DeviceType.HPE
-            command = "ping_batch"
-
-            def parse(self, raw_output: str) -> list[FanStatusData]:
-                # Your parsing logic here
-                ...
     """
 
-    # TODO: Set device_type based on target device
-    device_type = None  # e.g., DeviceType.HPE (or None for generic)
+    device_type = None
     command = "ping_batch"
 
-    def parse(self, raw_output: str) -> list:
-        """
-        Parse raw API output into structured data.
+    def parse(self, raw_output: str) -> list[PingResultData]:
+        results: list[PingResultData] = []
 
-        Args:
-            raw_output: Raw text response from API
-
-        Returns:
-            List of parsed data objects (type depends on your ParsedData choice)
-
-        TODO: Implement parsing logic here.
-        Steps:
-        1. Choose appropriate ParsedData type (e.g., FanData, TransceiverData)
-        2. Split raw_output into lines or use regex patterns
-        3. Extract fields and create ParsedData instances
-        4. Return list of parsed objects
-
-        Example:
-            import re
-
-            results = []
-            for line in raw_output.strip().splitlines():
-                match = re.match(r"some_pattern", line)
-                if match:
-                    results.append(YourParsedDataType(...))
-            return results
-        """
-        results = []
-
-        # TODO: Add your parsing logic here
+        # TODO: Implement parsing logic
 
         return results
 

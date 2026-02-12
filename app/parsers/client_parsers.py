@@ -26,7 +26,7 @@ from app.parsers.protocols import (
     ArpData,
     InterfaceStatusData,
     MacTableData,
-    PingManyData,
+    PingResultData,
 )
 
 T = TypeVar("T", bound=BaseModel)
@@ -210,15 +210,15 @@ class PingManyParser(BaseFetcherParser):
         10.0.1.101,true
         10.0.1.102,false
 
-    產出: list[PingManyData]
+    產出: list[PingResultData]
     用途: 填入 ClientRecord 的 ping_reachable。
     """
 
-    def parse(self, raw_output: str) -> list[PingManyData]:
+    def parse(self, raw_output: str) -> list[PingResultData]:
         if not raw_output or not raw_output.strip():
             return []
 
-        entries: list[PingManyData] = []
+        entries: list[PingResultData] = []
         reader = csv.DictReader(StringIO(raw_output))
 
         for row in reader:
@@ -230,7 +230,7 @@ class PingManyParser(BaseFetcherParser):
 
             is_reachable = reachable_str in ("true", "1", "yes")
 
-            entries.append(PingManyData(
+            entries.append(PingResultData(
                 ip_address=ip,
                 is_reachable=is_reachable,
             ))

@@ -8,7 +8,7 @@ Usage:
 This will start a mock server on http://localhost:8001
 that simulates DNA/FNA/GNMSPING API responses.
 
-Covers all 19 APIs defined in config/api_test.yaml.
+Covers all 21 APIs defined in config/api_test.yaml.
 """
 from __future__ import annotations
 
@@ -25,18 +25,22 @@ class MockAPIHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
 
         # ── FNA APIs (generic, path param: /switch/get_xxx/{ip}) ──
-        if "/switch/get_transceiver/" in path:
+        if "/switch/network/get_gbic_details/" in path:
             self._send_mock_response(FNA_TRANSCEIVER_RESPONSE)
-        elif "/switch/get_port_channel/" in path:
+        elif "/switch/network/get_channel_group/" in path:
             self._send_mock_response(FNA_PORT_CHANNEL_RESPONSE)
-        elif "/switch/get_neighbors/" in path:
+        elif "/switch/network/get_neighbors/" in path:
             self._send_mock_response(FNA_UPLINK_RESPONSE)
-        elif "/switch/get_error_count/" in path:
+        elif "/switch/network/get_error_count/" in path:
             self._send_mock_response(FNA_ERROR_COUNT_RESPONSE)
-        elif "/switch/get_acl/" in path:
+        elif "/switch/network/get_acl/" in path:
             self._send_mock_response(FNA_ACL_RESPONSE)
-        elif "/switch/get_arp_table/" in path:
+        elif "/switch/network/get_arp_table/" in path:
             self._send_mock_response(FNA_ARP_TABLE_RESPONSE)
+        elif "/switch/network/get_static_vlan/" in path:
+            self._send_mock_response(FNA_STATIC_VLAN_RESPONSE)
+        elif "/switch/network/get_dynamic_vlan/" in path:
+            self._send_mock_response(FNA_DYNAMIC_VLAN_RESPONSE)
 
         # ── DNA APIs (device-specific, query_params: ?hosts={ip}) ──
         elif "/api/v1/hpe/mac-table" in path:
@@ -114,10 +118,32 @@ class MockAPIHandler(BaseHTTPRequestHandler):
 # Mock Response Data — FNA APIs (generic, same endpoint for all device types)
 # =============================================================================
 
-FNA_TRANSCEIVER_RESPONSE = """Interface    Tx Power (dBm)    Rx Power (dBm)
-GE1/0/1           -2.5              -3.1
-GE1/0/2           -2.3              -3.0
-XGE1/0/25         -1.8              -2.5
+FNA_TRANSCEIVER_RESPONSE = """GigabitEthernet1/0/1 transceiver diagnostic information:
+Current diagnostic parameters:
+  Temp(°C)  Voltage(V)
+  36        3.31
+
+  Channel   Bias(mA)  RX power(dBm)  TX power(dBm)
+  1         6.13      -3.10          -2.50
+
+GigabitEthernet1/0/2 transceiver diagnostic information:
+Current diagnostic parameters:
+  Temp(°C)  Voltage(V)
+  35        3.30
+
+  Channel   Bias(mA)  RX power(dBm)  TX power(dBm)
+  1         6.10      -3.00          -2.30
+
+FortyGigE1/0/25 transceiver diagnostic information:
+Current diagnostic parameters:
+  Temp(°C)  Voltage(V)
+  34        3.29
+
+  Channel   Bias(mA)  RX power(dBm)  TX power(dBm)
+  1         6.50      -2.10          -1.50
+  2         6.48      -2.30          -1.55
+  3         6.52      -2.05          -1.48
+  4         6.45      -2.20          -1.52
 """
 
 FNA_PORT_CHANNEL_RESPONSE = """Port-Channel    Status    Protocol    Members
@@ -130,11 +156,11 @@ GE1/0/25           CORE-SW-01         GE0/0/1             Cisco IOS
 GE1/0/26           CORE-SW-02         GE0/0/1             Cisco IOS
 """
 
-FNA_ERROR_COUNT_RESPONSE = """Interface            Input(errs)       Output(errs)
-GE1/0/1                        0                  0
-GE1/0/2                       12                  3
-GE1/0/3                        0                  0
-XGE1/0/25                      0                  0
+FNA_ERROR_COUNT_RESPONSE = """Interface            CRC Errors
+GE1/0/1                        0
+GE1/0/2                       15
+GE1/0/3                        0
+XGE1/0/25                      0
 """
 
 FNA_ACL_RESPONSE = """Interface    ACL Number
@@ -148,6 +174,20 @@ FNA_ARP_TABLE_RESPONSE = """IP Address        MAC Address            Interface
 192.168.1.1       aa:bb:cc:dd:ee:01      GE1/0/1
 192.168.1.2       aa:bb:cc:dd:ee:02      GE1/0/2
 192.168.1.3       aa:bb:cc:dd:ee:03      GE1/0/3
+"""
+
+FNA_STATIC_VLAN_RESPONSE = """Interface    VLAN
+GE1/0/1      10
+GE1/0/2      20
+GE1/0/3      10
+XGE1/0/25    100
+"""
+
+FNA_DYNAMIC_VLAN_RESPONSE = """Interface    VLAN
+GE1/0/1      10
+GE1/0/2      30
+GE1/0/3      10
+XGE1/0/25    100
 """
 
 # =============================================================================
@@ -251,13 +291,15 @@ def main():
     print("=" * 60)
     print(f"Address: http://{host}:{port}")
     print()
-    print("FNA APIs (generic, 6):")
-    print("  GET  /switch/get_transceiver/{ip}")
-    print("  GET  /switch/get_port_channel/{ip}")
-    print("  GET  /switch/get_neighbors/{ip}")
-    print("  GET  /switch/get_error_count/{ip}")
-    print("  GET  /switch/get_acl/{ip}")
-    print("  GET  /switch/get_arp_table/{ip}")
+    print("FNA APIs (generic, 8):")
+    print("  GET  /switch/network/get_gbic_details/{ip}")
+    print("  GET  /switch/network/get_channel_group/{ip}")
+    print("  GET  /switch/network/get_neighbors/{ip}")
+    print("  GET  /switch/network/get_error_count/{ip}")
+    print("  GET  /switch/network/get_acl/{ip}")
+    print("  GET  /switch/network/get_arp_table/{ip}")
+    print("  GET  /switch/network/get_static_vlan/{ip}")
+    print("  GET  /switch/network/get_dynamic_vlan/{ip}")
     print()
     print("DNA APIs (device-specific, 12):")
     print("  GET  /api/v1/{hpe,ios,nxos}/mac-table?hosts={ip}")

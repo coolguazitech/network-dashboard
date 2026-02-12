@@ -5,89 +5,64 @@ Auto-generated skeleton by scripts/generate_parsers.py.
 Fill in the parse() method logic.
 
 API Source: get_power_ios_dna
-Endpoint: http://localhost:8001/api/v1/ios/power
+Endpoint: http://localhost:8001/api/v1/ios/power?hosts=10.1.1.2
 Target: Mock-IOS-Switch
 """
 from __future__ import annotations
 
-from app.parsers.protocols import BaseParser
+
+from app.core.enums import DeviceType
+
+from app.parsers.protocols import BaseParser, PowerData
+
 from app.parsers.registry import parser_registry
 
 
-class GetPowerIosDnaParser(BaseParser):
+class GetPowerIosDnaParser(BaseParser[PowerData]):
     """
     Parser for get_power_ios_dna API response.
 
-    Example raw output from Mock-IOS-Switch:
+
+    Target data model (PowerData):
+    ```python
+    class PowerData(ParsedData):
+    
+        ps_id: str
+        status: str = Field(description="正規化為 OperationalStatus 枚舉值")
+        input_status: str | None = None
+        output_status: str | None = None
+        capacity_watts: float | None = Field(None, ge=0.0)
+        actual_output_watts: float | None = Field(None, ge=0.0)
+    
+        @field_validator("status", mode="before")
+        @classmethod
+        def normalize_status(cls, v: Any) -> str:
+            return _normalize_operational_status(v)
+    
+        @field_validator("input_status", "output_status", mode="before")
+        @classmethod
+        def normalize_sub_status(cls, v: Any) -> str | None:
+            if v is None:
+                return None
+            return _normalize_operational_status(v)
+    ```
+
+
+    Raw output example from Mock-IOS-Switch:
     ```
     Power Supply   Status
     PS1            OK
     PS2            OK
     ```
-
-    TODO: Determine the appropriate ParsedData type for this API.
-    Common types:
-    - FanData (for fan status)
-    - InterfaceErrorData (for error counts)
-    - TransceiverData (for transceiver Tx/Rx power)
-    - PowerData (for power supply status)
-    - PortChannelData (for port-channel status)
-    - PingData (for ping results)
-    - ... (see app/parsers/protocols.py for full list)
-
-    Once you determine the type, update this class:
-    1. Import the ParsedData type and DeviceType enum if needed
-    2. Add Generic[YourType] to BaseParser
-    3. Set device_type (e.g., DeviceType.HPE) or None for generic
-    4. Implement parse() method
-
-    Example after filling in:
-        from app.core.enums import DeviceType
-        from app.parsers.protocols import BaseParser, FanStatusData
-
-        class GetPowerIosDnaParser(BaseParser[FanStatusData]):
-            device_type = DeviceType.HPE
-            command = "get_power_ios_dna"
-
-            def parse(self, raw_output: str) -> list[FanStatusData]:
-                # Your parsing logic here
-                ...
     """
 
-    # TODO: Set device_type based on target device
-    device_type = None  # e.g., DeviceType.HPE (or None for generic)
+    device_type = DeviceType.CISCO_IOS
     command = "get_power_ios_dna"
 
-    def parse(self, raw_output: str) -> list:
-        """
-        Parse raw API output into structured data.
+    def parse(self, raw_output: str) -> list[PowerData]:
+        results: list[PowerData] = []
 
-        Args:
-            raw_output: Raw text response from API
-
-        Returns:
-            List of parsed data objects (type depends on your ParsedData choice)
-
-        TODO: Implement parsing logic here.
-        Steps:
-        1. Choose appropriate ParsedData type (e.g., FanData, TransceiverData)
-        2. Split raw_output into lines or use regex patterns
-        3. Extract fields and create ParsedData instances
-        4. Return list of parsed objects
-
-        Example:
-            import re
-
-            results = []
-            for line in raw_output.strip().splitlines():
-                match = re.match(r"some_pattern", line)
-                if match:
-                    results.append(YourParsedDataType(...))
-            return results
-        """
-        results = []
-
-        # TODO: Add your parsing logic here
+        # TODO: Implement parsing logic
 
         return results
 

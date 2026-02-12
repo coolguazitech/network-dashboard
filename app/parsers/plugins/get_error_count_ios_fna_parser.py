@@ -5,91 +5,50 @@ Auto-generated skeleton by scripts/generate_parsers.py.
 Fill in the parse() method logic.
 
 API Source: get_error_count_fna
-Endpoint: http://localhost:8001/switch/get_error_count/10.1.1.2
+Endpoint: http://localhost:8001/switch/network/get_error_count/10.1.1.2
 Target: Mock-IOS-Switch
 """
 from __future__ import annotations
 
-from app.parsers.protocols import BaseParser
+
+from app.core.enums import DeviceType
+
+from app.parsers.protocols import BaseParser, InterfaceErrorData
+
 from app.parsers.registry import parser_registry
 
 
-class GetErrorCountIosFnaParser(BaseParser):
+class GetErrorCountIosFnaParser(BaseParser[InterfaceErrorData]):
     """
     Parser for get_error_count_ios_fna API response.
 
-    Example raw output from Mock-IOS-Switch:
+
+    Target data model (InterfaceErrorData):
+    ```python
+    class InterfaceErrorData(ParsedData):
+    
+        interface_name: str
+        crc_errors: int = Field(0, ge=0, description="純 CRC 錯誤數（不含 giants/runts 等）")
     ```
-    Interface            Input(errs)       Output(errs)
-    GE1/0/1                        0                  0
-    GE1/0/2                       12                  3
-    GE1/0/3                        0                  0
-    XGE1/0/25                      0                  0
+
+
+    Raw output example from Mock-IOS-Switch:
     ```
-
-    TODO: Determine the appropriate ParsedData type for this API.
-    Common types:
-    - FanData (for fan status)
-    - InterfaceErrorData (for error counts)
-    - TransceiverData (for transceiver Tx/Rx power)
-    - PowerData (for power supply status)
-    - PortChannelData (for port-channel status)
-    - PingData (for ping results)
-    - ... (see app/parsers/protocols.py for full list)
-
-    Once you determine the type, update this class:
-    1. Import the ParsedData type and DeviceType enum if needed
-    2. Add Generic[YourType] to BaseParser
-    3. Set device_type (e.g., DeviceType.HPE) or None for generic
-    4. Implement parse() method
-
-    Example after filling in:
-        from app.core.enums import DeviceType
-        from app.parsers.protocols import BaseParser, FanStatusData
-
-        class GetErrorCountIosFnaParser(BaseParser[FanStatusData]):
-            device_type = DeviceType.HPE
-            command = "get_error_count_ios_fna"
-
-            def parse(self, raw_output: str) -> list[FanStatusData]:
-                # Your parsing logic here
-                ...
+    Interface            CRC Errors
+    GE1/0/1                        0
+    GE1/0/2                       15
+    GE1/0/3                        0
+    XGE1/0/25                      0
+    ```
     """
 
-    # TODO: Set device_type based on target device
-    device_type = None  # e.g., DeviceType.HPE (or None for generic)
+    device_type = DeviceType.CISCO_IOS
     command = "get_error_count_ios_fna"
 
-    def parse(self, raw_output: str) -> list:
-        """
-        Parse raw API output into structured data.
+    def parse(self, raw_output: str) -> list[InterfaceErrorData]:
+        results: list[InterfaceErrorData] = []
 
-        Args:
-            raw_output: Raw text response from API
-
-        Returns:
-            List of parsed data objects (type depends on your ParsedData choice)
-
-        TODO: Implement parsing logic here.
-        Steps:
-        1. Choose appropriate ParsedData type (e.g., FanData, TransceiverData)
-        2. Split raw_output into lines or use regex patterns
-        3. Extract fields and create ParsedData instances
-        4. Return list of parsed objects
-
-        Example:
-            import re
-
-            results = []
-            for line in raw_output.strip().splitlines():
-                match = re.match(r"some_pattern", line)
-                if match:
-                    results.append(YourParsedDataType(...))
-            return results
-        """
-        results = []
-
-        # TODO: Add your parsing logic here
+        # TODO: Implement parsing logic
 
         return results
 

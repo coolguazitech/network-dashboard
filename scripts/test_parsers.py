@@ -120,7 +120,8 @@ def find_parser_for_api(api_name: str, device_type: str | None = None) -> Any | 
         candidates.append(make_device_specific_name(api_name, device_type))
 
     # Search by command field
-    all_parsers = parser_registry._parsers.values()
+    all_keys = parser_registry.list_parsers()
+    all_parsers = [parser_registry.get(k.command, k.device_type) for k in all_keys]
 
     for candidate in candidates:
         for parser in all_parsers:
@@ -385,6 +386,11 @@ def main():
         sys.exit(1)
     elif empty_count > 0 and passed_count == 0:
         console.print("[yellow]⚠️  All parsers are empty skeletons — fill in parse() logic[/yellow]\n")
+    elif empty_count > 0:
+        console.print(
+            f"[bold green]🎉 {passed_count} parser(s) passed[/bold green], "
+            f"[yellow]{empty_count} still empty[/yellow]\n"
+        )
     else:
         console.print("[bold green]🎉 All parsers passed validation![/bold green]\n")
 

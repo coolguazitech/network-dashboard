@@ -40,7 +40,7 @@ from app.parsers.protocols import (
     ArpData,
     InterfaceStatusData,
     MacTableData,
-    PingManyData,
+    PingResultData,
 )
 from app.fetchers.base import FetchContext
 from app.fetchers.registry import fetcher_registry
@@ -69,7 +69,7 @@ class _ParsedIntermediates:
         self.arp_entries: list[ArpData] = []
         self.if_entries: list[InterfaceStatusData] = []
         self.acl_entries: list[AclData] = []
-        self.ping_entries: list[PingManyData] = []
+        self.ping_entries: list[PingResultData] = []
 
 
 # ── Service ──────────────────────────────────────────────────────
@@ -1399,7 +1399,7 @@ class ClientCollectionService:
     def _parse_gnms_ping_result(
         self,
         raw_output: str,
-    ) -> list[PingManyData]:
+    ) -> list[PingResultData]:
         """
         解析 GNMS Ping 結果。
 
@@ -1411,7 +1411,7 @@ class ClientCollectionService:
         Returns:
             每個 client IP 的 ping 結果列表
         """
-        ping_entries: list[PingManyData] = []
+        ping_entries: list[PingResultData] = []
         lines = raw_output.strip().split("\n")
 
         for line in lines[1:]:  # 跳過 header
@@ -1419,7 +1419,7 @@ class ClientCollectionService:
             if len(parts) >= 2:
                 ip = parts[0].strip()
                 reachable = parts[1].strip().lower() == "true"
-                ping_entries.append(PingManyData(
+                ping_entries.append(PingResultData(
                     ip_address=ip,
                     is_reachable=reachable,
                 ))
