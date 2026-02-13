@@ -260,18 +260,28 @@ async def fetch_all(
     for api_def in apis:
         api_name = api_def["name"]
         source_name = api_def["source"]
-        endpoint_template = endpoints.get(api_name, "") or api_def.get("endpoint", "")
+        endpoint_raw = endpoints.get(api_name, "") or api_def.get("endpoint", "")
         method = api_def.get("method", "GET").upper()
         query_params_template = api_def.get("query_params")
         parser_cmd = api_def.get("parser_command", "")
         description = api_def.get("description", "")
 
+        # endpoint_raw can be:
+        #   str  — shared endpoint for all device_types (FNA style)
+        #   dict — per-device_type endpoints (DNA style: {hpe: "...", ios: "...", nxos: "..."})
+        is_per_device = isinstance(endpoint_raw, dict)
+
         # Filter by API name
         if api_filter and api_filter not in api_name:
             continue
 
-        # Skip if endpoint not configured
-        if not endpoint_template:
+        # Skip if endpoint not configured (string case)
+        if not is_per_device and not endpoint_raw:
+            print(f"  {C.DIM}SKIP{C.RESET} {api_name}: {C.DIM}endpoint not configured{C.RESET}")
+            stats.skipped += 1
+            continue
+        # Skip if all per-device endpoints are empty
+        if is_per_device and not any(endpoint_raw.values()):
             print(f"  {C.DIM}SKIP{C.RESET} {api_name}: {C.DIM}endpoint not configured{C.RESET}")
             stats.skipped += 1
             continue
@@ -303,7 +313,7 @@ async def fetch_all(
                 stats.skipped += 1
                 continue
 
-            url = build_url(base_url, endpoint_template)
+            url = build_url(base_url, endpoint_raw)
             app_name_val = os.environ.get("GNMSPING_APP_NAME", "")
             token_val = os.environ.get("GNMSPING_TOKEN", "")
             body = {
@@ -341,6 +351,17 @@ async def fetch_all(
                 continue
             if target_filter and target_filter != ip:
                 continue
+
+            # Resolve endpoint: dict → per-device_type, str → shared
+            if is_per_device:
+                endpoint_template = endpoint_raw.get(device_type, "")
+                if not endpoint_template:
+                    print(f"  {C.DIM}SKIP{C.RESET} {api_name}/{device_type}: "
+                          f"{C.DIM}endpoint not configured for {device_type}{C.RESET}")
+                    stats.skipped += 1
+                    continue
+            else:
+                endpoint_template = endpoint_raw
 
             endpoint = resolve_endpoint(endpoint_template, ip, device_type)
             query_params = resolve_query_params(

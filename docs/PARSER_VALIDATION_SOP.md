@@ -22,31 +22,32 @@ sources:
 
 ### 1.2 填入 API Endpoint 路徑
 
-到公司查好每個 API 的真實路徑，填入 `endpoints` 區塊：
+到公司查好每個 API 的真實路徑，填入 `endpoints` 區塊。
 
+**FNA** — 所有 device_type 共用同一個 endpoint（字串格式）：
 ```yaml
 endpoints:
-  # FNA
   get_gbic_details:     "/switch/network/get_gbic_details/{ip}"
   get_channel_group:    "/switch/network/get_channel_group/{ip}"
-  get_uplink:           "/switch/network/get_neighbors/{ip}"
-  get_error_count:      "/switch/network/get_error_count/{ip}"
-  get_static_acl:       "/switch/network/get_static_acl/{ip}"
-  get_dynamic_acl:      "/switch/network/get_dynamic_acl/{ip}"
-  get_arp_table:        "/switch/network/get_arp_table/{ip}"
-
-  # DNA
-  get_mac_table:        "/api/v1/{device_type}/mac-table"
-  get_fan:              "/api/v1/{device_type}/fan"
-  get_power:            "/api/v1/{device_type}/power"
-  get_version:          "/api/v1/{device_type}/version"
-
-  # GNMSPING
-  ping_batch:           "/api/v1/ping"
+  # ...
 ```
 
-> 支援佔位符：`{ip}` = 交換機 IP，`{device_type}` = hpe/ios/nxos
+**DNA** — 每個 device_type 的指令不同，用字典格式分開填：
+```yaml
+  get_version:
+    hpe:  "/api/v1/hpe/version/display_version"
+    ios:  "/api/v1/ios/version/show_version"
+    nxos: "/api/v1/nxos/version/show_version"
+  get_fan:
+    hpe:  "/api/v1/hpe/fan/display_fan"
+    ios:  "/api/v1/ios/fan/show_fan"
+    nxos: "/api/v1/nxos/fan/show_fan"
+  # ...
+```
+
+> 支援佔位符：`{ip}` = 交換機 IP
 > 沒填的 endpoint 會被跳過，不影響其他 API 測試
+> DNA 字典格式中，個別 device_type 留空也會被跳過
 
 ### 1.3 填入測試交換機
 
