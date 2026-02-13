@@ -16,8 +16,6 @@ sources:
     base_url: "http://真實FNA的IP:PORT"    # ← 改這裡
   DNA:
     base_url: "http://真實DNA的IP:PORT"    # ← 改這裡
-  GNMSPING:
-    base_url: "http://真實GNMSPING的IP:PORT"  # ← 改這裡
 ```
 
 ### 1.2 填入 API Endpoint 路徑
@@ -73,10 +71,8 @@ targets:
 編輯 `.env`，把以下 placeholder 改成真實值：
 
 ```bash
-# .env 裡面找到這幾行，改掉 <...> 部分
+# .env 裡面找到這行，改掉 <...> 部分
 FNA_TOKEN=你的真實token            # ← 原本是 <從公司內部系統獲取>
-GNMSPING_APP_NAME=你的app_name     # ← 原本是 <GNMSPING app name>
-GNMSPING_TOKEN=你的token           # ← 原本是 <GNMSPING token>
 ```
 
 ---
@@ -138,8 +134,8 @@ make parse-verbose
 
 ```
 === SUMMARY ===
-  Total:        34
-  OK Parsed:    28    ← 有解析出資料
+  Total:        33
+  OK Parsed:    27    ← 有解析出資料
   Empty result: 4     ← 沒解析出任何東西（需要看 raw data）
   Errors:       2     ← Parser 報錯（需要修 regex）
 ```
@@ -221,6 +217,5 @@ git commit -m "fix: adjust parser regex for real API output"
 | get_fan | DNA | `get_fan_{dt}_dna` | FanStatusData |
 | get_power | DNA | `get_power_{dt}_dna` | PowerData |
 | get_version | DNA | `get_version_{dt}_dna` | VersionData |
-| ping_batch | GNMSPING | `ping_batch` | PingResultData |
 
-`{dt}` = `hpe` / `ios` / `nxos`，共 7×3 + 4×3 + 1 = **34 個 parser**
+`{dt}` = `hpe` / `ios` / `nxos`，共 7×3 + 4×3 = **33 個 parser**

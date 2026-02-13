@@ -66,10 +66,6 @@ def parse_filename(filename: str) -> tuple[str, str, str] | None:
 
     Special case: ping_batch_all_batch.txt → (ping_batch, all, batch)
     """
-    # Special handling for ping_batch
-    if filename.startswith("ping_batch_"):
-        return ("ping_batch", "all", "batch")
-
     match = FILENAME_PATTERN.match(filename)
     if not match:
         return None
@@ -84,9 +80,6 @@ def resolve_parser_command(api_name: str, device_type: str) -> str:
     DNA APIs: get_fan → get_fan_{device_type}_dna
     Ping: ping_batch → ping_batch
     """
-    if api_name == "ping_batch":
-        return "ping_batch"
-
     # Try to find the parser by checking both FNA and DNA suffixes
     for suffix in ("fna", "dna"):
         command = f"{api_name}_{device_type}_{suffix}"
@@ -124,9 +117,6 @@ def format_record_summary(record: object) -> str:
         return f"  {d.get('ip_address', '?')} -> {d.get('mac_address', '?')}"
     elif class_name == "AclData":
         return f"  {d.get('interface_name', '?')}: acl={d.get('acl_number', 'none')}"
-    elif class_name == "PingResultData":
-        status = "reachable" if d.get("is_reachable") else "unreachable"
-        return f"  {d.get('ip_address', '?')}: {status}"
     elif class_name == "TransceiverData":
         channels = d.get("channels", [])
         return f"  {d.get('interface_name', '?')}: {len(channels)} ch, temp={d.get('temperature', '?')}"

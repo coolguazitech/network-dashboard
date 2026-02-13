@@ -30,10 +30,6 @@ sources:
     timeout: 30
     auth: null                                    # DNA 不需要認證
 
-  GNMSPING:
-    base_url: ""                                  # TODO: 填入真實 GNMSPING base URL
-    timeout: 60
-    auth: null                                    # auth 放在 request body 中
 
 # ── API Endpoint 路徑 ──
 # 到公司查好真實路徑後填入，支援佔位符 {ip} 和 {device_type}
@@ -76,8 +72,6 @@ endpoints:
     ios:  ""                                      # e.g. /api/v1/ios/version/show_version
     nxos: ""                                      # e.g. /api/v1/nxos/version/show_version
 
-  # GNMSPING
-  ping_batch:           ""                        # TODO: e.g. /api/v1/ping
 
 # ── 測試目標交換機 ──
 # 每種 device_type 至少填一台，用於驗證對應的 parser
@@ -93,13 +87,6 @@ targets:
   - ip: ""                                        # TODO: Cisco NX-OS 交換機 IP
     hostname: ""
     device_type: nxos
-
-# ── GNMSPING 測試目標（Ping 批次測試用）──
-ping_targets:
-  tenant_group: ""                                # TODO: 填 tenant group
-  addresses: []                                   # TODO: 填要 ping 的 IP 清單
-  #  - "10.1.1.1"
-  #  - "10.1.1.2"
 
 
 # =============================================================================
@@ -172,9 +159,3 @@ apis:
     parser_command: "get_version_{device_type}_dna"
     description: "韌體版本"
 
-  # ── GNMSPING（POST, auth in body）──
-  - name: ping_batch
-    source: GNMSPING
-    method: POST
-    parser_command: "ping_batch"
-    description: "批量 Ping 可達性檢查"

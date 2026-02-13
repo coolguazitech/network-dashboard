@@ -151,11 +151,9 @@ class FetchTask:
     """A single fetch task to execute."""
     api_name: str
     description: str
-    method: str
     url: str
     query_params: dict[str, str] | None
     headers: dict[str, str]
-    body: dict | None
     timeout: float
     save_api_name: str
     save_device_type: str
@@ -183,17 +181,12 @@ async def execute_task(
     """Execute a single fetch task with semaphore-based concurrency control."""
     async with sem:
         try:
-            if task.method == "POST":
-                resp = await client.post(
-                    task.url, json=task.body, timeout=task.timeout
-                )
-            else:
-                resp = await client.get(
-                    task.url,
-                    params=task.query_params,
-                    headers=task.headers,
-                    timeout=task.timeout,
-                )
+            resp = await client.get(
+                task.url,
+                params=task.query_params,
+                headers=task.headers,
+                timeout=task.timeout,
+            )
 
             status = resp.status_code
             content = resp.text
@@ -247,8 +240,6 @@ async def fetch_all(
     endpoints = config.get("endpoints", {})
     targets = config.get("targets", [])
     apis = config.get("apis", [])
-    ping_targets = config.get("ping_targets", {})
-
     stats = FetchStats()
     tasks: list[FetchTask] = []
     token_warned: set[str] = set()
@@ -261,7 +252,6 @@ async def fetch_all(
         api_name = api_def["name"]
         source_name = api_def["source"]
         endpoint_raw = endpoints.get(api_name, "") or api_def.get("endpoint", "")
-        method = api_def.get("method", "GET").upper()
         query_params_template = api_def.get("query_params")
         parser_cmd = api_def.get("parser_command", "")
         description = api_def.get("description", "")
@@ -305,42 +295,7 @@ async def fetch_all(
             stats.skipped += 1
             continue
 
-        # ── GNMSPING (POST) ──
-        if api_name == "ping_batch":
-            addresses = ping_targets.get("addresses", [])
-            if not addresses:
-                print(f"  {C.DIM}SKIP{C.RESET} {api_name}: {C.DIM}no ping_targets.addresses configured{C.RESET}")
-                stats.skipped += 1
-                continue
-
-            url = build_url(base_url, endpoint_raw)
-            app_name_val = os.environ.get("GNMSPING_APP_NAME", "")
-            token_val = os.environ.get("GNMSPING_TOKEN", "")
-            body = {
-                "app_name": app_name_val,
-                "token": token_val,
-                "addresses": addresses,
-            }
-
-            stats.total += 1
-            tasks.append(FetchTask(
-                api_name=api_name,
-                description=description,
-                method="POST",
-                url=url,
-                query_params=None,
-                headers={},
-                body=body,
-                timeout=timeout,
-                save_api_name=api_name,
-                save_device_type="all",
-                save_ip="batch",
-                display_label=f"{api_name} ({len(addresses)} IPs)",
-                parser_command="ping_batch",
-            ))
-            continue
-
-        # ── FNA / DNA APIs (GET, per target) ──
+        # ── FNA / DNA APIs (per target) ──
         for target in targets:
             ip = target.get("ip", "")
             hostname = target.get("hostname", "") or ip
@@ -375,11 +330,9 @@ async def fetch_all(
             tasks.append(FetchTask(
                 api_name=api_name,
                 description=description,
-                method=method,
                 url=url,
                 query_params=query_params,
                 headers=headers,
-                body=None,
                 timeout=timeout,
                 save_api_name=api_name,
                 save_device_type=device_type,
@@ -393,7 +346,7 @@ async def fetch_all(
         print(f"\n  {C.BOLD}Dry-run: {len(tasks)} requests would be made{C.RESET}\n")
         for t in tasks:
             params_str = f"?{_format_params(t.query_params)}" if t.query_params else ""
-            print(f"  {C.CYAN}{t.method}{C.RESET} {t.url}{params_str}")
+            print(f"  {C.CYAN}GET{C.RESET} {t.url}{params_str}")
             print(f"       {C.DIM}parser: {t.parser_command}{C.RESET}")
         print(f"\n{C.BOLD}{C.CYAN}{'═' * 70}{C.RESET}")
         print(f"  {C.BOLD}SUMMARY{C.RESET}: {stats.total} requests, {stats.skipped} skipped {C.DIM}(dry-run){C.RESET}")
