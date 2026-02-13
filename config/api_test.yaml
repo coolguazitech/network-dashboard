@@ -3,166 +3,156 @@
 # =============================================================================
 #
 # 使用流程：
-#   1. 填入 sources 的真實 base_url
-#   2. 填入 targets 的真實交換機 IP / hostname / device_type
-#   3. 設定環境變數 FNA_TOKEN（或寫在 .env）
-#   4. make fetch          → 撈取所有 API raw data 存到 test_data/raw/
-#   5. make parse          → 把 raw data 餵進 parser，輸出結果報告
+#   1. 填入下方所有 TODO 欄位（sources / endpoints / targets）
+#   2. 設定環境變數 FNA_TOKEN（或寫在 .env）
+#   3. make fetch-dry       → 確認 URL 對不對
+#   4. make fetch           → 撈取所有 API raw data 存到 test_data/raw/
+#   5. make parse           → 把 raw data 餵進 parser，輸出結果報告
 #   6. 微調 parser regex（如果有 empty/error 結果）
-#
-# 也可以分步驟跑：
-#   make fetch-dry         → 只印 URL 不實際呼叫（確認 endpoint 正確）
-#   make fetch --api fan   → 只撈特定 API
-#   make parse --verbose   → 印完整 ParsedData JSON
 # =============================================================================
 
-# ── API 來源設定 ──
+
+# =============================================================================
+# TODO 區：到公司要填的東西都在這裡
+# =============================================================================
+
+# ── API 來源（base URL + auth）──
 sources:
   FNA:
-    base_url: "http://localhost:8001"         # TODO: 填入真實 FNA base URL
+    base_url: ""                                  # TODO: 填入真實 FNA base URL
     timeout: 30
     auth:
-      type: header                            # Authorization: Bearer <token>
-      token_env: FNA_TOKEN                    # 從環境變數或 .env 讀取
+      type: header                                # Authorization: Bearer <token>
+      token_env: FNA_TOKEN                        # 從環境變數或 .env 讀取
 
   DNA:
-    base_url: "http://localhost:8001"         # TODO: 填入真實 DNA base URL
+    base_url: ""                                  # TODO: 填入真實 DNA base URL
     timeout: 30
-    auth: null                                # DNA 不需要認證
+    auth: null                                    # DNA 不需要認證
 
   GNMSPING:
-    base_url: "http://localhost:8001"         # TODO: 填入真實 GNMSPING base URL
+    base_url: ""                                  # TODO: 填入真實 GNMSPING base URL
     timeout: 60
-    auth: null                                # auth 放在 request body 中
+    auth: null                                    # auth 放在 request body 中
+
+# ── API Endpoint 路徑 ──
+# 到公司查好真實路徑後填入，支援佔位符 {ip} 和 {device_type}
+# {device_type} 會自動替換為 hpe / ios / nxos
+endpoints:
+  # FNA（所有廠牌共用同一個 endpoint，FNA 內部自動偵測廠牌）
+  get_gbic_details:     ""                        # TODO: e.g. /switch/network/get_gbic_details/{ip}
+  get_channel_group:    ""                        # TODO: e.g. /switch/network/get_channel_group/{ip}
+  get_uplink:           ""                        # TODO: e.g. /switch/network/get_neighbors/{ip}
+  get_error_count:      ""                        # TODO: e.g. /switch/network/get_error_count/{ip}
+  get_static_acl:       ""                        # TODO: e.g. /switch/network/get_static_acl/{ip}
+  get_dynamic_acl:      ""                        # TODO: e.g. /switch/network/get_dynamic_acl/{ip}
+  get_arp_table:        ""                        # TODO: e.g. /switch/network/get_arp_table/{ip}
+
+  # DNA（需要 device_type 在路徑或 query param 中）
+  get_mac_table:        ""                        # TODO: e.g. /api/v1/{device_type}/mac-table
+  get_fan:              ""                        # TODO: e.g. /api/v1/{device_type}/fan
+  get_power:            ""                        # TODO: e.g. /api/v1/{device_type}/power
+  get_version:          ""                        # TODO: e.g. /api/v1/{device_type}/version
+
+  # GNMSPING
+  ping_batch:           ""                        # TODO: e.g. /api/v1/ping
 
 # ── 測試目標交換機 ──
 # 每種 device_type 至少填一台，用於驗證對應的 parser
 targets:
-  - ip: "10.1.1.1"                            # TODO: 換成真實 IP
-    hostname: "FAB-HPE-5710-01"               # TODO: 換成真實 hostname
+  - ip: ""                                        # TODO: HPE 交換機 IP
+    hostname: ""                                  # TODO: HPE hostname
     device_type: hpe
 
-  - ip: "10.1.1.2"                            # TODO: 換成真實 IP
-    hostname: "FAB-IOS-3750-01"
+  - ip: ""                                        # TODO: Cisco IOS 交換機 IP
+    hostname: ""
     device_type: ios
 
-  - ip: "10.1.1.3"                            # TODO: 換成真實 IP
-    hostname: "FAB-NXOS-9300-01"
+  - ip: ""                                        # TODO: Cisco NX-OS 交換機 IP
+    hostname: ""
     device_type: nxos
 
 # ── GNMSPING 測試目標（Ping 批次測試用）──
 ping_targets:
-  tenant_group: "Dev"                         # TODO: 換成真實 tenant group
-  addresses:                                  # TODO: 填入要 ping 的 IP 清單
-    - "10.1.1.1"
-    - "10.1.1.2"
-    - "10.1.1.3"
+  tenant_group: ""                                # TODO: 填 tenant group
+  addresses: []                                   # TODO: 填要 ping 的 IP 清單
+  #  - "10.1.1.1"
+  #  - "10.1.1.2"
+
 
 # =============================================================================
-# API 定義
+# API 定義（不需修改，除非要新增/移除 API）
 # =============================================================================
-# 每個 API 定義：
-#   name:            API 顯示名稱
-#   source:          來源（FNA / DNA / GNMSPING）
-#   endpoint:        URL path 模板，支援 {ip} 和 {device_type} 佔位符
-#   query_params:    額外 query params（可選），支援 {ip} 佔位符
-#   method:          HTTP method（預設 GET）
-#   parser_command:  對應的 parser command 名稱模板
-#                    {device_type} 會被替換為 hpe/ios/nxos
-#
+# endpoint 欄位引用上方 endpoints 區塊的 key
+# parser_command 中 {device_type} 會被替換為 hpe/ios/nxos
 # 產生的檔案名：test_data/raw/{name}_{device_type}_{ip}.txt
 # =============================================================================
 
 apis:
-  # ══════════════════════════════════════════════════════════════════════════
-  # FNA APIs — Generic endpoints（FNA 內部自動偵測廠牌）
-  # ══════════════════════════════════════════════════════════════════════════
-
+  # ── FNA APIs（所有 device_type 共用同一個 endpoint）──
   - name: get_gbic_details
     source: FNA
-    endpoint: "/switch/network/get_gbic_details/{ip}"
     parser_command: "get_gbic_details_{device_type}_fna"
     description: "光模組 Tx/Rx 功率"
 
   - name: get_channel_group
     source: FNA
-    endpoint: "/switch/network/get_channel_group/{ip}"
     parser_command: "get_channel_group_{device_type}_fna"
     description: "Port-Channel 狀態及成員"
 
   - name: get_uplink
     source: FNA
-    endpoint: "/switch/network/get_neighbors/{ip}"
     parser_command: "get_uplink_{device_type}_fna"
     description: "Uplink 鄰居拓撲 (CDP/LLDP)"
 
   - name: get_error_count
     source: FNA
-    endpoint: "/switch/network/get_error_count/{ip}"
     parser_command: "get_error_count_{device_type}_fna"
     description: "Interface 錯誤計數"
 
   - name: get_static_acl
     source: FNA
-    endpoint: "/switch/network/get_static_acl/{ip}"
     parser_command: "get_static_acl_{device_type}_fna"
     description: "Static ACL 綁定"
 
   - name: get_dynamic_acl
     source: FNA
-    endpoint: "/switch/network/get_dynamic_acl/{ip}"
     parser_command: "get_dynamic_acl_{device_type}_fna"
     description: "Dynamic ACL 綁定"
 
   - name: get_arp_table
     source: FNA
-    endpoint: "/switch/network/get_arp_table/{ip}"
     parser_command: "get_arp_table_{device_type}_fna"
     description: "ARP 表"
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # DNA APIs — Device-specific endpoints（需要 device_type）
-  # ══════════════════════════════════════════════════════════════════════════
-
+  # ── DNA APIs（需要 device_type）──
   - name: get_mac_table
     source: DNA
-    endpoint: "/api/v1/{device_type}/mac-table"
-    query_params:
-      hosts: "{ip}"
+    query_params: { hosts: "{ip}" }
     parser_command: "get_mac_table_{device_type}_dna"
     description: "MAC 位址表"
 
   - name: get_fan
     source: DNA
-    endpoint: "/api/v1/{device_type}/fan"
-    query_params:
-      hosts: "{ip}"
+    query_params: { hosts: "{ip}" }
     parser_command: "get_fan_{device_type}_dna"
     description: "風扇狀態"
 
   - name: get_power
     source: DNA
-    endpoint: "/api/v1/{device_type}/power"
-    query_params:
-      hosts: "{ip}"
+    query_params: { hosts: "{ip}" }
     parser_command: "get_power_{device_type}_dna"
     description: "電源供應器狀態"
 
   - name: get_version
     source: DNA
-    endpoint: "/api/v1/{device_type}/version"
-    query_params:
-      hosts: "{ip}"
+    query_params: { hosts: "{ip}" }
     parser_command: "get_version_{device_type}_dna"
     description: "韌體版本"
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # GNMSPING — Ping 批次檢查（POST, auth in body）
-  # ══════════════════════════════════════════════════════════════════════════
-
+  # ── GNMSPING（POST, auth in body）──
   - name: ping_batch
     source: GNMSPING
-    endpoint: "/api/v1/ping"
     method: POST
     parser_command: "ping_batch"
     description: "批量 Ping 可達性檢查"

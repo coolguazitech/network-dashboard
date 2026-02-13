@@ -118,6 +118,7 @@ def fetch_all(config: dict, api_filter: str | None, target_filter: str | None,
               dry_run: bool) -> None:
     """Main fetch loop."""
     sources = config.get("sources", {})
+    endpoints = config.get("endpoints", {})
     targets = config.get("targets", [])
     apis = config.get("apis", [])
     ping_targets = config.get("ping_targets", {})
@@ -135,7 +136,8 @@ def fetch_all(config: dict, api_filter: str | None, target_filter: str | None,
     for api_def in apis:
         api_name = api_def["name"]
         source_name = api_def["source"]
-        endpoint_template = api_def["endpoint"]
+        # Endpoint comes from top-level endpoints section (fallback to inline for compat)
+        endpoint_template = endpoints.get(api_name, "") or api_def.get("endpoint", "")
         method = api_def.get("method", "GET").upper()
         query_params_template = api_def.get("query_params")
         parser_cmd = api_def.get("parser_command", "")
@@ -145,10 +147,23 @@ def fetch_all(config: dict, api_filter: str | None, target_filter: str | None,
         if api_filter and api_filter not in api_name:
             continue
 
+        # Skip if endpoint not configured
+        if not endpoint_template:
+            print(f"\n--- {api_name} ({description}) ---")
+            print(f"  Skipped: endpoint not configured in endpoints.{api_name}")
+            skipped += 1
+            continue
+
         source_config = sources.get(source_name, {})
-        base_url = source_config.get("base_url", "http://localhost:8001")
+        base_url = source_config.get("base_url", "")
         timeout = source_config.get("timeout", 30)
         headers = get_auth_headers(source_config)
+
+        if not base_url:
+            print(f"\n--- {api_name} ({description}) ---")
+            print(f"  Skipped: sources.{source_name}.base_url not configured")
+            skipped += 1
+            continue
 
         # ── GNMSPING (POST, special handling) ──
         if api_name == "ping_batch":
@@ -198,10 +213,14 @@ def fetch_all(config: dict, api_filter: str | None, target_filter: str | None,
 
         # ── FNA / DNA APIs (GET, per target) ──
         for target in targets:
-            ip = target["ip"]
-            hostname = target.get("hostname", ip)
-            raw_device_type = target["device_type"]
+            ip = target.get("ip", "")
+            hostname = target.get("hostname", "") or ip
+            raw_device_type = target.get("device_type", "")
             device_type = DEVICE_TYPE_MAP.get(raw_device_type, raw_device_type)
+
+            # Skip targets with empty IP
+            if not ip:
+                continue
 
             # Filter by target
             if target_filter and target_filter != ip:
