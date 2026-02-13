@@ -26,6 +26,22 @@ from pathlib import Path
 import httpx
 import yaml
 
+# ── ANSI colors ──
+class C:
+    """ANSI color codes for terminal output."""
+    RESET   = "\033[0m"
+    BOLD    = "\033[1m"
+    DIM     = "\033[2m"
+    GREEN   = "\033[32m"
+    YELLOW  = "\033[33m"
+    RED     = "\033[31m"
+    CYAN    = "\033[36m"
+    MAGENTA = "\033[35m"
+    WHITE   = "\033[37m"
+    BG_GREEN  = "\033[42m"
+    BG_RED    = "\033[41m"
+    BG_YELLOW = "\033[43m"
+
 # ── Resolve paths ──
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "api_test.yaml"
@@ -188,30 +204,34 @@ async def execute_task(
             if 200 <= status < 300:
                 stats.success += 1
                 stats.results.append(
-                    f"  OK   {task.display_label} -> HTTP {status}, "
-                    f"{len(content)} bytes -> {filepath.name}"
+                    f"  {C.GREEN} OK {C.RESET} {task.display_label} "
+                    f"{C.DIM}HTTP {status}, {len(content)} bytes{C.RESET} "
+                    f"-> {C.CYAN}{filepath.name}{C.RESET}"
                 )
             else:
                 stats.failed += 1
                 stats.results.append(
-                    f"  FAIL {task.display_label} -> HTTP {status}: "
-                    f"{content[:100]}"
+                    f"  {C.RED}FAIL{C.RESET} {task.display_label} "
+                    f"{C.RED}HTTP {status}{C.RESET}: {content[:80]}"
                 )
 
         except httpx.ConnectError:
             stats.failed += 1
             stats.results.append(
-                f"  FAIL {task.display_label} -> Connection refused"
+                f"  {C.RED}FAIL{C.RESET} {task.display_label} "
+                f"{C.RED}Connection refused{C.RESET}"
             )
         except httpx.TimeoutException:
             stats.failed += 1
             stats.results.append(
-                f"  FAIL {task.display_label} -> Timeout after {task.timeout}s"
+                f"  {C.RED}FAIL{C.RESET} {task.display_label} "
+                f"{C.RED}Timeout after {task.timeout}s{C.RESET}"
             )
         except Exception as e:
             stats.failed += 1
             stats.results.append(
-                f"  FAIL {task.display_label} -> {type(e).__name__}: {e}"
+                f"  {C.RED}FAIL{C.RESET} {task.display_label} "
+                f"{C.RED}{type(e).__name__}: {e}{C.RESET}"
             )
 
 
@@ -233,9 +253,9 @@ async def fetch_all(
     tasks: list[FetchTask] = []
     token_warned: set[str] = set()
 
-    print("=" * 70)
-    print("FETCH RAW DATA")
-    print("=" * 70)
+    print(f"\n{C.BOLD}{C.CYAN}{'═' * 70}")
+    print(f"  FETCH RAW DATA")
+    print(f"{'═' * 70}{C.RESET}\n")
 
     for api_def in apis:
         api_name = api_def["name"]
@@ -252,7 +272,7 @@ async def fetch_all(
 
         # Skip if endpoint not configured
         if not endpoint_template:
-            print(f"  SKIP {api_name}: endpoint not configured")
+            print(f"  {C.DIM}SKIP{C.RESET} {api_name}: {C.DIM}endpoint not configured{C.RESET}")
             stats.skipped += 1
             continue
 
@@ -267,11 +287,11 @@ async def fetch_all(
             token_env = auth["token_env"]
             token_val = os.environ.get(token_env, "")
             if (not token_val or token_val.startswith("<")) and token_env not in token_warned:
-                print(f"  WARN {token_env} not set or is placeholder")
+                print(f"  {C.YELLOW}WARN{C.RESET} {token_env} not set or is placeholder")
                 token_warned.add(token_env)
 
         if not base_url:
-            print(f"  SKIP {api_name}: sources.{source_name}.base_url not configured")
+            print(f"  {C.DIM}SKIP{C.RESET} {api_name}: {C.DIM}sources.{source_name}.base_url not configured{C.RESET}")
             stats.skipped += 1
             continue
 
@@ -279,7 +299,7 @@ async def fetch_all(
         if api_name == "ping_batch":
             addresses = ping_targets.get("addresses", [])
             if not addresses:
-                print(f"  SKIP {api_name}: no ping_targets.addresses configured")
+                print(f"  {C.DIM}SKIP{C.RESET} {api_name}: {C.DIM}no ping_targets.addresses configured{C.RESET}")
                 stats.skipped += 1
                 continue
 
@@ -349,22 +369,22 @@ async def fetch_all(
 
     # ── Dry run: just print all tasks ──
     if dry_run:
-        print(f"\nDry-run: {len(tasks)} requests would be made\n")
+        print(f"\n  {C.BOLD}Dry-run: {len(tasks)} requests would be made{C.RESET}\n")
         for t in tasks:
             params_str = f"?{_format_params(t.query_params)}" if t.query_params else ""
-            print(f"  {t.method} {t.url}{params_str}")
-            print(f"       -> parser: {t.parser_command}")
-        print(f"\n{'=' * 70}")
-        print(f"SUMMARY: {stats.total} requests, {stats.skipped} skipped (dry-run)")
-        print("=" * 70)
+            print(f"  {C.CYAN}{t.method}{C.RESET} {t.url}{params_str}")
+            print(f"       {C.DIM}parser: {t.parser_command}{C.RESET}")
+        print(f"\n{C.BOLD}{C.CYAN}{'═' * 70}{C.RESET}")
+        print(f"  {C.BOLD}SUMMARY{C.RESET}: {stats.total} requests, {stats.skipped} skipped {C.DIM}(dry-run){C.RESET}")
+        print(f"{C.BOLD}{C.CYAN}{'═' * 70}{C.RESET}")
         return
 
     if not tasks:
-        print("\nNo tasks to execute. Check config/api_test.yaml.")
+        print(f"\n  {C.YELLOW}No tasks to execute. Check config/api_test.yaml.{C.RESET}")
         return
 
     # ── Execute all tasks concurrently ──
-    print(f"\nExecuting {len(tasks)} requests (concurrency={concurrency})...\n")
+    print(f"\n  {C.BOLD}Fetching {len(tasks)} requests {C.DIM}(concurrency={concurrency}){C.RESET}...\n")
 
     sem = asyncio.Semaphore(concurrency)
     async with httpx.AsyncClient(verify=False) as client:
@@ -377,14 +397,20 @@ async def fetch_all(
         print(line)
 
     # ── Summary ──
-    print(f"\n{'=' * 70}")
-    print("SUMMARY")
-    print("=" * 70)
-    print(f"  Total:   {stats.total}")
-    print(f"  Success: {stats.success}")
-    print(f"  Failed:  {stats.failed}")
-    print(f"  Skipped: {stats.skipped}")
-    print(f"\n  Raw data saved to: {RAW_DIR}/")
+    print(f"\n{C.BOLD}{C.CYAN}{'═' * 70}{C.RESET}")
+    print(f"  {C.BOLD}SUMMARY{C.RESET}")
+    print(f"{C.BOLD}{C.CYAN}{'═' * 70}{C.RESET}")
+    print(f"  Total:   {C.BOLD}{stats.total}{C.RESET}")
+    print(f"  Success: {C.GREEN}{C.BOLD}{stats.success}{C.RESET}")
+    if stats.failed:
+        print(f"  Failed:  {C.RED}{C.BOLD}{stats.failed}{C.RESET}")
+    else:
+        print(f"  Failed:  {stats.failed}")
+    if stats.skipped:
+        print(f"  Skipped: {C.DIM}{stats.skipped}{C.RESET}")
+    else:
+        print(f"  Skipped: {stats.skipped}")
+    print(f"\n  Raw data saved to: {C.CYAN}{RAW_DIR}/{C.RESET}")
 
 
 def main() -> None:

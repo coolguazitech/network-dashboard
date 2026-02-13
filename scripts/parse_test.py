@@ -21,6 +21,19 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+# ── ANSI colors ──
+class C:
+    """ANSI color codes for terminal output."""
+    RESET   = "\033[0m"
+    BOLD    = "\033[1m"
+    DIM     = "\033[2m"
+    GREEN   = "\033[32m"
+    YELLOW  = "\033[33m"
+    RED     = "\033[31m"
+    CYAN    = "\033[36m"
+    MAGENTA = "\033[35m"
+    WHITE   = "\033[37m"
+
 # ── Resolve paths ──
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = PROJECT_ROOT / "test_data" / "raw"
@@ -132,17 +145,17 @@ def run_parse_tests(
     """Main parse test loop."""
     # Discover all parsers
     count = auto_discover_parsers()
-    print(f"Loaded {count} parser modules, {len(parser_registry._parsers)} registered\n")
+    print(f"\n  {C.DIM}Loaded {count} parser modules, {len(parser_registry._parsers)} registered{C.RESET}\n")
 
     if not RAW_DIR.exists():
-        print(f"No raw data directory found: {RAW_DIR}")
-        print("Run 'make fetch' first to fetch raw API data.")
+        print(f"  {C.RED}No raw data directory found: {RAW_DIR}{C.RESET}")
+        print(f"  Run {C.CYAN}make fetch{C.RESET} first to fetch raw API data.")
         sys.exit(1)
 
     raw_files = sorted(RAW_DIR.glob("*.txt"))
     if not raw_files:
-        print(f"No .txt files found in {RAW_DIR}")
-        print("Run 'make fetch' first to fetch raw API data.")
+        print(f"  {C.RED}No .txt files found in {RAW_DIR}{C.RESET}")
+        print(f"  Run {C.CYAN}make fetch{C.RESET} first to fetch raw API data.")
         sys.exit(1)
 
     # Stats
@@ -152,15 +165,15 @@ def run_parse_tests(
     errors = 0
     report_entries: list[dict] = []
 
-    print("=" * 70)
-    print("PARSE TEST RESULTS")
-    print("=" * 70)
+    print(f"{C.BOLD}{C.MAGENTA}{'═' * 70}")
+    print(f"  PARSE TEST RESULTS")
+    print(f"{'═' * 70}{C.RESET}")
 
     for filepath in raw_files:
         parsed_info = parse_filename(filepath.name)
         if parsed_info is None:
-            print(f"\n--- {filepath.name} ---")
-            print("  Skipped: could not parse filename")
+            print(f"\n  {C.DIM}--- {filepath.name} ---{C.RESET}")
+            print(f"  {C.DIM}Skipped: could not parse filename{C.RESET}")
             continue
 
         api_name, device_type, ip = parsed_info
@@ -178,10 +191,10 @@ def run_parse_tests(
         # Get parser
         parser = parser_registry.get(parser_command, dt_enum)
 
-        print(f"\n--- {parser_command} ({device_type} / {ip}) ---")
+        print(f"\n  {C.BOLD}--- {parser_command} ({device_type} / {ip}) ---{C.RESET}")
 
         if parser is None:
-            print(f"  Parser not found: {parser_command}")
+            print(f"    {C.RED}Parser not found: {parser_command}{C.RESET}")
             errors += 1
             report_entries.append({
                 "file": filepath.name,
@@ -193,13 +206,13 @@ def run_parse_tests(
 
         # Read raw data
         raw_output = filepath.read_text(encoding="utf-8")
-        print(f"  Raw: {len(raw_output)} bytes, {len(raw_output.splitlines())} lines")
+        print(f"    {C.DIM}Raw: {len(raw_output)} bytes, {len(raw_output.splitlines())} lines{C.RESET}")
 
         # Parse
         try:
             results = parser.parse(raw_output)
         except Exception as e:
-            print(f"  PARSE ERROR: {type(e).__name__}: {e}")
+            print(f"    {C.RED}PARSE ERROR: {type(e).__name__}: {e}{C.RESET}")
             if verbose:
                 traceback.print_exc()
             errors += 1
@@ -214,7 +227,7 @@ def run_parse_tests(
         record_count = len(results)
 
         if record_count == 0:
-            print(f"  Parsed: 0 records  !! (empty -- parser may need adjustment)")
+            print(f"    {C.YELLOW}Parsed: 0 records  !! (empty — parser may need adjustment){C.RESET}")
             empty += 1
             report_entries.append({
                 "file": filepath.name,
@@ -223,22 +236,22 @@ def run_parse_tests(
                 "record_count": 0,
             })
         else:
-            print(f"  Parsed: {record_count} records  OK")
+            print(f"    {C.GREEN}Parsed: {record_count} records  OK{C.RESET}")
             parsed_ok += 1
 
             # Show record summaries
             display_count = min(record_count, max_records)
             for i, record in enumerate(results[:display_count]):
-                print(format_record_summary(record))
+                print(f"    {C.DIM}{format_record_summary(record)}{C.RESET}")
             if record_count > display_count:
-                print(f"  ... and {record_count - display_count} more")
+                print(f"    {C.DIM}... and {record_count - display_count} more{C.RESET}")
 
             # Verbose: full JSON
             if verbose:
-                print("  Full JSON:")
+                print(f"    {C.DIM}Full JSON:{C.RESET}")
                 for record in results[:display_count]:
                     d = record.model_dump() if hasattr(record, "model_dump") else vars(record)
-                    print(f"    {json.dumps(d, ensure_ascii=False, default=str)}")
+                    print(f"      {C.DIM}{json.dumps(d, ensure_ascii=False, default=str)}{C.RESET}")
 
             report_entries.append({
                 "file": filepath.name,
@@ -252,25 +265,31 @@ def run_parse_tests(
             })
 
     # ── Summary ──
-    print("\n" + "=" * 70)
-    print("SUMMARY")
-    print("=" * 70)
-    print(f"  Total:        {total}")
-    print(f"  OK Parsed:    {parsed_ok}")
-    print(f"  Empty result: {empty}")
-    print(f"  Errors:       {errors}")
+    print(f"\n{C.BOLD}{C.MAGENTA}{'═' * 70}{C.RESET}")
+    print(f"  {C.BOLD}SUMMARY{C.RESET}")
+    print(f"{C.BOLD}{C.MAGENTA}{'═' * 70}{C.RESET}")
+    print(f"  Total:        {C.BOLD}{total}{C.RESET}")
+    print(f"  OK Parsed:    {C.GREEN}{C.BOLD}{parsed_ok}{C.RESET}")
+    if empty:
+        print(f"  Empty result: {C.YELLOW}{C.BOLD}{empty}{C.RESET}")
+    else:
+        print(f"  Empty result: {empty}")
+    if errors:
+        print(f"  Errors:       {C.RED}{C.BOLD}{errors}{C.RESET}")
+    else:
+        print(f"  Errors:       {errors}")
 
     if empty > 0:
-        print(f"\n  Empty results (parser may need adjustment):")
+        print(f"\n  {C.YELLOW}Empty results (parser may need adjustment):{C.RESET}")
         for entry in report_entries:
             if entry["status"] == "empty":
-                print(f"    - {entry['file']} ({entry['parser']})")
+                print(f"    {C.YELLOW}-{C.RESET} {entry['file']} {C.DIM}({entry['parser']}){C.RESET}")
 
     if errors > 0:
-        print(f"\n  Errors:")
+        print(f"\n  {C.RED}Errors:{C.RESET}")
         for entry in report_entries:
             if entry["status"] == "error":
-                print(f"    - {entry['file']}: {entry.get('error', '?')}")
+                print(f"    {C.RED}-{C.RESET} {entry['file']}: {entry.get('error', '?')}")
 
     # Save report
     if save_report:
