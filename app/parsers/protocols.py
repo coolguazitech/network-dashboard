@@ -33,7 +33,6 @@ ParsedData 子類別一覽：
     MacTableData         - MAC 位址表
     ArpData              - ARP 表（IP ↔ MAC）
     AclData              - ACL 編號
-    InterfaceVlanData    - 介面 VLAN 對應（PVID）
     PingResultData       - 單一 IP Ping 結果
 """
 from __future__ import annotations
@@ -302,13 +301,6 @@ class AclData(ParsedData):
     acl_number: str | None = None
 
 
-class InterfaceVlanData(ParsedData):
-    """介面 VLAN 對應 — static 和 dynamic VLAN API 共用。"""
-
-    interface_name: str
-    vlan_id: int = Field(ge=1, le=4094)
-
-
 class PingResultData(ParsedData):
     """單一 IP 的 Ping 結果。parse() 回傳 list[PingResultData] 代表多個 IP。"""
 
@@ -337,11 +329,7 @@ class BaseParser(ABC, Generic[TResult]):
     如何新增一個 Parser：
     =========================================================================
 
-    1. 用 toolchain 自動生成骨架：make gen-parsers
-    2. 填寫 parse() 邏輯（可用 AI 輔助）
-    3. 驗證：make test-parsers
-
-    手動建立範例：
+    範例：
 
         .. code-block:: python
 

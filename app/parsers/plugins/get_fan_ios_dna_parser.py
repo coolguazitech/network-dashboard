@@ -1,59 +1,80 @@
 """
 Parser for 'get_fan_ios_dna' API.
 
-Auto-generated skeleton by scripts/generate_parsers.py.
-Fill in the parse() method logic.
-
-API Source: get_fan_ios_dna
-Endpoint: http://localhost:8001/api/v1/ios/fan?hosts=10.1.1.2
-Target: Mock-IOS-Switch
+Parses Cisco IOS ``show environment`` fan output to extract fan status.
 """
 from __future__ import annotations
 
+import re
 
 from app.core.enums import DeviceType
-
 from app.parsers.protocols import BaseParser, FanStatusData
-
 from app.parsers.registry import parser_registry
 
 
 class GetFanIosDnaParser(BaseParser[FanStatusData]):
     """
-    Parser for get_fan_ios_dna API response.
+    Parser for Cisco IOS ``show environment`` / ``show env all`` fan output.
 
+    Real CLI output (ref: Cisco IOS ``show env all``)::
 
-    Target data model (FanStatusData):
-    ```python
-    class FanStatusData(ParsedData):
-    
-        fan_id: str
-        status: str = Field(description="正規化為 OperationalStatus 枚舉值")
-        speed_rpm: int | None = Field(None, ge=0)
-        speed_percent: int | None = Field(None, ge=0, le=100)
-    
-        @field_validator("status", mode="before")
-        @classmethod
-        def normalize_status(cls, v: Any) -> str:
-            return _normalize_operational_status(v)
-    ```
+        FAN 1 is OK
+        FAN 2 is OK
+        FAN PS-1 is OK
+        FAN PS-2 is NOT OK
+        SYSTEM FAN is OK
 
+    Some platforms use alternative format::
 
-    Raw output example from Mock-IOS-Switch:
-    ```
-    SYSTEM FAN is OK
-    Fan 1 is OK
-    Fan 2 is OK
-    ```
+        SYSTEM FANS:
+        FAN is OK
+
+    Notes:
+        - Matches ``<label> is <status>`` lines where label contains "FAN".
+        - Status: OK, NOT OK, NOT PRESENT, etc.
+        - fan_id preserves the original label (e.g. "FAN 1", "FAN PS-1").
     """
 
     device_type = DeviceType.CISCO_IOS
     command = "get_fan_ios_dna"
 
+    # Matches lines like:
+    #   "FAN 1 is OK"
+    #   "SYSTEM FAN is OK"
+    #   "FAN PS-1 is NOT OK"
+    #   "Fan_in_PS-1 is Ok"
+    # Captures everything before "is" as fan_id, everything after as status.
+    FAN_LINE_PATTERN = re.compile(
+        r"^(.+?)\s+is\s+(.+?)\s*$", re.MULTILINE | re.IGNORECASE
+    )
+
     def parse(self, raw_output: str) -> list[FanStatusData]:
         results: list[FanStatusData] = []
 
-        # TODO: Implement parsing logic
+        if not raw_output or not raw_output.strip():
+            return results
+
+        for match in self.FAN_LINE_PATTERN.finditer(raw_output):
+            fan_id = match.group(1).strip()
+            status = match.group(2).strip()
+
+            # Only process lines that look like fan entries
+            # (contain "FAN" somewhere in the identifier)
+            if "fan" not in fan_id.lower():
+                continue
+
+            # Skip separator or header lines
+            if fan_id.startswith("-") or fan_id.startswith("="):
+                continue
+
+            results.append(
+                FanStatusData(
+                    fan_id=fan_id,
+                    status=status,
+                    speed_rpm=None,
+                    speed_percent=None,
+                )
+            )
 
         return results
 

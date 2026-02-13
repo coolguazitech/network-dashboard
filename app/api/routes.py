@@ -13,7 +13,6 @@ from app.api.endpoints import (
     comparisons,
     contacts,
     dashboard,
-    dev_tools,
     expectations,
     indicators,
     mac_list,
@@ -117,11 +116,4 @@ api_router.include_router(
     users.router,
     prefix="",
     tags=["Users"],
-)
-
-# Dev Tools (測試用)
-api_router.include_router(
-    dev_tools.router,
-    prefix="",
-    tags=["Dev Tools"],
 )

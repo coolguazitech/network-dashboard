@@ -1,86 +1,110 @@
 """
 Parser for 'get_gbic_details_ios_fna' API.
 
-Auto-generated skeleton by scripts/generate_parsers.py.
-Fill in the parse() method logic.
+Parses Cisco IOS/IOS-XE `show interfaces transceiver` tabular output.
 
-API Source: get_gbic_details_fna
-Endpoint: http://localhost:8001/switch/network/get_gbic_details/10.1.1.2
-Target: Mock-IOS-Switch
+Real CLI command: show interfaces transceiver
+Platforms: Catalyst 2960, 3560, 3750, 3850, 9200, 9300, 9500
 """
 from __future__ import annotations
 
+import re
 
 from app.core.enums import DeviceType
-
 from app.parsers.protocols import BaseParser, TransceiverData
-
 from app.parsers.protocols import TransceiverChannelData
-
 from app.parsers.registry import parser_registry
+
+# IOS interface abbreviation → full name mapping (for reference only)
+# Gi = GigabitEthernet, Te = TenGigabitEthernet, Twe = TwentyFiveGigE,
+# Fo = FortyGigabitEthernet, Hu = HundredGigE, Ap = AppGigabitEthernet
 
 
 class GetGbicDetailsIosFnaParser(BaseParser[TransceiverData]):
     """
-    Parser for get_gbic_details_ios_fna API response.
+    Parser for Cisco IOS/IOS-XE `show interfaces transceiver` tabular output.
 
-
-    Target data model (TransceiverData):
-    ```python
-    class TransceiverChannelData(BaseModel):
-    
-        channel: int = Field(ge=1, le=4, description="通道編號 (SFP=1, QSFP=1~4)")
-        tx_power: float | None = Field(None, ge=-40.0, le=10.0, description="發射功率 (dBm)")
-        rx_power: float | None = Field(None, ge=-40.0, le=10.0, description="接收功率 (dBm)")
-        bias_current_ma: float | None = Field(None, ge=0.0, description="偏置電流 (mA)")
-
-    class TransceiverData(ParsedData):
-    
-        interface_name: str
-        temperature: float | None = Field(None, ge=-10.0, le=100.0, description="模組溫度 (°C)")
-        voltage: float | None = Field(None, ge=0.0, le=10.0, description="模組電壓 (V)")
-        channels: list[TransceiverChannelData] = Field(description="各通道診斷資料")
+    Real output format:
+    ```
+                                            Optical   Optical
+               Temperature  Voltage  Current  Tx Power  Rx Power
+    Port       (Celsius)    (Volts)  (mA)     (dBm)     (dBm)
+    ---------  -----------  -------  -------  --------  --------
+    Gi1/0/1    32.7         3.28     6.1      -2.5      -3.1
+    Gi1/0/2    28.1         3.30     6.0      -2.3      -3.0
+    Te1/0/25   28.3         3.31     35.2     -1.2      -2.8
+    Te1/0/26   N/A          N/A      N/A      N/A       N/A
     ```
 
-
-    Raw output example from Mock-IOS-Switch:
-    ```
-    GigabitEthernet1/0/1 transceiver diagnostic information:
-    Current diagnostic parameters:
-      Temp(°C)  Voltage(V)
-      36        3.31
-    
-      Channel   Bias(mA)  RX power(dBm)  TX power(dBm)
-      1         6.13      -3.10          -2.50
-    
-    GigabitEthernet1/0/2 transceiver diagnostic information:
-    Current diagnostic parameters:
-      Temp(°C)  Voltage(V)
-      35        3.30
-    
-      Channel   Bias(mA)  RX power(dBm)  TX power(dBm)
-      1         6.10      -3.00          -2.30
-    
-    FortyGigE1/0/25 transceiver diagnostic information:
-    Current diagnostic parameters:
-      Temp(°C)  Voltage(V)
-      34        3.29
-    
-      Channel   Bias(mA)  RX power(dBm)  TX power(dBm)
-      1         6.50      -2.10          -1.50
-      2         6.48      -2.30          -1.55
-      3         6.52      -2.05          -1.48
-      4         6.45      -2.20          -1.52
-    ```
+    Notes:
+    - One row per interface, each row = 1 channel (channel 1)
+    - Values can be "N/A" when transceiver doesn't support DOM/DDM
+    - Interface names are abbreviated: Gi, Te, Twe, Fo, Hu, Ap, etc.
+    - Alarm indicators may appear: ++ (high alarm), + (high warn),
+      - (low warn), -- (low alarm), appended to values
     """
 
     device_type = DeviceType.CISCO_IOS
     command = "get_gbic_details_ios_fna"
 
+    # Match data rows: port name followed by numeric/N/A values
+    # Handles alarm indicators like "32.7++" or "-3.1--"
+    ROW_PATTERN = re.compile(
+        r'^\s*(?P<port>\S+)\s+'
+        r'(?P<temp>-?\d+(?:\.\d+)?[+\-]*|N/?A)\s+'
+        r'(?P<voltage>\d+(?:\.\d+)?[+\-]*|N/?A)\s+'
+        r'(?P<current>\d+(?:\.\d+)?[+\-]*|N/?A)\s+'
+        r'(?P<tx>-?\d+(?:\.\d+)?[+\-]*|N/?A)\s+'
+        r'(?P<rx>-?\d+(?:\.\d+)?[+\-]*|N/?A)\s*$',
+        re.MULTILINE
+    )
+
+    @staticmethod
+    def _parse_value(val: str) -> float | None:
+        """Parse a value string, stripping alarm indicators and handling N/A."""
+        val = val.strip()
+        if val.upper() in ("N/A", "N\\A", "NA", "--"):
+            return None
+        # Strip alarm indicators (++, +, -, --)
+        cleaned = re.sub(r'[+\-]+$', '', val)
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+
     def parse(self, raw_output: str) -> list[TransceiverData]:
         results: list[TransceiverData] = []
 
-        # TODO: Implement parsing logic
+        for match in self.ROW_PATTERN.finditer(raw_output):
+            port = match.group('port')
+
+            # Skip header-like rows (e.g., "Port", "---------")
+            if port.startswith('-') or port.lower() == 'port':
+                continue
+
+            temp = self._parse_value(match.group('temp'))
+            voltage = self._parse_value(match.group('voltage'))
+            current = self._parse_value(match.group('current'))
+            tx_power = self._parse_value(match.group('tx'))
+            rx_power = self._parse_value(match.group('rx'))
+
+            # Skip interfaces with no DOM data at all
+            if all(v is None for v in (temp, voltage, current, tx_power, rx_power)):
+                continue
+
+            channel = TransceiverChannelData(
+                channel=1,
+                tx_power=tx_power,
+                rx_power=rx_power,
+                bias_current_ma=current,
+            )
+
+            results.append(TransceiverData(
+                interface_name=port,
+                temperature=temp,
+                voltage=voltage,
+                channels=[channel],
+            ))
 
         return results
 

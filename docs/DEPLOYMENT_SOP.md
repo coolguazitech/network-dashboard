@@ -212,75 +212,7 @@ Parser 按設備類型分：
 | Cisco IOS | `DeviceType.CISCO_IOS` | `get_{indicator}_ios_fna` | `get_{indicator}_ios_dna` |
 | Cisco NXOS | `DeviceType.CISCO_NXOS` | `get_{indicator}_nxos_fna` | `get_{indicator}_nxos_dna` |
 
-### 2.3 Parser 開發工具鏈（推薦流程）
-
-使用工具鏈可以快速驗證 API 串接並生成 Parser：
-
-```
-┌─ config/api_test.yaml ─────────────────────────────────┐
-│ 定義所有 API（endpoint, source, target_filter）         │
-│ → 到公司只需填入真實 base_url 和 IP                      │
-└───────────────┬─────────────────────────────────────────┘
-                │
-     make test-apis  (或 make docker-test-apis)
-                │
-                ▼
-┌─ reports/api_test_*.json ──────────────────────────────┐
-│ 每個 API 的測試結果：status, raw_data, response_time   │
-│ → 確認哪些 API 能正常打通                               │
-└───────────────┬─────────────────────────────────────────┘
-                │
-     make gen-parsers  (或 make docker-gen-parsers)
-                │
-                ▼
-┌─ app/parsers/plugins/*_parser.py ──────────────────────┐
-│ 自動生成骨架，含 raw_data 範例在 docstring 中            │
-│ → 複製 raw_data 給 AI，請 AI 寫 parse() 邏輯           │
-└───────────────┬─────────────────────────────────────────┘
-                │
-     make test-parsers  (或 make docker-test-parsers)
-                │
-                ▼
-┌─ reports/parser_test_*.json ───────────────────────────┐
-│ passed: parse() 正常回傳 > 0 筆資料                     │
-│ empty: 骨架尚未填寫 parse() 邏輯                        │
-│ failed: parse() 拋出例外                               │
-└─────────────────────────────────────────────────────────┘
-```
-
-**本地開發（在家）**：
-
-```bash
-# 1. 啟動 Mock Server（另一個終端機）
-python scripts/mock_api_server.py
-
-# 2. 執行完整工具鏈
-make test-apis       # 批次測試所有 API
-make gen-parsers     # 生成 parser 骨架
-make test-parsers    # 驗證 parser
-
-# 或一次全部跑完
-make all
-```
-
-**公司環境（容器內執行）**：
-
-```bash
-# 在容器內執行
-make docker-test-apis
-make docker-gen-parsers
-make docker-test-parsers
-```
-
-**填寫 Parser 邏輯（AI 輔助）**：
-
-1. 打開 `reports/api_test_*.json`，找到該 API 的 `raw_data`
-2. 複製 raw_data 給 AI（ChatGPT / 公司內部 AI）
-3. 告訴 AI 目標的 ParsedData 類型（見 2.7 節）
-4. 將 AI 產出的 `parse()` 邏輯貼入骨架檔案
-5. `make test-parsers` 驗證結果
-
-### 2.4 設定外部 API 連線（.env）
+### 2.3 設定外部 API 連線（.env）
 
 ```ini
 # ===== 關閉 Mock 模式 =====
@@ -549,13 +481,6 @@ docker-compose -f docker-compose.production.yml up -d
 # ========== 切換真實 API ==========
 # .env 中設定 USE_MOCK_API=false + 填入 API URL
 docker-compose -f docker-compose.production.yml restart app
-
-# ========== 開發迴圈（工具鏈） ==========
-1. make test-apis   → 批次打 API，拿到 raw_data（reports/api_test_*.json）
-2. make gen-parsers → 生成 parser 骨架（app/parsers/plugins/）
-3. 填 parse() 邏輯  → 複製 raw_data 給 AI 產出程式碼
-4. make test-parsers→ 驗證 parser 輸出
-5. 打包推送         → bash scripts/build-and-push.sh v1.3.0
 
 # ========== 公司端更新（當前版本 v1.2.0） ==========
 # 修改 docker-compose.production.yml 中的版本號

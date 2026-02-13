@@ -1,68 +1,147 @@
 """
 Parser for 'get_power_hpe_dna' API.
 
-Auto-generated skeleton by scripts/generate_parsers.py.
-Fill in the parse() method logic.
+Parses HPE Comware `display power` output to extract power supply status
+for each slot/power-supply combination.
 
-API Source: get_power_hpe_dna
-Endpoint: http://localhost:8001/api/v1/hpe/power?hosts=10.1.1.1
-Target: Mock-HPE-Switch
+Real CLI command: display power
+Platforms: HPE Comware (5710, 5940, 5945, 5130, etc.)
 """
 from __future__ import annotations
 
+import re
 
 from app.core.enums import DeviceType
-
 from app.parsers.protocols import BaseParser, PowerData
-
 from app.parsers.registry import parser_registry
 
 
 class GetPowerHpeDnaParser(BaseParser[PowerData]):
     """
-    Parser for get_power_hpe_dna API response.
+    Parser for HPE Comware ``display power`` output.
 
+    Real CLI output (ref: HPE Comware CLI Reference)::
 
-    Target data model (PowerData):
-    ```python
-    class PowerData(ParsedData):
-    
-        ps_id: str
-        status: str = Field(description="正規化為 OperationalStatus 枚舉值")
-        input_status: str | None = None
-        output_status: str | None = None
-        capacity_watts: float | None = Field(None, ge=0.0)
-        actual_output_watts: float | None = Field(None, ge=0.0)
-    
-        @field_validator("status", mode="before")
-        @classmethod
-        def normalize_status(cls, v: Any) -> str:
-            return _normalize_operational_status(v)
-    
-        @field_validator("input_status", "output_status", mode="before")
-        @classmethod
-        def normalize_sub_status(cls, v: Any) -> str | None:
-            if v is None:
-                return None
-            return _normalize_operational_status(v)
-    ```
+        Slot 1:
+        PowerID State    Mode   Current(A)  Voltage(V)  Power(W)  FanDirection
+        1       Normal   AC     --          --          --        Back-to-front
+        2       Absent   AC     --          --          --        Back-to-front
 
+        Slot 2:
+        PowerID State    Mode   Current(A)  Voltage(V)  Power(W)  FanDirection
+        1       Normal   AC     1.2         12.0        150       Back-to-front
 
-    Raw output example from Mock-HPE-Switch:
-    ```
-    Power Supply Status:
-    PS 1/1         Ok       Input: OK   Output: OK   Capacity: 350W   Actual: 180W
-    PS 1/2         Ok       Input: OK   Output: OK   Capacity: 350W   Actual: 175W
-    ```
+    Also handles ``PS slot/id`` format::
+
+        Power Supply Status:
+        PS 1/1         Ok       Input: OK   Output: OK   Capacity: 350W   Actual: 180W
+        PS 1/2         Ok       Input: OK   Output: OK   Capacity: 350W   Actual: 175W
+
+    Notes:
+        - ps_id formatted as ``PS {slot}/{power_id}`` (e.g. "PS 1/1").
+        - State: Normal, Absent, Fail, etc.
+        - Power(W) column: ``--`` means not available.
     """
 
     device_type = DeviceType.HPE
     command = "get_power_hpe_dna"
 
+    # Matches "Slot X:" header line
+    SLOT_PATTERN = re.compile(r"^\s*Slot\s+(\d+)\s*:", re.MULTILINE)
+
+    # Matches data rows in the display-power table format
+    # PowerID  State  Mode  Current(A)  Voltage(V)  Power(W)  FanDirection
+    DATA_ROW_PATTERN = re.compile(
+        r"^\s*(?P<power_id>\d+)\s+"
+        r"(?P<state>\S+)\s+"
+        r"(?P<mode>\S+)\s+"
+        r"(?P<current>\S+)\s+"
+        r"(?P<voltage>\S+)\s+"
+        r"(?P<power>\S+)"
+        r"(?:\s+(?P<fan_dir>\S+))?\s*$",
+        re.MULTILINE,
+    )
+
+    # Matches the alternative "PS slot/id  Status  Input: ...  Output: ...  Capacity: ...  Actual: ..." format
+    PS_LINE_PATTERN = re.compile(
+        r"^\s*PS\s+(?P<ps_id>\S+)\s+"
+        r"(?P<status>\S+)"
+        r"(?:\s+Input:\s*(?P<input>\S+))?"
+        r"(?:\s+Output:\s*(?P<output>\S+))?"
+        r"(?:\s+Capacity:\s*(?P<capacity>\d+(?:\.\d+)?)\s*W?)?"
+        r"(?:\s+Actual:\s*(?P<actual>\d+(?:\.\d+)?)\s*W?)?\s*$",
+        re.MULTILINE | re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _parse_watts(value: str | None) -> float | None:
+        """Parse a wattage value, returning None for placeholder values."""
+        if value is None:
+            return None
+        value = value.strip().rstrip("W").rstrip("w")
+        if value in ("--", "N/A", "n/a", ""):
+            return None
+        try:
+            return float(value)
+        except ValueError:
+            return None
+
     def parse(self, raw_output: str) -> list[PowerData]:
         results: list[PowerData] = []
 
-        # TODO: Implement parsing logic
+        # First, try the alternative "PS slot/id" format
+        ps_matches = list(self.PS_LINE_PATTERN.finditer(raw_output))
+        if ps_matches:
+            for match in ps_matches:
+                ps_id = match.group("ps_id")
+                status = match.group("status")
+                input_status = match.group("input")
+                output_status = match.group("output")
+                capacity = self._parse_watts(match.group("capacity"))
+                actual = self._parse_watts(match.group("actual"))
+
+                results.append(PowerData(
+                    ps_id=f"PS {ps_id}",
+                    status=status,
+                    input_status=input_status,
+                    output_status=output_status,
+                    capacity_watts=capacity,
+                    actual_output_watts=actual,
+                ))
+            return results
+
+        # Primary format: display power with Slot headers and data rows
+        # Build a mapping of line positions to slot numbers
+        slot_positions: list[tuple[int, str]] = []
+        for slot_match in self.SLOT_PATTERN.finditer(raw_output):
+            slot_positions.append((slot_match.start(), slot_match.group(1)))
+
+        for match in self.DATA_ROW_PATTERN.finditer(raw_output):
+            power_id = match.group("power_id")
+            state = match.group("state")
+            power_val = match.group("power")
+
+            # Determine which slot this row belongs to
+            row_pos = match.start()
+            current_slot = "1"  # default if no Slot header found
+            for slot_pos, slot_num in slot_positions:
+                if slot_pos < row_pos:
+                    current_slot = slot_num
+                else:
+                    break
+
+            # Format ps_id as "PS {slot}/{power_id}"
+            ps_id = f"PS {current_slot}/{power_id}"
+
+            # Parse actual power output from the Power(W) column
+            actual_output = self._parse_watts(power_val)
+
+            results.append(PowerData(
+                ps_id=ps_id,
+                status=state,
+                capacity_watts=None,
+                actual_output_watts=actual_output,
+            ))
 
         return results
 

@@ -1,93 +1,59 @@
-.PHONY: help test-apis gen-parsers test-parsers all clean reset docker-test-apis docker-gen-parsers docker-test-parsers docker-all
+# =============================================================================
+# Makefile — Parser 驗證框架
+# =============================================================================
+#
+# 使用流程：
+#   1. 編輯 config/api_test.yaml 填入真實 API URL 和交換機 IP
+#   2. make fetch          → 撈取所有 API raw data
+#   3. make parse          → 把 raw data 餵進 parser 看結果
+#
+# 其他常用指令：
+#   make fetch-dry         → 只印 URL 不實際呼叫
+#   make test-parsers      → fetch + parse 一次跑完
+#   make clean-raw         → 清除 raw data 和報告
+# =============================================================================
 
-# Default target
+.PHONY: fetch fetch-dry parse parse-verbose test-parsers clean-raw help
+
+# 預設目標
 help:
-	@echo "========================================"
-	@echo "  Parser Development Toolchain"
-	@echo "========================================"
 	@echo ""
-	@echo "Local Python Execution (Option A):"
-	@echo "  make test-apis      - Batch test all APIs"
-	@echo "  make gen-parsers    - Generate parser skeletons"
-	@echo "  make test-parsers   - Validate parsers"
-	@echo "  make all            - Run all steps"
+	@echo "Parser 驗證框架"
+	@echo "==============="
 	@echo ""
-	@echo "Container Execution (Option B):"
-	@echo "  make docker-test-apis      - Test APIs inside container"
-	@echo "  make docker-gen-parsers    - Generate parsers inside container"
-	@echo "  make docker-test-parsers   - Test parsers inside container"
-	@echo "  make docker-all            - Run all steps inside container"
+	@echo "  make fetch            撈取所有 API raw data (存到 test_data/raw/)"
+	@echo "  make fetch-dry        只印 URL 不實際呼叫"
+	@echo "  make parse            Parse 所有已存的 raw data"
+	@echo "  make parse-verbose    Parse 並印完整 JSON"
+	@echo "  make test-parsers     fetch + parse 一次跑完"
+	@echo "  make clean-raw        清除 raw data 和報告"
 	@echo ""
-	@echo "Utilities:"
-	@echo "  make clean          - Clean generated reports"
-	@echo "  make reset          - Delete all parser skeletons + reports"
+	@echo "過濾選項 (透過環境變數)："
+	@echo "  API=get_fan make fetch        只撈特定 API"
+	@echo "  TARGET=10.1.1.1 make fetch    只撈特定交換機"
+	@echo "  API=get_fan make parse        只測特定 API"
 	@echo ""
 
-# ============================================================================
-# Local Python Execution (Option A)
-# ============================================================================
+# ── Fetch raw data from real APIs ──
+fetch:
+	python scripts/fetch_raw.py $(if $(API),--api $(API)) $(if $(TARGET),--target $(TARGET))
 
-# Batch test all APIs
-test-apis:
-	@echo "🚀 Testing all APIs from config/api_test.yaml..."
-	@python scripts/batch_test_apis.py
+# ── Dry run — print URLs only ──
+fetch-dry:
+	python scripts/fetch_raw.py --dry-run $(if $(API),--api $(API)) $(if $(TARGET),--target $(TARGET))
 
-# Generate parser skeletons
-gen-parsers:
-	@echo "📝 Generating parser skeletons..."
-	@python scripts/generate_parsers.py
+# ── Parse saved raw data ──
+parse:
+	python scripts/parse_test.py $(if $(API),--api $(API))
 
-# Test parsers
-test-parsers:
-	@echo "🧪 Testing parsers with raw data..."
-	@python scripts/test_parsers.py
+# ── Parse with full JSON output ──
+parse-verbose:
+	python scripts/parse_test.py --verbose --save-report $(if $(API),--api $(API))
 
-# Run all steps
-all: test-apis gen-parsers test-parsers
-	@echo "🎉 All steps completed!"
+# ── Full pipeline: fetch + parse ──
+test-parsers: fetch parse
 
-# ============================================================================
-# Container Execution (Option B)
-# ============================================================================
-
-# Test APIs inside container
-docker-test-apis:
-	@echo "🚀 Testing all APIs inside container..."
-	@docker-compose exec app python scripts/batch_test_apis.py
-
-# Generate parsers inside container
-docker-gen-parsers:
-	@echo "📝 Generating parser skeletons inside container..."
-	@docker-compose exec app python scripts/generate_parsers.py
-
-# Test parsers inside container
-docker-test-parsers:
-	@echo "🧪 Testing parsers inside container..."
-	@docker-compose exec app python scripts/test_parsers.py
-
-# Run all steps inside container
-docker-all:
-	@echo "🚀 Running full toolchain inside container..."
-	@docker-compose exec app make test-apis
-	@docker-compose exec app make gen-parsers
-	@docker-compose exec app make test-parsers
-	@echo "🎉 All steps completed!"
-
-# ============================================================================
-# Utilities
-# ============================================================================
-
-# Clean reports
-clean:
-	@echo "🧹 Cleaning reports..."
-	@rm -f reports/api_test_*.json
-	@rm -f reports/parser_test_*.json
-	@echo "✅ Reports cleaned"
-
-# Reset: delete all parser skeletons and reports, keep __init__.py
-reset:
-	@echo "🔄 Resetting parsers and reports..."
-	@find app/parsers/plugins -name '*_parser.py' -delete
-	@rm -f reports/api_test_*.json
-	@rm -f reports/parser_test_*.json
-	@echo "✅ All parser skeletons and reports deleted"
+# ── Clean raw data and reports ──
+clean-raw:
+	rm -rf test_data/raw/ test_data/reports/
+	@echo "Cleaned test_data/raw/ and test_data/reports/"
