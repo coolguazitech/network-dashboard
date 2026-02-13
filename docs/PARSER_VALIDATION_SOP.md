@@ -6,7 +6,7 @@
 
 ## Step 1: 填寫測試設定 (5 分鐘)
 
-編輯 `config/api_test.yaml`：
+編輯 `config/api_test.yaml`，所有要填的欄位都集中在檔案上半部：
 
 ### 1.1 填入 API 來源 URL
 
@@ -20,7 +20,35 @@ sources:
     base_url: "http://真實GNMSPING的IP:PORT"  # ← 改這裡
 ```
 
-### 1.2 填入測試交換機
+### 1.2 填入 API Endpoint 路徑
+
+到公司查好每個 API 的真實路徑，填入 `endpoints` 區塊：
+
+```yaml
+endpoints:
+  # FNA
+  get_gbic_details:     "/switch/network/get_gbic_details/{ip}"
+  get_channel_group:    "/switch/network/get_channel_group/{ip}"
+  get_uplink:           "/switch/network/get_neighbors/{ip}"
+  get_error_count:      "/switch/network/get_error_count/{ip}"
+  get_static_acl:       "/switch/network/get_static_acl/{ip}"
+  get_dynamic_acl:      "/switch/network/get_dynamic_acl/{ip}"
+  get_arp_table:        "/switch/network/get_arp_table/{ip}"
+
+  # DNA
+  get_mac_table:        "/api/v1/{device_type}/mac-table"
+  get_fan:              "/api/v1/{device_type}/fan"
+  get_power:            "/api/v1/{device_type}/power"
+  get_version:          "/api/v1/{device_type}/version"
+
+  # GNMSPING
+  ping_batch:           "/api/v1/ping"
+```
+
+> 支援佔位符：`{ip}` = 交換機 IP，`{device_type}` = hpe/ios/nxos
+> 沒填的 endpoint 會被跳過，不影響其他 API 測試
+
+### 1.3 填入測試交換機
 
 每種 device_type 至少填一台，挑**確定在線**的：
 
@@ -39,14 +67,15 @@ targets:
     device_type: nxos
 ```
 
-### 1.3 設定 FNA Token
+### 1.4 設定 Token
+
+編輯 `.env`，把以下 placeholder 改成真實值：
 
 ```bash
-# 方法 1: 直接設環境變數
-export FNA_TOKEN="你的token"
-
-# 方法 2: 寫在 .env 檔案
-echo 'FNA_TOKEN=你的token' >> .env
+# .env 裡面找到這幾行，改掉 <...> 部分
+FNA_TOKEN=你的真實token            # ← 原本是 <從公司內部系統獲取>
+GNMSPING_APP_NAME=你的app_name     # ← 原本是 <GNMSPING app name>
+GNMSPING_TOKEN=你的token           # ← 原本是 <GNMSPING token>
 ```
 
 ---
@@ -60,7 +89,8 @@ make fetch-dry
 檢查輸出的 URL 是否正確：
 - FNA: `GET http://xxx/switch/network/get_gbic_details/10.x.x.x`
 - DNA: `GET http://xxx/api/v1/hpe/fan?hosts=10.x.x.x`
-- 如果 endpoint 路徑不對，修改 `config/api_test.yaml` 的 `endpoint` 欄位
+- 沒填的 endpoint 會顯示 `Skipped: endpoint not configured`
+- 如果路徑不對，回去改 `config/api_test.yaml` 的 `endpoints` 區塊
 
 ---
 
