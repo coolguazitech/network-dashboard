@@ -1,0 +1,7 @@
+Chassis id: 0026.980a.3c03
+Port id: Ethernet1/49
+Local Port id: Eth1/1
+System Name: SPINE-03
+System Description:
+Cisco Nexus Operating System (NX-OS) Software 9.3(8)
+Time remaining: 110 seconds

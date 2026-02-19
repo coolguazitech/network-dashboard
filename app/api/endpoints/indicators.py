@@ -1,11 +1,12 @@
 """
 Indicator API endpoints.
 """
-from typing import Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.endpoints.auth import get_current_user, require_write
 from app.db.base import get_async_session
 from app.schemas.indicator import (
     IndicatorMetadataResponse,
@@ -28,7 +29,9 @@ indicator_manager = IndicatorService()
 
 
 @router.get("", response_model=list[IndicatorMetadataResponse])
-async def list_indicators() -> list[IndicatorMetadataResponse]:
+async def list_indicators(
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> list[IndicatorMetadataResponse]:
     """
     取得所有可用的 Indicator 列表。
     """
@@ -70,7 +73,10 @@ async def list_indicators() -> list[IndicatorMetadataResponse]:
 
 
 @router.get("/{indicator_name}", response_model=IndicatorMetadataResponse)
-async def get_indicator(indicator_name: str) -> IndicatorMetadataResponse:
+async def get_indicator(
+    indicator_name: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> IndicatorMetadataResponse:
     """
     取得指定 Indicator 的元資料。
     """
@@ -115,6 +121,7 @@ async def get_indicator(indicator_name: str) -> IndicatorMetadataResponse:
 async def get_indicator_timeseries(
     maintenance_id: str,
     indicator_name: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     limit: int = Query(100, ge=1, le=1000, description="資料點數量限制"),
     session: AsyncSession = Depends(get_async_session),
 ) -> TimeSeriesResponse:
@@ -163,6 +170,7 @@ async def get_indicator_timeseries(
 async def get_indicator_raw_data(
     maintenance_id: str,
     indicator_name: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_async_session),
@@ -246,6 +254,7 @@ def _get_columns_for_indicator(indicator_name: str) -> list[TableColumnSchema]:
 async def trigger_collection(
     maintenance_id: str,
     indicator_name: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     request: Optional[CollectionTriggerRequest] = None,
     session: AsyncSession = Depends(get_async_session),
 ) -> CollectionStatusResponse:

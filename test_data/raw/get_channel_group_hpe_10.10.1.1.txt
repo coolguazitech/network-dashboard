@@ -1,0 +1,6 @@
+Loadsharing Type: Shar -- Shared-link group
+Port Status:  S -- Selected  U -- Unselected  I -- Individual  B -- Blocked
+
+AggID   Interface   Link   Attribute   Mode   Members
+1       BAGG1       UP     A           LACP   HGE1/0/25(S) HGE1/0/26(S)
+2       BAGG2       UP     A           LACP   HGE1/0/27(S) HGE1/0/28(S)

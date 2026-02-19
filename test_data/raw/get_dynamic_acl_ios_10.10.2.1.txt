@@ -1,0 +1,4 @@
+Interface         MAC Address        ACL         Status
+Gi1/0/1           0050.5687.1234     101         Authorized
+Gi1/0/2           0050.5687.5678     --          Unauthorized
+Gi1/0/3           0050.5687.9abc     102         Authorized

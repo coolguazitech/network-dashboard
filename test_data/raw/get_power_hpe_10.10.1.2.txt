@@ -1,0 +1,4 @@
+Slot 1:
+PowerID State    Mode   Current(A)  Voltage(V)  Power(W)  FanDirection
+1       Normal   AC     1.2         12.0        150       Back-to-front
+2       Absent   AC     --          --          --        Back-to-front

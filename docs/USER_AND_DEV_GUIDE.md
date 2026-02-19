@@ -842,9 +842,7 @@ app/
 │   ├── __init__.py          # 公開 API
 │   ├── base.py              # BaseFetcher, FetchContext, FetchResult
 │   ├── registry.py          # FetcherRegistry + setup_fetchers()
-│   ├── configured.py        # ConfiguredFetcher (通用 HTTP GET)
-│   ├── convergence.py       # Mock 收斂時間追蹤
-│   └── mock.py              # MockFetcher 實作 (開發/測試用)
+│   └── configured.py        # ConfiguredFetcher (通用 HTTP GET)
 │
 ├── parsers/
 │   ├── __init__.py
@@ -1083,12 +1081,14 @@ Registry 查詢邏輯：
 
 ## 7. Mock 開發模式
 
-開發時使用 `USE_MOCK_API=true`，系統會使用 `MockFetcher` 產生假資料。
+開發時透過 `docker-compose.dev.yaml` 啟動獨立的 Mock API Server（`mock_server/`），
+主應用的 `FETCHER_SOURCE__*__BASE_URL` 指向 Mock Server，ConfiguredFetcher 照常呼叫。
 
-MockFetcher 特色：
-- 根據 `device_type` 產生對應廠牌格式的假資料
-- 支援收斂模擬（新設備逐漸上線、舊設備逐漸離線）
-- 不需外部 API，完全獨立運行
+Mock API Server 特色：
+- 根據 `device_type` 產生對應廠牌格式的假 CLI 資料
+- 支援收斂模擬（基於歲修累計活躍時間，暫停時凍結）
+- 從同一個 MariaDB 讀取設備清單和歲修狀態
+- 主應用零 mock 程式碼，架構完全解耦
 
 ---
 

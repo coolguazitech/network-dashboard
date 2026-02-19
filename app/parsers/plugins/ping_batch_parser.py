@@ -104,8 +104,9 @@ class PingBatchParser(BaseParser[PingResultData]):
 
             parsed.append(
                 PingResultData(
-                    ip_address=str(ip),
+                    target=str(ip),
                     is_reachable=reachable,
+                    success_rate=100.0 if reachable else 0.0,
                 )
             )
 
@@ -119,7 +120,7 @@ class PingBatchParser(BaseParser[PingResultData]):
         if not ip_match:
             return []
 
-        ip_address = ip_match.group("ip")
+        target = ip_match.group("ip")
 
         loss_match = self._PACKET_LOSS_PATTERN.search(raw_output)
         if not loss_match:
@@ -128,11 +129,13 @@ class PingBatchParser(BaseParser[PingResultData]):
 
         packet_loss = float(loss_match.group("loss"))
         is_reachable = packet_loss < 100.0
+        success_rate = 100.0 - packet_loss
 
         return [
             PingResultData(
-                ip_address=ip_address,
+                target=target,
                 is_reachable=is_reachable,
+                success_rate=success_rate,
             )
         ]
 

@@ -31,32 +31,47 @@ class FetcherSourceConfig(BaseModel):
 class FetcherEndpointConfig(BaseModel):
     """Per-fetcher endpoint templates.
 
-    支援佔位符: {switch_ip}, {device_type}, {tenant_group} 等
-    （FetchContext.params 中的任意 key 亦可用）。
+    屬性名必須與 scheduler.yaml 的 fetcher key 完全一致（get_* 命名）。
+    ConfiguredFetcher 透過 getattr(settings.fetcher_endpoint, fetch_type) 查找。
 
+    支援佔位符: {switch_ip}, {device_type}, {tenant_group} 等。
     佔位符會從 FetchContext 帶入路徑；未被消耗的變數自動成為 query params。
 
     .env 設定範例::
 
-        FETCHER_ENDPOINT__TRANSCEIVER=/api/v1/transceiver/{switch_ip}
-        FETCHER_ENDPOINT__VERSION=/api/v1/version/{switch_ip}
+        FETCHER_ENDPOINT__GET_FAN=/api/v1/fan/{switch_ip}
+        FETCHER_ENDPOINT__GET_GBIC_DETAILS=/api/v1/transceiver/{switch_ip}
     """
 
-    # FNA
-    transceiver: str = "/api/v1/transceiver/{switch_ip}"
-    port_channel: str = "/api/v1/port-channel/{switch_ip}"
-    acl: str = "/api/v1/acl/{switch_ip}"
-    # DNA
-    version: str = "/api/v1/version/{switch_ip}"
-    uplink: str = "/api/v1/neighbors/{switch_ip}"
-    fan: str = "/api/v1/fan/{switch_ip}"
-    power: str = "/api/v1/power/{switch_ip}"
-    error_count: str = "/api/v1/error-count/{switch_ip}"
-    mac_table: str = "/api/v1/mac-table/{switch_ip}"
-    arp_table: str = "/api/v1/arp-table/{switch_ip}"
-    interface_status: str = "/api/v1/interface-status/{switch_ip}"
-    # GNMSPing
-    ping: str = "/api/v1/ping/batch"
+    # FNA (7)
+    get_gbic_details: str = "/api/v1/transceiver/{switch_ip}"
+    get_channel_group: str = "/api/v1/port-channel/{switch_ip}"
+    get_uplink: str = "/api/v1/neighbors/{switch_ip}"
+    get_error_count: str = "/api/v1/error-count/{switch_ip}"
+    get_static_acl: str = "/api/v1/acl/static/{switch_ip}"
+    get_dynamic_acl: str = "/api/v1/acl/dynamic/{switch_ip}"
+    # DNA (4)
+    get_mac_table: str = "/api/v1/mac-table/{switch_ip}"
+    get_fan: str = "/api/v1/fan/{switch_ip}"
+    get_power: str = "/api/v1/power/{switch_ip}"
+    get_version: str = "/api/v1/version/{switch_ip}"
+    # DNA (1)
+    get_interface_status: str = "/api/v1/interface-status/{switch_ip}"
+    # GNMSPING (2)
+    ping_batch: str = "/api/v1/ping/{switch_ip}"
+    gnms_ping: str = "/api/v1/gnms-ping"
+
+
+class MinioConfig(BaseModel):
+    """MinIO / S3-compatible object storage config."""
+
+    endpoint: str = "minio:9000"
+    access_key: str = "minioadmin"
+    secret_key: str = "minioadmin"
+    bucket: str = "netora-uploads"
+    secure: bool = False
+    region: str = ""
+    public_url: str = ""  # 外部存取 URL（Ingress），空值則自動組合 endpoint
 
 
 class Settings(BaseSettings):
@@ -69,6 +84,9 @@ class Settings(BaseSettings):
         extra="ignore",
         env_nested_delimiter="__",
     )
+
+    # Object Storage (MinIO)
+    minio: MinioConfig = MinioConfig()
 
     # Database
     db_host: str = Field(default="localhost", description="DB host")
@@ -86,23 +104,6 @@ class Settings(BaseSettings):
     # Fetcher Endpoints (per-fetcher endpoint templates)
     fetcher_endpoint: FetcherEndpointConfig = FetcherEndpointConfig()
 
-    use_mock_api: bool = Field(
-        default=False,
-        description=(
-            "Use in-memory MockFetcher (no external server needed). "
-            "When False, uses ConfiguredFetcher calling external APIs "
-            "defined in FETCHER_SOURCE / FETCHER_ENDPOINT."
-        ),
-    )
-    mock_ping_converge_time: int = Field(
-        default=600,
-        description=(
-            "Mock ping convergence time in seconds. "
-            "Devices become reachable within this time window. "
-            "Default is 600 (10 minutes). Set to 0 for instant reachability."
-        ),
-    )
-
     # Scheduling
     collection_interval_seconds: int = Field(
         default=120,
@@ -119,6 +120,10 @@ class Settings(BaseSettings):
     max_collection_days: int = Field(
         default=7,
         description="Maximum collection days per maintenance (auto-stop after this period).",
+    )
+    retention_days_after_deactivation: int = Field(
+        default=7,
+        description="Days to keep collection data after maintenance is deactivated.",
     )
 
     # JWT / Auth
@@ -157,12 +162,7 @@ class Settings(BaseSettings):
         return {s.strip().lower() for s in self.operational_healthy_statuses.split(",") if s.strip()}
 
     # Indicator Thresholds — Error Count
-    # 換設備（is_replaced=True）→ 必須為 0
-    # 未換設備（is_replaced=False）→ 容許閾值
-    error_count_same_device_max: int = Field(
-        default=100,
-        description="未換設備時（is_replaced=False），每個 error 欄位的容許上限",
-    )
+    # 邏輯：delta = 最新變化點 - 上一個變化點，delta > 0 即異常（無閾值設定）
 
     # Indicator Thresholds — Transceiver (雙向閾值)
     transceiver_tx_power_min: float = Field(

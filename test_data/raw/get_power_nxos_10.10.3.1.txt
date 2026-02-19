@@ -1,0 +1,12 @@
+Power Supply:
+Voltage: 12 Volts
+Power                              Actual        Total
+Supply    Model                    Output     Capacity    Status
+-------  -------------------  -----------  -----------  ----------
+1        NXA-PAC-1100W-PE          186 W      1100 W     Ok
+2        NXA-PAC-1100W-PE          180 W      1100 W     Ok
+
+                                 Actual        Power
+Module    Model                  Draw       Allocated    Status
+-------  -------------------  -----------  -----------  ----------
+1        N9K-C93180YC-FX       117.84 W    252.00 W     Powered-Up

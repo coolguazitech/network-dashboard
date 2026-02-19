@@ -1,0 +1,14 @@
+-------------------------
+Device ID: SW-CORE-01.example.com
+Entry address(es):
+  IP address: 10.0.0.1
+Platform: cisco WS-C3750X-48PF,  Capabilities: Router Switch IGMP
+Interface: GigabitEthernet0/1,  Port ID (outgoing port): GigabitEthernet1/0/1
+Holdtime : 143 sec
+Version :
+Cisco IOS Software, C3750E Software, Version 15.2(4)E10
+-------------------------
+Device ID: SW-CORE-02
+Platform: cisco WS-C3750X-48PF,  Capabilities: Router Switch IGMP
+Interface: GigabitEthernet0/2,  Port ID (outgoing port): GigabitEthernet1/0/1
+Holdtime : 143 sec

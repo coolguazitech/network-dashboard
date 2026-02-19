@@ -4,7 +4,7 @@
     <MeteorShower />
 
     <!-- 頂部導航（登入後才顯示） -->
-    <nav v-if="isAuthenticated && route.name !== 'Login'" class="bg-slate-900/80 backdrop-blur-sm border-b border-cyan-500/10">
+    <nav v-if="isAuthenticated && route.name !== 'Login'" class="relative z-50 bg-slate-900/80 backdrop-blur-sm border-b border-cyan-500/10">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex justify-between h-14">
           <!-- 左側：Logo + 導航 -->
@@ -34,11 +34,15 @@
                 總覽
               </router-link>
               <router-link
-                to="/comparison"
-                class="nav-link"
-                :class="{ active: route.path === '/comparison' }"
+                to="/cases"
+                class="nav-link relative"
+                :class="{ active: route.path === '/cases' }"
               >
-                比對
+                案件
+                <span
+                  v-if="caseBadgeCount > 0"
+                  class="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold text-white bg-red-500 rounded-full leading-none shadow-lg shadow-red-500/40 animate-badge-pop"
+                >{{ caseBadgeCount > 99 ? '99+' : caseBadgeCount }}</span>
               </router-link>
               <router-link
                 to="/devices"
@@ -128,6 +132,7 @@
               </button>
 
               <!-- 下拉選單 -->
+              <Transition name="dropdown">
               <div
                 v-if="showUserMenu"
                 class="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 z-50"
@@ -149,6 +154,7 @@
                   登出
                 </button>
               </div>
+              </Transition>
             </div>
           </div>
         </div>
@@ -157,19 +163,24 @@
 
     <!-- 主內容區 -->
     <main :class="isAuthenticated && route.name !== 'Login' ? 'max-w-7xl mx-auto py-6 sm:px-6 lg:px-8' : ''">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <Transition name="page" mode="out-in">
+          <component :is="Component" :key="route.path" />
+        </Transition>
+      </router-view>
     </main>
 
     <!-- 右側固定餐點狀態欄 -->
     <MealStatus v-if="isAuthenticated && selectedMaintenanceId && route.name !== 'Login'" />
 
     <!-- 歲修管理 Modal -->
-    <div 
+    <Transition name="modal">
+    <div
       v-if="showMaintenanceModal"
-      class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       @click.self="showMaintenanceModal = false"
     >
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-2xl w-full max-w-2xl p-5 max-h-[80vh] overflow-auto">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-2xl p-5 max-h-[80vh] overflow-auto">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-bold text-white">📋 歲修管理</h3>
           <button @click="showMaintenanceModal = false" class="text-slate-400 hover:text-slate-200">✕</button>
@@ -207,13 +218,14 @@
             <tr>
               <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">歲修 ID</th>
               <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">名稱</th>
-              <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">採集狀態</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">狀態</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">剩餘時間</th>
               <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">建立時間</th>
               <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-700">
-            <tr v-for="m in maintenanceList" :key="m.id" class="hover:bg-slate-700/50 transition">
+            <tr v-for="(m, mi) in maintenanceList" :key="m.id" class="row-stagger hover:bg-slate-700/50 transition" :style="{ animationDelay: mi * 40 + 'ms' }">
               <td class="px-3 py-2 font-mono text-cyan-300">
                 {{ m.id }}
                 <span v-if="m.id === selectedMaintenanceId" class="ml-1 text-xs text-green-400">●當前</span>
@@ -223,7 +235,7 @@
                 <button
                   @click="toggleMaintenanceActive(m)"
                   class="inline-flex items-center gap-2 cursor-pointer group"
-                  :title="m.is_active ? '點擊暫停採集' : '點擊恢復採集'"
+                  :title="m.is_active ? '點擊暫停（計時器與採集將暫停）' : '點擊啟用（計時器與採集將恢復）'"
                 >
                   <!-- Toggle track -->
                   <span
@@ -237,9 +249,30 @@
                     ></span>
                   </span>
                   <span class="text-xs" :class="m.is_active ? 'text-green-400' : 'text-slate-500'">
-                    {{ m.is_active ? '採集中' : '已暫停' }}
+                    {{ m.is_active ? '活躍中' : '已暫停' }}
                   </span>
                 </button>
+              </td>
+              <td class="px-3 py-2">
+                <div class="flex flex-col gap-1">
+                  <span
+                    class="text-xs font-medium"
+                    :class="countdownColor(m)"
+                  >
+                    {{ m.remaining_seconds <= 0 ? '已到期' : formatDuration(m.remaining_seconds) }}
+                  </span>
+                  <!-- Progress bar -->
+                  <div class="w-24 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                    <div
+                      class="h-full rounded-full transition-all duration-1000 ease-out"
+                      :class="countdownBarColor(m)"
+                      :style="{ width: countdownPercent(m) + '%' }"
+                    ></div>
+                  </div>
+                  <span class="text-[10px] text-slate-500">
+                    已用 {{ formatDuration(m.active_seconds || 0) }} / {{ formatDuration(m.max_seconds || 0) }}
+                  </span>
+                </div>
               </td>
               <td class="px-3 py-2 text-slate-400 text-xs">{{ formatDate(m.created_at) }}</td>
               <td class="px-3 py-2">
@@ -252,7 +285,7 @@
               </td>
             </tr>
             <tr v-if="maintenanceList.length === 0">
-              <td colspan="5" class="px-3 py-6 text-center text-slate-500">尚無歲修記錄</td>
+              <td colspan="6" class="px-3 py-6 text-center text-slate-500">尚無歲修記錄</td>
             </tr>
           </tbody>
         </table>
@@ -263,13 +296,15 @@
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 刪除確認 Modal -->
-    <div 
+    <Transition name="modal">
+    <div
       v-if="showDeleteModal"
-      class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60]"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4"
     >
-      <div class="bg-slate-800 border border-red-700 rounded-lg shadow-2xl w-full max-w-md p-5">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-red-700/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-md p-5">
         <h3 class="text-lg font-bold text-red-400 mb-4">⚠️ 刪除歲修確認</h3>
         
         <div class="bg-red-900/30 border border-red-700/50 rounded p-3 mb-4">
@@ -306,6 +341,10 @@
         </div>
       </div>
     </div>
+    </Transition>
+
+    <!-- 全域通知 -->
+    <ToastContainer />
   </div>
 </template>
 
@@ -316,7 +355,10 @@ import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import MealStatus from '@/components/MealStatus.vue'
 import MeteorShower from '@/components/MeteorShower.vue'
-import { isAuthenticated, currentUser, isRoot, logout as authLogout, getAuthHeaders } from '@/utils/auth'
+import ToastContainer from '@/components/ToastContainer.vue'
+import { isAuthenticated, currentUser, isRoot, logout as authLogout } from '@/utils/auth'
+import { useCaseBadge } from '@/composables/useCaseBadge'
+import api from '@/utils/api'
 
 dayjs.extend(utc)
 
@@ -346,6 +388,9 @@ const closeUserMenu = (e) => {
 const selectedMaintenanceId = ref('')
 const maintenanceList = ref([])
 
+// 案件徽章（指派給我的待接受案件數）
+const { badgeCount: caseBadgeCount } = useCaseBadge(selectedMaintenanceId)
+
 // 歲修管理 Modal
 const showMaintenanceModal = ref(false)
 const newMaintenance = ref({ id: '', name: '' })
@@ -361,38 +406,71 @@ const formatDate = (dateStr) => {
   return dayjs.utc(dateStr).local().format('YYYY-MM-DD HH:mm')
 }
 
+// 格式化秒數為 Xd Xh Xm
+const formatDuration = (seconds) => {
+  if (!seconds || seconds <= 0) return '0m'
+  const d = Math.floor(seconds / 86400)
+  const h = Math.floor((seconds % 86400) / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const parts = []
+  if (d > 0) parts.push(`${d}d`)
+  if (h > 0) parts.push(`${h}h`)
+  if (d === 0) parts.push(`${m}m`)  // 不足一天才顯示分鐘
+  return parts.join(' ') || '0m'
+}
+
+// 剩餘百分比（用於進度條）
+const countdownPercent = (m) => {
+  if (!m.max_seconds || m.max_seconds <= 0) return 0
+  return Math.max(0, Math.min(100, (m.remaining_seconds / m.max_seconds) * 100))
+}
+
+// 倒數文字顏色
+const countdownColor = (m) => {
+  const pct = countdownPercent(m)
+  if (pct <= 0) return 'text-red-400'
+  if (pct <= 20) return 'text-red-400'
+  if (pct <= 50) return 'text-amber-400'
+  return 'text-green-400'
+}
+
+// 進度條顏色
+const countdownBarColor = (m) => {
+  const pct = countdownPercent(m)
+  if (pct <= 0) return 'bg-red-500'
+  if (pct <= 20) return 'bg-red-500'
+  if (pct <= 50) return 'bg-amber-500'
+  return 'bg-green-500'
+}
+
 const loadMaintenanceList = async () => {
   try {
-    const res = await fetch('/api/v1/maintenance', {
-      headers: getAuthHeaders(),
-    })
-    if (res.ok) {
-      maintenanceList.value = await res.json()
-      
-      // 如果當前選中的不在列表中，重置選擇
-      if (selectedMaintenanceId.value) {
-        const found = maintenanceList.value.find(m => m.id === selectedMaintenanceId.value)
-        if (!found) {
-          if (maintenanceList.value.length > 0) {
-            // 選擇第一個
-            selectedMaintenanceId.value = maintenanceList.value[0].id
-            onMaintenanceIdChange()
-          } else {
-            // 列表為空，清除選擇
-            selectedMaintenanceId.value = ''
-            localStorage.removeItem('selectedMaintenanceId')
-          }
-        }
-      } else if (maintenanceList.value.length > 0) {
-        // 沒有選擇時，選擇第一個
-        const savedId = localStorage.getItem('selectedMaintenanceId')
-        const found = maintenanceList.value.find(m => m.id === savedId)
-        if (found) {
-          selectedMaintenanceId.value = savedId
-        } else {
+    const { data } = await api.get('/maintenance')
+    maintenanceList.value = data
+
+    // 如果當前選中的不在列表中，重置選擇
+    if (selectedMaintenanceId.value) {
+      const found = maintenanceList.value.find(m => m.id === selectedMaintenanceId.value)
+      if (!found) {
+        if (maintenanceList.value.length > 0) {
+          // 選擇第一個
           selectedMaintenanceId.value = maintenanceList.value[0].id
           onMaintenanceIdChange()
+        } else {
+          // 列表為空，清除選擇
+          selectedMaintenanceId.value = ''
+          localStorage.removeItem('selectedMaintenanceId')
         }
+      }
+    } else if (maintenanceList.value.length > 0) {
+      // 沒有選擇時，選擇第一個
+      const savedId = localStorage.getItem('selectedMaintenanceId')
+      const found = maintenanceList.value.find(m => m.id === savedId)
+      if (found) {
+        selectedMaintenanceId.value = savedId
+      } else {
+        selectedMaintenanceId.value = maintenanceList.value[0].id
+        onMaintenanceIdChange()
       }
     }
   } catch (e) {
@@ -408,43 +486,25 @@ const onMaintenanceIdChange = () => {
 // 新增歲修
 const createMaintenance = async () => {
   if (!newMaintenance.value.id) return
-  
+
   try {
-    const res = await fetch('/api/v1/maintenance', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-      body: JSON.stringify(newMaintenance.value),
-    })
-    
-    if (res.ok) {
-      newMaintenance.value = { id: '', name: '' }
-      await loadMaintenanceList()
-    } else {
-      const err = await res.json()
-      alert(`建立失敗: ${err.detail || '未知錯誤'}`)
-    }
+    await api.post('/maintenance', newMaintenance.value)
+    newMaintenance.value = { id: '', name: '' }
+    await loadMaintenanceList()
   } catch (e) {
     console.error('建立歲修失敗:', e)
-    alert('建立失敗，請稍後再試')
+    alert(`建立失敗: ${e.response?.data?.detail || '未知錯誤'}`)
   }
 }
 
-// 切換歲修採集狀態
+// 切換歲修活躍狀態（影響計時器與採集）
 const toggleMaintenanceActive = async (m) => {
   try {
-    const res = await fetch(`/api/v1/maintenance/${encodeURIComponent(m.id)}/toggle-active`, {
-      method: 'PATCH',
-      headers: getAuthHeaders(),
-    })
-    if (res.ok) {
-      await loadMaintenanceList()
-    } else {
-      const err = await res.json()
-      alert(`切換失敗: ${err.detail || '未知錯誤'}`)
-    }
+    await api.patch(`/maintenance/${encodeURIComponent(m.id)}/toggle-active`)
+    await loadMaintenanceList()
   } catch (e) {
-    console.error('切換採集狀態失敗:', e)
-    alert('切換失敗，請稍後再試')
+    console.error('切換狀態失敗:', e)
+    alert(`切換失敗: ${e.response?.data?.detail || '未知錯誤'}`)
   }
 }
 
@@ -467,25 +527,16 @@ const confirmDelete = async () => {
   if (!deleteTarget.value || deleteConfirmInput.value !== deleteTarget.value.id) {
     return
   }
-  
+
   try {
-    const res = await fetch(`/api/v1/maintenance/${encodeURIComponent(deleteTarget.value.id)}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    })
-    
-    if (res.ok) {
-      showDeleteModal.value = false
-      deleteTarget.value = null
-      deleteConfirmInput.value = ''
-      await loadMaintenanceList()
-    } else {
-      const err = await res.json()
-      alert(`刪除失敗: ${err.detail || '未知錯誤'}`)
-    }
+    await api.delete(`/maintenance/${encodeURIComponent(deleteTarget.value.id)}`)
+    showDeleteModal.value = false
+    deleteTarget.value = null
+    deleteConfirmInput.value = ''
+    await loadMaintenanceList()
   } catch (e) {
     console.error('刪除歲修失敗:', e)
-    alert('刪除失敗，請稍後再試')
+    alert(`刪除失敗: ${e.response?.data?.detail || '未知錯誤'}`)
   }
 }
 

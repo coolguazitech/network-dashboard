@@ -8,12 +8,13 @@ from __future__ import annotations
 import csv
 import io
 import re
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import select, func
 
+from app.api.endpoints.auth import get_current_user, require_write
 from app.db.base import get_session_context
 from app.db.models import (
     ClientCategory,
@@ -130,6 +131,7 @@ class CategoryStatsResponse(BaseModel):
 @router.get("/stats/{maintenance_id}", response_model=list[CategoryStatsResponse])
 async def get_category_stats(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     before_time: str | None = None,
 ) -> list[dict[str, Any]]:
     """
@@ -361,6 +363,7 @@ async def get_category_stats(
 
 @router.get("", response_model=list[CategoryResponse])
 async def list_categories(
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     maintenance_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """
@@ -410,7 +413,10 @@ async def list_categories(
 
 
 @router.post("", response_model=CategoryResponse)
-async def create_category(data: CategoryCreate) -> dict[str, Any]:
+async def create_category(
+    _user: Annotated[dict[str, Any], Depends(require_write())],
+    data: CategoryCreate,
+) -> dict[str, Any]:
     """
     創建新的機台種類（歲修專屬）。
     
@@ -478,6 +484,7 @@ async def create_category(data: CategoryCreate) -> dict[str, Any]:
 @router.put("/{category_id}", response_model=CategoryResponse)
 async def update_category(
     category_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: CategoryUpdate,
 ) -> dict[str, Any]:
     """更新機台種類。"""
@@ -543,7 +550,10 @@ async def update_category(
 
 
 @router.delete("/{category_id}")
-async def delete_category(category_id: int) -> dict[str, str]:
+async def delete_category(
+    category_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
+) -> dict[str, str]:
     """
     刪除機台種類。
     
@@ -575,7 +585,10 @@ async def delete_category(category_id: int) -> dict[str, str]:
 # ========== 成員管理 ==========
 
 @router.get("/{category_id}/members", response_model=list[MemberResponse])
-async def list_members(category_id: int) -> list[dict[str, Any]]:
+async def list_members(
+    category_id: int,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> list[dict[str, Any]]:
     """獲取種類下的所有成員。"""
     async with get_session_context() as session:
         stmt = (
@@ -609,6 +622,7 @@ async def list_members(category_id: int) -> list[dict[str, Any]]:
 @router.post("/{category_id}/members", response_model=MemberResponse)
 async def add_member(
     category_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: MemberCreate,
 ) -> dict[str, Any]:
     """
@@ -677,6 +691,7 @@ async def add_member(
 async def remove_member(
     category_id: int,
     mac_address: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
 ) -> dict[str, str]:
     """從種類中移除成員。"""
     mac = mac_address.upper().replace("-", ":")
@@ -709,6 +724,7 @@ async def remove_member(
 @router.post("/{category_id}/import-csv")
 async def import_members_csv(
     category_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     """
@@ -803,6 +819,7 @@ async def import_members_csv(
 @router.post("/bulk-import")
 async def bulk_import_categories(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     """

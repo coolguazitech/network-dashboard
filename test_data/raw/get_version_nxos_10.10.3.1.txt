@@ -1,0 +1,19 @@
+Cisco Nexus Operating System (NX-OS) Software
+TAC support: http://www.cisco.com/tac
+Documents: http://www.cisco.com/en/US/products/ps9372/tsd_products_support_series_home.html
+Copyright (c) 2002-2022, Cisco Systems, Inc. All rights reserved.
+The copyrights to certain works contained herein are owned by
+other third parties and are used and distributed under license.
+
+Software
+  BIOS: version 07.69
+  NXOS: version 9.3(8)
+  BIOS compile time:  08/04/2020
+  NXOS compile time:  2/8/2022 17:00:00
+
+Hardware
+  cisco Nexus9000 C93180YC-FX Chassis
+  Intel(R) Xeon(R) CPU D-1528 @ 1.90GHz with 24576712 kB of memory.
+  Processor Board ID FDO21510JKR
+
+Kernel uptime is 60 day(s), 5 hour(s), 30 minute(s), 22 second(s)

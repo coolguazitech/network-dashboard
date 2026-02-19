@@ -13,13 +13,19 @@ Usage:
     python scripts/fetch_raw.py --target 10.1.1.1  # only specific target
     python scripts/fetch_raw.py --dry-run          # print URLs only
     python scripts/fetch_raw.py --concurrency 20   # max parallel requests
+    python scripts/fetch_raw.py --timeout 60       # override read timeout (seconds)
+    python scripts/fetch_raw.py --connect-timeout 5 # set connect timeout (seconds)
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 import os
+import random
+import shutil
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -55,8 +61,6 @@ DEVICE_TYPE_MAP = {
     "hpe": "hpe",
     "ios": "ios",
     "nxos": "nxos",
-    "cisco_ios": "ios",
-    "cisco_nxos": "nxos",
 }
 
 
@@ -155,9 +159,11 @@ class FetchTask:
     query_params: dict[str, str] | None
     headers: dict[str, str]
     timeout: float
+    connect_timeout: float
     save_api_name: str
     save_device_type: str
     save_ip: str
+    save_hostname: str
     display_label: str
     parser_command: str
 
@@ -170,6 +176,28 @@ class FetchStats:
     failed: int = 0
     skipped: int = 0
     results: list[str] = field(default_factory=list)
+    unreachable: list[dict[str, str]] = field(default_factory=list)
+
+
+def _print_progress(progress: dict) -> None:
+    """Overwrite current line with a progress bar."""
+    done = progress["done"]
+    total = progress["total"]
+    elapsed = time.monotonic() - progress["start_time"]
+    pct = done / total if total else 0
+
+    bar_width = 30
+    filled = int(bar_width * pct)
+    bar = "█" * filled + "░" * (bar_width - filled)
+
+    line = (
+        f"\r  {C.CYAN}[{bar}]{C.RESET}"
+        f"  {C.BOLD}{done}{C.RESET}/{total}"
+        f"  ({pct:.0%})"
+        f"  {C.DIM}elapsed {elapsed:.1f}s{C.RESET}"
+    )
+    sys.stdout.write(line)
+    sys.stdout.flush()
 
 
 async def execute_task(
@@ -177,15 +205,19 @@ async def execute_task(
     task: FetchTask,
     sem: asyncio.Semaphore,
     stats: FetchStats,
+    progress: dict,
 ) -> None:
     """Execute a single fetch task with semaphore-based concurrency control."""
     async with sem:
         try:
+            task_timeout = httpx.Timeout(
+                task.timeout, connect=task.connect_timeout,
+            )
             resp = await client.get(
                 task.url,
                 params=task.query_params,
                 headers=task.headers,
-                timeout=task.timeout,
+                timeout=task_timeout,
             )
 
             status = resp.status_code
@@ -210,12 +242,21 @@ async def execute_task(
 
         except httpx.ConnectError:
             stats.failed += 1
+            stats.unreachable.append({
+                "ip": task.save_ip, "hostname": task.save_hostname,
+                "device_type": task.save_device_type, "error": "Connection refused",
+            })
             stats.results.append(
                 f"  {C.RED}FAIL{C.RESET} {task.display_label} "
                 f"{C.RED}Connection refused{C.RESET}"
             )
         except httpx.TimeoutException:
             stats.failed += 1
+            stats.unreachable.append({
+                "ip": task.save_ip, "hostname": task.save_hostname,
+                "device_type": task.save_device_type,
+                "error": f"Timeout after {task.timeout}s",
+            })
             stats.results.append(
                 f"  {C.RED}FAIL{C.RESET} {task.display_label} "
                 f"{C.RED}Timeout after {task.timeout}s{C.RESET}"
@@ -226,6 +267,9 @@ async def execute_task(
                 f"  {C.RED}FAIL{C.RESET} {task.display_label} "
                 f"{C.RED}{type(e).__name__}: {e}{C.RESET}"
             )
+        finally:
+            progress["done"] += 1
+            _print_progress(progress)
 
 
 async def fetch_all(
@@ -234,12 +278,21 @@ async def fetch_all(
     target_filter: str | None,
     dry_run: bool,
     concurrency: int,
+    timeout_override: float | None = None,
+    connect_timeout: float = 10.0,
+    clean_raw: bool = True,
 ) -> None:
     """Main fetch loop — builds task list then executes concurrently."""
     sources = config.get("sources", {})
     endpoints = config.get("endpoints", {})
     targets = config.get("targets", [])
     apis = config.get("apis", [])
+
+    # Auto-clean raw data directory (skip for dry-run or filtered fetches)
+    if clean_raw and not dry_run and not api_filter and not target_filter:
+        if RAW_DIR.exists():
+            shutil.rmtree(RAW_DIR)
+            print(f"  {C.DIM}Cleaned {RAW_DIR}/{C.RESET}")
     stats = FetchStats()
     tasks: list[FetchTask] = []
     token_warned: set[str] = set()
@@ -278,7 +331,7 @@ async def fetch_all(
 
         source_config = sources.get(source_name, {})
         base_url = source_config.get("base_url", "")
-        timeout = source_config.get("timeout", 30)
+        timeout = timeout_override if timeout_override is not None else source_config.get("timeout", 30)
         headers = get_auth_headers(source_config)
 
         # Warn about missing token once per source
@@ -334,9 +387,11 @@ async def fetch_all(
                 query_params=query_params,
                 headers=headers,
                 timeout=timeout,
+                connect_timeout=connect_timeout,
                 save_api_name=api_name,
                 save_device_type=device_type,
                 save_ip=ip,
+                save_hostname=hostname,
                 display_label=label,
                 parser_command=resolved_parser,
             ))
@@ -358,13 +413,22 @@ async def fetch_all(
         return
 
     # ── Execute all tasks concurrently ──
-    print(f"\n  {C.BOLD}Fetching {len(tasks)} requests {C.DIM}(concurrency={concurrency}){C.RESET}...\n")
+    timeout_info = f"timeout={tasks[0].timeout}s, connect={tasks[0].connect_timeout}s"
+    print(f"\n  {C.BOLD}Fetching {len(tasks)} requests "
+          f"{C.DIM}(concurrency={concurrency}, {timeout_info}){C.RESET}\n")
+
+    progress = {"done": 0, "total": len(tasks), "start_time": time.monotonic()}
+    _print_progress(progress)
 
     sem = asyncio.Semaphore(concurrency)
     async with httpx.AsyncClient(verify=False) as client:
         await asyncio.gather(
-            *(execute_task(client, task, sem, stats) for task in tasks)
+            *(execute_task(client, task, sem, stats, progress) for task in tasks)
         )
+
+    # Clear progress line
+    sys.stdout.write("\r" + " " * 80 + "\r")
+    sys.stdout.flush()
 
     # ── Print results ──
     for line in sorted(stats.results):
@@ -385,6 +449,101 @@ async def fetch_all(
     else:
         print(f"  Skipped: {stats.skipped}")
     print(f"\n  Raw data saved to: {C.CYAN}{RAW_DIR}/{C.RESET}")
+
+    # ── Unreachable devices report ──
+    if stats.unreachable:
+        unreachable_path = PROJECT_ROOT / "test_data" / "unreachable_devices.csv"
+        unreachable_path.parent.mkdir(parents=True, exist_ok=True)
+        seen_ips: set[str] = set()
+        rows: list[dict[str, str]] = []
+        for entry in stats.unreachable:
+            if entry["ip"] not in seen_ips:
+                seen_ips.add(entry["ip"])
+                rows.append(entry)
+        with open(unreachable_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["ip", "hostname", "device_type", "error"])
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"\n  {C.YELLOW}Unreachable devices: {len(rows)}{C.RESET}")
+        print(f"  Saved to: {C.CYAN}{unreachable_path}{C.RESET}")
+
+
+def load_inventory_targets(inventory_path: str, sample_size: int | None) -> list[dict]:
+    """
+    Load targets from a CSV inventory file with optional random sampling.
+
+    CSV expected columns: ip, hostname, device_type
+    Sampling is balanced across device_types.
+    """
+    path = Path(inventory_path)
+    if not path.exists():
+        print(f"Error: Inventory file not found: {path}")
+        sys.exit(1)
+
+    devices_by_type: dict[str, list[dict]] = {}
+    with open(path, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            ip = (row.get("ip") or "").strip()
+            hostname = (row.get("hostname") or "").strip()
+            raw_dt = (row.get("device_type") or "").strip().lower()
+            if not ip or not raw_dt:
+                continue
+            dt = DEVICE_TYPE_MAP.get(raw_dt, raw_dt)
+            devices_by_type.setdefault(dt, []).append({
+                "ip": ip,
+                "hostname": hostname or ip,
+                "device_type": dt,
+            })
+
+    if not devices_by_type:
+        print(f"Error: No valid devices found in {path}")
+        sys.exit(1)
+
+    total = sum(len(v) for v in devices_by_type.values())
+    print(f"\n  {C.DIM}Inventory: {total} devices across "
+          f"{len(devices_by_type)} device types{C.RESET}")
+    for dt, devs in sorted(devices_by_type.items()):
+        print(f"    {dt}: {len(devs)}")
+
+    if sample_size is None:
+        return [d for devs in devices_by_type.values() for d in devs]
+
+    # Balanced random sampling
+    num_types = len(devices_by_type)
+    per_type = sample_size // num_types
+    remainder = sample_size % num_types
+
+    sampled: list[dict] = []
+    leftover_types: list[str] = []
+
+    for dt in sorted(devices_by_type.keys()):
+        available = devices_by_type[dt]
+        take = min(per_type, len(available))
+        sampled.extend(random.sample(available, take))
+        if len(available) > take:
+            leftover_types.append(dt)
+
+    # Redistribute remainder
+    extra = remainder
+    for dt in leftover_types:
+        if extra <= 0:
+            break
+        already = {d["ip"] for d in sampled}
+        available = [d for d in devices_by_type[dt] if d["ip"] not in already]
+        take = min(extra, len(available))
+        if take > 0:
+            sampled.extend(random.sample(available, take))
+            extra -= take
+
+    print(f"\n  {C.BOLD}Sampled {len(sampled)} devices:{C.RESET}")
+    type_counts: dict[str, int] = {}
+    for d in sampled:
+        type_counts[d["device_type"]] = type_counts.get(d["device_type"], 0) + 1
+    for dt, count in sorted(type_counts.items()):
+        print(f"    {dt}: {count}")
+
+    return sampled
 
 
 def main() -> None:
@@ -411,7 +570,33 @@ def main() -> None:
         "--config", type=str, default=None,
         help="Path to config file (default: config/api_test.yaml)"
     )
+    parser.add_argument(
+        "--timeout", type=float, default=None,
+        help="Override read timeout in seconds (default: per-source config value)"
+    )
+    parser.add_argument(
+        "--connect-timeout", type=float, default=10.0,
+        help="Connect timeout in seconds (default: 10)"
+    )
+    parser.add_argument(
+        "--no-clean", action="store_true",
+        help="Do not clean test_data/raw/ before fetching (default: auto-clean)"
+    )
+    parser.add_argument(
+        "--inventory", type=str, default=None,
+        help="Path to device inventory CSV (columns: ip, hostname, device_type). "
+             "Overrides targets from yaml config."
+    )
+    parser.add_argument(
+        "--sample", type=int, default=None,
+        help="Number of devices to randomly sample from inventory (balanced by device_type). "
+             "Requires --inventory."
+    )
     args = parser.parse_args()
+
+    if args.sample and not args.inventory:
+        print("Error: --sample requires --inventory")
+        sys.exit(1)
 
     # Load .env for tokens
     load_env(ENV_PATH)
@@ -422,7 +607,16 @@ def main() -> None:
         CONFIG_PATH = Path(args.config)
     config = load_config()
 
-    asyncio.run(fetch_all(config, args.api, args.target, args.dry_run, args.concurrency))
+    # Override targets from inventory CSV if provided
+    if args.inventory:
+        config["targets"] = load_inventory_targets(args.inventory, args.sample)
+
+    asyncio.run(fetch_all(
+        config, args.api, args.target, args.dry_run, args.concurrency,
+        timeout_override=args.timeout,
+        connect_timeout=args.connect_timeout,
+        clean_raw=not args.no_clean,
+    ))
 
 
 if __name__ == "__main__":

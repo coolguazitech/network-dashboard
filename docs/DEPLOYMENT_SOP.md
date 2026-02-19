@@ -96,7 +96,7 @@ DB_ROOT_PASSWORD=<改成強密碼>
 JWT_SECRET=<改成隨機字串>
 ```
 
-其他保持預設即可（`USE_MOCK_API=true` 為演示模式）。
+其他保持預設即可。
 
 ```bash
 # 3. 一鍵啟動（app + db + phpmyadmin）
@@ -166,7 +166,6 @@ docker-compose -f docker-compose.production.yml up -d
 │  • 前端靜態檔 (Vue 3 build)                            │
 │  • FastAPI + SQLAlchemy + APScheduler                  │
 │  • ConfiguredFetcher（通用 HTTP GET Fetcher）            │
-│  • MockFetcher（開發測試用）                             │
 │  • 所有 Parser plugins                                 │
 │  • Indicator 評估引擎 + Dashboard API                   │
 │  • 完整快照機制（每 30 秒確保資料一致性）                   │
@@ -174,7 +173,7 @@ docker-compose -f docker-compose.production.yml up -d
 ```
 
 **核心設計**：Base Image 已包含完整框架 + `ConfiguredFetcher`（通用 HTTP GET fetcher）。
-切換 `USE_MOCK_API=false` 即自動走真實 API。**你只需要確保 Parser 能正確解析真實 API 回傳的格式。**
+只需在 `.env` 設定 `FETCHER_SOURCE__*__BASE_URL` 指向真實 API。**你只需要確保 Parser 能正確解析真實 API 回傳的格式。**
 
 資料流：
 
@@ -215,9 +214,6 @@ Parser 按設備類型分：
 ### 2.3 設定外部 API 連線（.env）
 
 ```ini
-# ===== 關閉 Mock 模式 =====
-USE_MOCK_API=false
-
 # ===== 外部 API 來源 (base_url + timeout) =====
 FETCHER_SOURCE__FNA__BASE_URL=http://your-fna-server:8001
 FETCHER_SOURCE__FNA__TIMEOUT=30
@@ -226,15 +222,18 @@ FETCHER_SOURCE__DNA__TIMEOUT=30
 FETCHER_SOURCE__GNMSPING__BASE_URL=http://your-gnmsping-server:8001
 FETCHER_SOURCE__GNMSPING__TIMEOUT=60
 
-# ===== Endpoint 模板 =====
-FETCHER_ENDPOINT__TRANSCEIVER=/api/v1/transceiver/{switch_ip}
-FETCHER_ENDPOINT__FAN=/api/v1/fan/{switch_ip}
-FETCHER_ENDPOINT__POWER=/api/v1/power/{switch_ip}
-FETCHER_ENDPOINT__VERSION=/api/v1/version/{switch_ip}
-FETCHER_ENDPOINT__UPLINK=/api/v1/neighbors/{switch_ip}
-FETCHER_ENDPOINT__ERROR_COUNT=/api/v1/error-count/{switch_ip}
-FETCHER_ENDPOINT__PORT_CHANNEL=/api/v1/port-channel/{switch_ip}
-FETCHER_ENDPOINT__PING=/api/v1/ping/batch
+# ===== Endpoint 模板（名稱必須與 scheduler.yaml 的 fetcher key 一致）=====
+FETCHER_ENDPOINT__GET_GBIC_DETAILS=/api/v1/transceiver/{switch_ip}
+FETCHER_ENDPOINT__GET_CHANNEL_GROUP=/api/v1/port-channel/{switch_ip}
+FETCHER_ENDPOINT__GET_UPLINK=/api/v1/neighbors/{switch_ip}
+FETCHER_ENDPOINT__GET_ERROR_COUNT=/api/v1/error-count/{switch_ip}
+FETCHER_ENDPOINT__GET_STATIC_ACL=/api/v1/acl/static/{switch_ip}
+FETCHER_ENDPOINT__GET_DYNAMIC_ACL=/api/v1/acl/dynamic/{switch_ip}
+FETCHER_ENDPOINT__GET_ARP_TABLE=/api/v1/arp-table/{switch_ip}
+FETCHER_ENDPOINT__GET_MAC_TABLE=/api/v1/mac-table/{switch_ip}
+FETCHER_ENDPOINT__GET_FAN=/api/v1/fan/{switch_ip}
+FETCHER_ENDPOINT__GET_POWER=/api/v1/power/{switch_ip}
+FETCHER_ENDPOINT__GET_VERSION=/api/v1/version/{switch_ip}
 ```
 
 佔位符說明：
@@ -409,7 +408,7 @@ docker-compose.production.yml   ← 一鍵起服務（app + db + phpmyadmin）
 scripts/build-and-push.sh       ← 一鍵 build + scan + push
 ```
 
-- **Base Image**：包含完整系統 + MockFetcher + 所有 Parser plugins，可獨立運行演示
+- **Base Image**：包含完整系統 + 所有 Parser plugins
 - **Production Image**：以 Base Image 為基礎，覆蓋真實 API 的 Fetcher/Parser 實作
 - 一般情況只需修改代碼後重新打包 Base Image 推送即可
 - 只有在公司端有獨立於 repo 的專屬代碼時，才需要用 Production Dockerfile
@@ -422,7 +421,7 @@ scripts/build-and-push.sh       ← 一鍵 build + scan + push
 
 | 症狀 | 可能原因 | 解決方式 |
 |------|---------|---------|
-| Dashboard 全部「無資料」 | Mock 模式收斂中 | 等待 MOCK_PING_CONVERGE_TIME（預設 600 秒） |
+| Dashboard 全部「無資料」 | 採集尚未完成或 API 未連線 | 檢查 fetcher 來源設定和 API 連通性 |
 | 所有指標「無採集數據」 | Parser 未載入 or 名稱不一致 | 檢查 parser_registry 載入狀態（見下方） |
 | 紫色狀態「採集異常」 | Fetcher 連不上外部 API | 檢查 `.env` BASE_URL + 網路連通性 |
 | 登入失敗 401 | JWT_SECRET 變更 | 清除瀏覽器 localStorage 重新登入 |
@@ -479,7 +478,7 @@ docker-compose -f docker-compose.production.yml up -d
 # → http://localhost:8000  登入 root/admin123
 
 # ========== 切換真實 API ==========
-# .env 中設定 USE_MOCK_API=false + 填入 API URL
+# .env 中設定 FETCHER_SOURCE__*__BASE_URL 指向真實 API
 docker-compose -f docker-compose.production.yml restart app
 
 # ========== 公司端更新（當前版本 v1.2.0） ==========

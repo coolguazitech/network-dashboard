@@ -1,96 +1,94 @@
 # =============================================================================
-# 排程設定檔 (Scheduler Configuration)
+# Scheduler Configuration — API 採集排程
 # =============================================================================
-# 定義所有 Fetcher 的來源 (source) 和採集間隔 (interval)。
 #
-# source: 外部 API 來源（對應 .env 中的 FETCHER_SOURCE__{SOURCE}__BASE_URL）
-#   - FNA: FAB Network API
-#   - DNA: Data Center Network API
-#   - GNMSPING: GNMS Ping API
+# 每筆 entry = 一個 API call，scheduler 定期對所有目標設備執行。
 #
-# interval: 觸發頻率（秒）。若上一輪尚未完成，本次會被跳過（max_instances=1）
+# 命名規範（三處必須一致）：
+#   1. 本檔的 key（如 get_fan）
+#   2. .env 中 FETCHER_ENDPOINT__GET_FAN=...
+#   3. Parser command: {key}_{device_type}_{source}
+#      e.g. get_fan + hpe + dna → get_fan_hpe_dna
 #
-# endpoint 模板定義在 .env 的 FETCHER_ENDPOINT__{NAME} 變數中，
-# 支援佔位符如 {switch_ip}，未消耗的變數自動成為 query params。
+# source: 外部 API 來源
+#   - FNA: FAB Network API（共用 endpoint，內部自動偵測廠牌）
+#   - DNA: Data Network API（每個 device_type 各自的 endpoint）
 #
-# 新增 Fetcher 步驟：
-#   1. 在此檔案加一筆 fetcher entry（source + interval）
-#      若 source 為新的外部 API（例如不在 FNA/DNA/GNMSPING 之中），需額外：
-#      a. 在 .env 加 FETCHER_SOURCE__{SOURCE}__BASE_URL 和 __TIMEOUT
-#      b. 在 app/core/config.py 的 FetcherSourceConfig 加對應的欄位
-#   2. 在 .env 加一筆 FETCHER_ENDPOINT__{NAME}=... endpoint 模板
-#      支援佔位符（會替換進 URL path）：
-#        - {switch_ip}: FetchContext.switch_ip
-#        - {device_type}: FetchContext.device_type.api_value ("hpe"/"ios"/"nxos")
-#        - {tenant_group}, {switch_ips} 等: FetchContext.params 中的任意 key
-#      未被佔位符消耗的變數自動成為 query params（?key=value）
-#   3. 在 app/parsers/plugins/ 寫對應的 Parser
-#   4. 完成！ConfiguredFetcher 自動處理 GET 呼叫。
+# interval: 觸發頻率（秒）。上一輪未完成時本次跳過（max_instances=1）
+#
 # =============================================================================
 
 fetchers:
   # ---------------------------------------------------------------------------
-  # FNA (2): FAB Network API — 內部自動偵測廠牌，只需 switch_ip
+  # FNA (7): 所有廠牌共用同一個 endpoint，只需 {ip}
   # ---------------------------------------------------------------------------
-  transceiver:
+  get_gbic_details:
     source: FNA
-    interval: 30
-    description: "光模組 Tx/Rx 功率資料收集"
+    interval: 300
+    description: "光模組 Tx/Rx 功率"
 
-  port_channel:
+  get_channel_group:
     source: FNA
-    interval: 30
-    description: "Port-Channel 狀態及成員檢查"
+    interval: 300
+    description: "Port-Channel 狀態及成員"
+
+  get_uplink:
+    source: FNA
+    interval: 300
+    description: "Uplink 鄰居拓撲 (CDP/LLDP)"
+
+  get_error_count:
+    source: FNA
+    interval: 300
+    description: "Interface 錯誤計數"
+
+  get_static_acl:
+    source: FNA
+    interval: 300
+    description: "Static ACL 綁定"
+
+  get_dynamic_acl:
+    source: FNA
+    interval: 300
+    description: "Dynamic ACL 綁定"
 
   # ---------------------------------------------------------------------------
-  # DNA (4): Data Center Network API — 需要 device_type + switch_ip
+  # DNA (5): 每個 device_type 各自的 endpoint
   # ---------------------------------------------------------------------------
-  version:
+  get_mac_table:
     source: DNA
-    interval: 30
-    description: "韌體版本資訊收集"
+    interval: 300
+    description: "MAC 位址表"
 
-  uplink:
+  get_fan:
     source: DNA
-    interval: 30
-    description: "Uplink 鄰居拓撲收集"
+    interval: 300
+    description: "風扇狀態"
 
-  fan:
+  get_power:
     source: DNA
-    interval: 30
-    description: "設備風扇狀態收集"
+    interval: 300
+    description: "電源供應器狀態"
 
-  power:
+  get_version:
     source: DNA
-    interval: 30
-    description: "設備電源供應器狀態收集"
+    interval: 300
+    description: "韌體版本"
 
-  error_count:
+  get_interface_status:
     source: DNA
-    interval: 30
-    description: "Interface 錯誤計數收集"
-
-  not_registerd_for_test:
-    source: DNA
-    interval: 30
-    description: "製造錯誤日誌用於測試（不會被 Parser 消耗）"
+    interval: 300
+    description: "Interface 狀態（速率/雙工）"
 
   # ---------------------------------------------------------------------------
-  # GNMSPing (1): GNMS Ping API — 批量 Ping，不需 device_type
+  # GNMSPING (2): ICMP 連通性測試
   # ---------------------------------------------------------------------------
-  ping:
+  ping_batch:
     source: GNMSPING
-    interval: 30
-    description: "設備可達性檢查（Switch Ping）"
+    interval: 60
+    description: "設備連通性 (ICMP Ping)"
 
-# =============================================================================
-# Non-fetcher tasks（自訂邏輯，在 scheduler 中特殊處理）
-# =============================================================================
-tasks:
-  client-collection:
-    interval: 30
-    description: "客戶端資料採集 (MAC/ARP/InterfaceStatus/ACL/Ping)"
-
-  cleanup-old-records:
-    interval: 30
-    description: "清理超過保留天數的 ClientRecord 舊資料"
+  gnms_ping:
+    source: GNMSPING
+    interval: 60
+    description: "Client IP Ping"

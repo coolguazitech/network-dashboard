@@ -155,7 +155,6 @@ class MockDataGenerator:
         生成 ClientRecord 資料（更真實的模擬）。
 
         模擬真實情境：
-        - 系統查詢所有可達的 ARP 來源
         - MAC 物理位置由 has_converged 決定
         - has_converged=True: MAC 已遷移到 NEW 設備
         - has_converged=False: MAC 仍在 OLD 設備上
@@ -166,7 +165,7 @@ class MockDataGenerator:
             reachable_devices: 所有可達設備的集合（包含 OLD 和 NEW）
             session: DB session
             base_records: 基準記錄（可選，用於產生變化）
-            can_ping: ARP 來源是否可達（決定 ping_reachable 是否有值）
+            can_ping: 是否可執行 ping（決定 ping_reachable 是否有值）
                       True → ping 可執行，結果為 True/False
                       False → ping 未執行，結果為 None
 
@@ -228,12 +227,10 @@ class MockDataGenerator:
 
         for d in devices:
             if is_old:
-                # OLD 階段：檢查 old_is_reachable
-                if d.old_hostname and d.old_is_reachable:
+                if d.old_hostname:
                     reachable.add(d.old_hostname)
             else:
-                # NEW 階段：檢查 is_reachable
-                if d.new_hostname and d.is_reachable:
+                if d.new_hostname:
                     reachable.add(d.new_hostname)
 
         return reachable
@@ -249,7 +246,6 @@ class MockDataGenerator:
             dict: {
                 old_hostname: {
                     'new_hostname': str,
-                    'use_same_port': bool,
                     'old_hostname': str,
                 },
                 ...
@@ -273,7 +269,6 @@ class MockDataGenerator:
                 mapping['_old_hostnames'].append(d.old_hostname)
                 mapping[d.old_hostname] = {
                     'new_hostname': d.new_hostname,
-                    'use_same_port': d.use_same_port,
                     'old_hostname': d.old_hostname,
                 }
             if d.new_hostname:
@@ -325,12 +320,8 @@ class MockDataGenerator:
         VERSIONS = ["16.12.4", "17.3.2", "17.3.3", "15.2.4", "9.3(8)", "7.0(3)I7(6)"]
 
         for device in devices:
-            # 使用 NEW 設備的 hostname 和可達性
             hostname = device.new_hostname
-            is_reachable = device.is_reachable
-
-            # 只對可達的設備生成版本記錄
-            if not hostname or not is_reachable:
+            if not hostname:
                 continue
 
             # 創建 CollectionBatch
@@ -390,21 +381,9 @@ class MockDataGenerator:
         devices = result.scalars().all()
 
         if is_old:
-            if require_reachable:
-                return [
-                    d.old_hostname for d in devices
-                    if d.old_hostname and d.old_is_reachable
-                ]
-            else:
-                return [d.old_hostname for d in devices if d.old_hostname]
+            return [d.old_hostname for d in devices if d.old_hostname]
         else:
-            if require_reachable:
-                return [
-                    d.new_hostname for d in devices
-                    if d.new_hostname and d.is_reachable
-                ]
-            else:
-                return [d.new_hostname for d in devices if d.new_hostname]
+            return [d.new_hostname for d in devices if d.new_hostname]
 
     def _create_varied_record(
         self,
@@ -447,12 +426,6 @@ class MockDataGenerator:
                 mapping = device_mapping[base.switch_hostname]
                 correct_switch = mapping.get('new_hostname', base.switch_hostname)
                 switch_hostname = correct_switch
-
-                # 如果 use_same_port=True，保持同一個 port
-                if not mapping.get('use_same_port', True):
-                    # 不同 port 對應，隨機分配
-                    port_num = random.randint(1, 48)
-                    interface_name = f"GE1/0/{port_num}"
 
         # **關鍵檢查**：目標設備是否可達
         # 如果設備不可達，就採集不到這個 MAC，返回 None
@@ -625,7 +598,7 @@ class MockDataGenerator:
         - has_converged=True: MAC 已遷移到 NEW 設備
         - has_converged=False: MAC 仍在 OLD 設備上
         - 檢查該設備是否在 reachable_devices 中（可被查詢到）
-        - can_ping 決定 ping_reachable 是否有值（ARP 來源不可達時為 None）
+        - can_ping 決定 ping_reachable 是否有值
 
         Args:
             mac_entry: MAC 清單條目
@@ -634,7 +607,7 @@ class MockDataGenerator:
             collected_at: 採集時間
             device_mapping: 設備對應清單
             reachable_devices: 所有可達設備的集合
-            can_ping: ARP 來源是否可達
+            can_ping: 是否可執行 ping
 
         Returns:
             ClientRecord 或 None（表示 MAC 消失/設備不可達）
@@ -693,9 +666,9 @@ class MockDataGenerator:
             wrong_port = random.randint(1, 48)
             interface_name = f"GE1/0/{wrong_port}"
 
-        # ping_reachable 取決於 ARP 來源是否可達：
-        # - can_ping=True → ARP 來源可達，ping 可執行 → True（含小機率 False）
-        # - can_ping=False → ARP 來源不可達，ping 未執行 → None
+        # ping_reachable 取決於是否可執行 ping：
+        # - can_ping=True → ping 可執行 → True（含小機率 False）
+        # - can_ping=False → ping 未執行 → None
         if can_ping:
             ping_reachable: bool | None = random.random() >= self.PING_FAIL_PROB
         else:
@@ -733,7 +706,7 @@ class MockDataGenerator:
             device_mapping: 設備對應清單
             has_converged: MAC 是否已收斂到 NEW 設備
             reachable_devices: 所有可達設備的集合
-            can_ping: ARP 來源是否可達
+            can_ping: 是否可執行 ping
 
         Returns:
             ClientRecord 或 None（表示 MAC 消失/設備不可達）
@@ -773,8 +746,8 @@ class MockDataGenerator:
         interface_name = base.interface_name
         vlan_id = base.vlan_id
 
-        # ping_reachable 取決於 ARP 來源是否可達：
-        # - can_ping=False → 強制 None（ARP 來源不可達，ping 未執行）
+        # ping_reachable 取決於是否可執行 ping：
+        # - can_ping=False → 強制 None（ping 未執行）
         # - can_ping=True → 從 base 繼承，含小機率翻轉
         if not can_ping:
             ping_reachable: bool | None = None

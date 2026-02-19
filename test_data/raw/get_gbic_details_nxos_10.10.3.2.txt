@@ -1,0 +1,17 @@
+Ethernet1/49
+    transceiver is present
+    type is QSFP-40G-SR4
+    name is CISCO-AVAGO
+
+    QSFP Detail Diagnostics Information (internal calibration)
+    ============================================================
+    Temperature : 32.15 C
+    Voltage     : 3.30 V
+
+          Tx Bias     Tx Power    Rx Power
+    Lane  Current     (dBm)       (dBm)
+    ----  -------     --------    --------
+    1     6.51        -1.50       -2.10
+    2     6.48        -1.55       -2.30
+    3     6.52        -1.48       -2.05
+    4     6.45        -1.52       -2.20

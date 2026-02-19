@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile, Query
 from fastapi.responses import StreamingResponse
@@ -15,12 +15,12 @@ from pydantic import BaseModel
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.endpoints.auth import get_current_user, require_write
 from app.db.base import get_async_session as get_session
 from app.services.system_log import write_log
 from app.db.models import (
     UplinkExpectation,
     VersionExpectation,
-    ArpSource,
     PortChannelExpectation,
     MaintenanceDeviceList,
 )
@@ -61,42 +61,6 @@ async def validate_hostname_in_device_list(
         )
 
 
-async def validate_hostname_in_device_list_any(
-    maintenance_id: str,
-    hostname: str,
-    session: AsyncSession,
-    field_name: str = "hostname",
-) -> None:
-    """
-    驗證 hostname 是否存在於設備清單的「新設備」或「舊設備」中。
-
-    用於 Uplink 期望和 ARP 來源，這些可以參照新設備或舊設備。
-
-    Args:
-        maintenance_id: 歲修 ID
-        hostname: 要驗證的主機名稱
-        session: 資料庫 session
-        field_name: 欄位名稱（用於錯誤訊息）
-
-    Raises:
-        HTTPException: 如果 hostname 不在設備清單中
-    """
-    from sqlalchemy import or_
-    stmt = select(MaintenanceDeviceList).where(
-        MaintenanceDeviceList.maintenance_id == maintenance_id,
-        or_(
-            MaintenanceDeviceList.new_hostname == hostname,
-            MaintenanceDeviceList.old_hostname == hostname,
-        ),
-    )
-    result = await session.execute(stmt)
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"{field_name} '{hostname}' 不在設備清單中，"
-                   f"請先在設備清單中新增此設備"
-        )
-
 
 async def get_valid_new_hostnames(
     maintenance_id: str,
@@ -116,33 +80,6 @@ async def get_valid_new_hostnames(
     result = await session.execute(stmt)
     return {row[0] for row in result.fetchall()}
 
-
-async def get_valid_all_hostnames(
-    maintenance_id: str,
-    session: AsyncSession,
-) -> set[str]:
-    """
-    取得設備清單中所有設備的 hostname（新設備 + 舊設備）。
-
-    用於 Uplink 期望和 ARP 來源的批量匯入驗證。
-
-    Returns:
-        所有設備 hostname 的集合
-    """
-    stmt = select(
-        MaintenanceDeviceList.new_hostname,
-        MaintenanceDeviceList.old_hostname,
-    ).where(
-        MaintenanceDeviceList.maintenance_id == maintenance_id
-    )
-    result = await session.execute(stmt)
-    hostnames = set()
-    for row in result.fetchall():
-        if row[0]:
-            hostnames.add(row[0])
-        if row[1]:
-            hostnames.add(row[1])
-    return hostnames
 
 
 # ========== Pydantic Models ==========
@@ -204,6 +141,7 @@ class VersionExpectationResponse(BaseModel):
 @router.get("/uplink/{maintenance_id}")
 async def list_uplink_expectations(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     search: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -251,6 +189,7 @@ async def list_uplink_expectations(
 @router.post("/uplink/{maintenance_id}")
 async def create_uplink_expectation(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: UplinkExpectationCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -364,6 +303,7 @@ async def create_uplink_expectation(
 async def update_uplink_expectation(
     maintenance_id: str,
     item_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: UplinkExpectationUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -523,6 +463,7 @@ async def update_uplink_expectation(
 async def delete_uplink_expectation(
     maintenance_id: str,
     item_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
     """刪除 Uplink 期望。"""
@@ -554,6 +495,7 @@ async def delete_uplink_expectation(
 @router.post("/uplink/{maintenance_id}/batch-delete")
 async def batch_delete_uplink_expectations(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     item_ids: list[int] = Body(..., embed=True),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -591,6 +533,7 @@ async def batch_delete_uplink_expectations(
 @router.get("/uplink/{maintenance_id}/export-csv")
 async def export_uplink_csv(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     search: str | None = Query(None),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
@@ -654,6 +597,7 @@ async def export_uplink_csv(
 @router.post("/uplink/{maintenance_id}/import-csv")
 async def import_uplink_csv(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -745,6 +689,7 @@ async def import_uplink_csv(
 @router.get("/version/{maintenance_id}")
 async def list_version_expectations(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     search: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -791,6 +736,7 @@ async def list_version_expectations(
 @router.post("/version/{maintenance_id}")
 async def create_version_expectation(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: VersionExpectationCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -848,6 +794,7 @@ async def create_version_expectation(
 async def update_version_expectation(
     maintenance_id: str,
     item_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: VersionExpectationUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -915,6 +862,7 @@ async def update_version_expectation(
 async def delete_version_expectation(
     maintenance_id: str,
     item_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
     """刪除版本期望。"""
@@ -946,6 +894,7 @@ async def delete_version_expectation(
 @router.post("/version/{maintenance_id}/batch-delete")
 async def batch_delete_version_expectations(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     item_ids: list[int] = Body(..., embed=True),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -983,6 +932,7 @@ async def batch_delete_version_expectations(
 @router.get("/version/{maintenance_id}/export-csv")
 async def export_version_csv(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     search: str | None = Query(None),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
@@ -1038,6 +988,7 @@ async def export_version_csv(
 @router.post("/version/{maintenance_id}/import-csv")
 async def import_version_csv(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -1116,429 +1067,6 @@ async def import_version_csv(
     }
 
 
-# ========== ARP Source Pydantic Models ==========
-
-class ArpSourceCreate(BaseModel):
-    hostname: str
-    priority: int = 100
-    description: str | None = None
-
-
-class ArpSourceUpdate(BaseModel):
-    hostname: str | None = None
-    priority: int | None = None
-    description: str | None = None
-
-
-# ========== ARP Sources ==========
-
-@router.get("/arp/{maintenance_id}")
-async def list_arp_sources(
-    maintenance_id: str,
-    search: str | None = None,
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """列出 ARP 來源設備。"""
-    stmt = select(ArpSource).where(
-        ArpSource.maintenance_id == maintenance_id
-    )
-
-    if search:
-        from sqlalchemy import and_, or_
-        keywords = search.strip().split()
-
-        field_conditions = []
-        for field in [ArpSource.hostname, ArpSource.description]:
-            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
-            field_conditions.append(field_match)
-
-        stmt = stmt.where(or_(*field_conditions))
-
-    stmt = stmt.order_by(ArpSource.priority, ArpSource.hostname)
-    result = await session.execute(stmt)
-    items = result.scalars().all()
-
-    return {
-        "total": len(items),
-        "items": [
-            {
-                "id": item.id,
-                "hostname": item.hostname,
-                "priority": item.priority,
-                "description": item.description,
-            }
-            for item in items
-        ],
-    }
-
-
-@router.post("/arp/{maintenance_id}")
-async def create_arp_source(
-    maintenance_id: str,
-    data: ArpSourceCreate,
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """新增 ARP 來源設備。"""
-    hostname = data.hostname.strip()
-
-    # 驗證 hostname 存在於設備清單（新設備或舊設備皆可）
-    await validate_hostname_in_device_list_any(maintenance_id, hostname, session, "設備")
-
-    # 檢查 hostname 是否已存在
-    dup_stmt = select(ArpSource).where(
-        ArpSource.maintenance_id == maintenance_id,
-        ArpSource.hostname == hostname,
-    )
-    dup_result = await session.execute(dup_stmt)
-    if dup_result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"ARP 來源設備 {hostname} 已存在"
-        )
-
-    # 檢查 priority 是否已存在
-    priority_stmt = select(ArpSource).where(
-        ArpSource.maintenance_id == maintenance_id,
-        ArpSource.priority == data.priority,
-    )
-    priority_result = await session.execute(priority_stmt)
-    if priority_result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"優先級 {data.priority} 已被使用，請選擇其他優先級"
-        )
-
-    item = ArpSource(
-        maintenance_id=maintenance_id,
-        hostname=hostname,
-        priority=data.priority,
-        description=data.description.strip() if data.description else None,
-    )
-    session.add(item)
-    await session.commit()
-    await session.refresh(item)
-
-    await write_log(
-        level="INFO",
-        source="api",
-        summary=f"新增 ARP 來源: {hostname} (優先級 {data.priority})",
-        module="expectations",
-        maintenance_id=maintenance_id,
-    )
-
-    return {
-        "id": item.id,
-        "hostname": item.hostname,
-        "priority": item.priority,
-        "description": item.description,
-    }
-
-
-@router.put("/arp/{maintenance_id}/{item_id}")
-async def update_arp_source(
-    maintenance_id: str,
-    item_id: int,
-    data: ArpSourceUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """更新 ARP 來源設備。"""
-    stmt = select(ArpSource).where(
-        ArpSource.id == item_id,
-        ArpSource.maintenance_id == maintenance_id,
-    )
-    result = await session.execute(stmt)
-    item = result.scalar_one_or_none()
-
-    if not item:
-        raise HTTPException(status_code=404, detail="ARP 來源不存在")
-
-    # 檢查更新後的 hostname 是否會與其他記錄重複
-    if data.hostname is not None:
-        new_hostname = data.hostname.strip()
-        if new_hostname != item.hostname:
-            # 驗證新 hostname 存在於設備清單（新設備或舊設備皆可）
-            await validate_hostname_in_device_list_any(
-                maintenance_id, new_hostname, session, "設備"
-            )
-
-            dup_stmt = select(ArpSource).where(
-                ArpSource.maintenance_id == maintenance_id,
-                ArpSource.hostname == new_hostname,
-                ArpSource.id != item_id,
-            )
-            dup_result = await session.execute(dup_stmt)
-            if dup_result.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"ARP 來源設備 {new_hostname} 已存在"
-                )
-
-    # 檢查更新後的 priority 是否會與其他記錄重複
-    if data.priority is not None and data.priority != item.priority:
-        priority_stmt = select(ArpSource).where(
-            ArpSource.maintenance_id == maintenance_id,
-            ArpSource.priority == data.priority,
-            ArpSource.id != item_id,
-        )
-        priority_result = await session.execute(priority_stmt)
-        if priority_result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400,
-                detail=f"優先級 {data.priority} 已被使用，請選擇其他優先級"
-            )
-
-    if data.hostname is not None:
-        item.hostname = data.hostname.strip()
-    if data.priority is not None:
-        item.priority = data.priority
-    if data.description is not None:
-        item.description = data.description.strip() if data.description else None
-
-    await session.commit()
-    await session.refresh(item)
-
-    await write_log(
-        level="INFO",
-        source="api",
-        summary=f"更新 ARP 來源: {item.hostname}",
-        module="expectations",
-        maintenance_id=maintenance_id,
-    )
-
-    return {
-        "id": item.id,
-        "hostname": item.hostname,
-        "priority": item.priority,
-        "description": item.description,
-    }
-
-
-@router.delete("/arp/{maintenance_id}/{item_id}")
-async def delete_arp_source(
-    maintenance_id: str,
-    item_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
-    """刪除 ARP 來源設備。"""
-    stmt = select(ArpSource).where(
-        ArpSource.id == item_id,
-        ArpSource.maintenance_id == maintenance_id,
-    )
-    result = await session.execute(stmt)
-    item = result.scalar_one_or_none()
-
-    if not item:
-        raise HTTPException(status_code=404, detail="ARP 來源不存在")
-
-    log_summary = f"刪除 ARP 來源: {item.hostname}"
-    await session.delete(item)
-    await session.commit()
-
-    await write_log(
-        level="WARNING",
-        source="api",
-        summary=log_summary,
-        module="expectations",
-        maintenance_id=maintenance_id,
-    )
-
-    return {"status": "deleted"}
-
-
-@router.post("/arp/{maintenance_id}/batch-delete")
-async def batch_delete_arp_sources(
-    maintenance_id: str,
-    item_ids: list[int] = Body(..., embed=True),
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """批量刪除 ARP 來源。"""
-    if not item_ids:
-        return {
-            "success": True,
-            "deleted_count": 0,
-            "message": "沒有選中任何項目",
-        }
-
-    stmt = delete(ArpSource).where(
-        ArpSource.maintenance_id == maintenance_id,
-        ArpSource.id.in_(item_ids),
-    )
-    result = await session.execute(stmt)
-    await session.commit()
-
-    if result.rowcount > 0:
-        await write_log(
-            level="WARNING",
-            source="api",
-            summary=f"批量刪除 ARP 來源: {result.rowcount} 筆",
-            module="expectations",
-            maintenance_id=maintenance_id,
-        )
-
-    return {
-        "success": True,
-        "deleted_count": result.rowcount,
-        "message": f"已刪除 {result.rowcount} 筆 ARP 來源",
-    }
-
-
-@router.get("/arp/{maintenance_id}/export-csv")
-async def export_arp_csv(
-    maintenance_id: str,
-    search: str | None = Query(None),
-    session: AsyncSession = Depends(get_session),
-) -> StreamingResponse:
-    """匯出 ARP 來源為 CSV 文件。"""
-    stmt = select(ArpSource).where(
-        ArpSource.maintenance_id == maintenance_id
-    )
-
-    if search:
-        from sqlalchemy import and_, or_
-        keywords = search.strip().split()
-
-        field_conditions = []
-        for field in [ArpSource.hostname, ArpSource.description]:
-            field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
-            field_conditions.append(field_match)
-
-        stmt = stmt.where(or_(*field_conditions))
-
-    stmt = stmt.order_by(ArpSource.priority, ArpSource.hostname)
-    result = await session.execute(stmt)
-    items = result.scalars().all()
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-
-    writer.writerow(["hostname", "priority", "description"])
-
-    for item in items:
-        writer.writerow([
-            item.hostname,
-            str(item.priority),
-            item.description or "",
-        ])
-
-    output.seek(0)
-    content = "\ufeff" + output.getvalue()
-
-    return StreamingResponse(
-        iter([content.encode("utf-8")]),
-        media_type="text/csv",
-        headers={
-            "Content-Disposition": f'attachment; filename="{maintenance_id}_arp.csv"'
-        },
-    )
-
-
-@router.post("/arp/{maintenance_id}/import-csv")
-async def import_arp_csv(
-    maintenance_id: str,
-    file: UploadFile = File(...),
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """從 CSV 匯入 ARP 來源設備。"""
-    content = await file.read()
-    text = content.decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text))
-
-    # 預先載入有效的設備 hostname（新設備 + 舊設備）
-    valid_hostnames = await get_valid_all_hostnames(maintenance_id, session)
-
-    imported = 0
-    updated = 0
-    errors = []
-
-    for row_num, row in enumerate(reader, start=2):
-        try:
-            hostname = row.get("hostname", "").strip()
-            priority_str = row.get("priority", "100").strip()
-            description = row.get("description", "").strip() or None
-
-            if not hostname:
-                errors.append(f"Row {row_num}: hostname 為必填欄位")
-                continue
-
-            # 驗證 hostname 存在於設備清單（新設備或舊設備）
-            if hostname not in valid_hostnames:
-                errors.append(
-                    f"Row {row_num}: 設備 '{hostname}' 不在設備清單中"
-                )
-                continue
-
-            try:
-                priority = int(priority_str) if priority_str else 100
-            except ValueError:
-                priority = 100
-
-            # 檢查是否已存在（同一台設備只能有一筆）
-            stmt = select(ArpSource).where(
-                ArpSource.maintenance_id == maintenance_id,
-                ArpSource.hostname == hostname,
-            )
-            result = await session.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            if existing:
-                # 更新時檢查 priority 是否與其他記錄重複
-                if priority != existing.priority:
-                    priority_stmt = select(ArpSource).where(
-                        ArpSource.maintenance_id == maintenance_id,
-                        ArpSource.priority == priority,
-                        ArpSource.id != existing.id,
-                    )
-                    priority_result = await session.execute(priority_stmt)
-                    if priority_result.scalar_one_or_none():
-                        errors.append(
-                            f"Row {row_num}: 優先級 {priority} 已被其他設備使用"
-                        )
-                        continue
-
-                existing.priority = priority
-                existing.description = description
-                updated += 1
-            else:
-                # 新增時檢查 priority 是否已存在
-                priority_stmt = select(ArpSource).where(
-                    ArpSource.maintenance_id == maintenance_id,
-                    ArpSource.priority == priority,
-                )
-                priority_result = await session.execute(priority_stmt)
-                if priority_result.scalar_one_or_none():
-                    errors.append(
-                        f"Row {row_num}: 優先級 {priority} 已被其他設備使用"
-                    )
-                    continue
-
-                item = ArpSource(
-                    maintenance_id=maintenance_id,
-                    hostname=hostname,
-                    priority=priority,
-                    description=description,
-                )
-                session.add(item)
-                imported += 1
-        except Exception as e:
-            errors.append(f"Row {row_num}: {str(e)}")
-
-    await session.commit()
-
-    if imported + updated > 0:
-        await write_log(
-            level="INFO",
-            source="api",
-            summary=f"CSV 匯入 ARP 來源: 新增 {imported}, 更新 {updated}",
-            module="expectations",
-            maintenance_id=maintenance_id,
-        )
-
-    return {
-        "imported": imported,
-        "updated": updated,
-        "total_errors": len(errors),
-        "errors": errors[:10],
-    }
 
 
 # ========== Port-Channel Expectation Pydantic Models ==========
@@ -1562,6 +1090,7 @@ class PortChannelExpectationUpdate(BaseModel):
 @router.get("/port-channel/{maintenance_id}")
 async def list_port_channel_expectations(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     search: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -1616,6 +1145,7 @@ async def list_port_channel_expectations(
 @router.post("/port-channel/{maintenance_id}")
 async def create_port_channel_expectation(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: PortChannelExpectationCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -1681,6 +1211,7 @@ async def create_port_channel_expectation(
 async def update_port_channel_expectation(
     maintenance_id: str,
     item_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: PortChannelExpectationUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -1766,6 +1297,7 @@ async def update_port_channel_expectation(
 async def delete_port_channel_expectation(
     maintenance_id: str,
     item_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
     """刪除 Port-Channel 期望。"""
@@ -1797,6 +1329,7 @@ async def delete_port_channel_expectation(
 @router.post("/port-channel/{maintenance_id}/batch-delete")
 async def batch_delete_port_channel_expectations(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     item_ids: list[int] = Body(..., embed=True),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -1834,6 +1367,7 @@ async def batch_delete_port_channel_expectations(
 @router.get("/port-channel/{maintenance_id}/export-csv")
 async def export_port_channel_csv(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     search: str | None = Query(None),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
@@ -1893,6 +1427,7 @@ async def export_port_channel_csv(
 @router.post("/port-channel/{maintenance_id}/import-csv")
 async def import_port_channel_csv(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:

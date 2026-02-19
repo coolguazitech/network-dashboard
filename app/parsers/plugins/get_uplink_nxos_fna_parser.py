@@ -3,6 +3,18 @@ Parser for 'get_uplink_nxos_fna' API.
 
 Parses Cisco NX-OS `show lldp neighbors detail` output to extract
 LLDP neighbor details (remote hostname, interface, platform).
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class NeighborData(ParsedData):
+    local_interface: str                     # local port, e.g. "GigabitEthernet0/1"
+    remote_hostname: str                     # neighbor device name
+    remote_interface: str                    # neighbor port
+    remote_platform: str | None = None       # optional platform description
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: show cdp neighbor / show lldp neighbor
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 

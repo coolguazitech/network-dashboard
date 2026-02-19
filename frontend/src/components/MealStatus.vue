@@ -4,9 +4,10 @@
       <div class="title">便當</div>
       <div class="bento-icon">🍱</div>
       <div
-        v-for="zone in zones"
+        v-for="(zone, zi) in zones"
         :key="zone.zone_code"
-        class="zone-item"
+        class="zone-item field-stagger"
+        :style="{ animationDelay: zi * 100 + 'ms' }"
         :title="getTooltip(zone)"
       >
         <div
@@ -24,7 +25,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, inject, watch } from 'vue'
-import axios from 'axios'
+import api from '@/utils/api'
 import { canWrite } from '@/utils/auth'
 
 const maintenanceId = inject('maintenanceId')
@@ -44,6 +45,7 @@ const getLightClass = (zone) => ({
   'light-red': zone.status === 'pending',
   'light-green': zone.status === 'arrived',
   'light-readonly': !canWrite.value,
+  'pulse-pending': zone.status === 'pending',
 })
 
 const getTooltip = (zone) => {
@@ -52,12 +54,16 @@ const getTooltip = (zone) => {
   return `${names[zone.zone_code]}：${statusText[zone.status]}`
 }
 
+// 統一轉小寫（後端 enum 為大寫，前端 CSS class 用小寫）
+const normalizeStatus = (s) => (s || 'no_meal').toLowerCase()
+
 const toggleStatus = (zone) => {
   // Guest 無法切換狀態
   if (!canWrite.value) return
 
   const order = ['no_meal', 'pending', 'arrived']
-  const nextStatus = order[(order.indexOf(zone.status) + 1) % 3]
+  const prevStatus = zone.status
+  const nextStatus = order[(order.indexOf(prevStatus) + 1) % 3]
 
   const idx = zones.value.findIndex(z => z.zone_code === zone.zone_code)
   if (idx !== -1) {
@@ -65,20 +71,27 @@ const toggleStatus = (zone) => {
   }
 
   if (maintenanceId.value) {
-    axios.put(`/api/v1/meals/${maintenanceId.value}/${zone.zone_code}`, { status: nextStatus })
-      .catch(err => console.error('Update failed:', err))
+    api.put(`/meals/${maintenanceId.value}/${zone.zone_code}`, { status: nextStatus })
+      .catch(err => {
+        console.error('Update failed:', err)
+        // 回滾到先前狀態
+        const rollbackIdx = zones.value.findIndex(z => z.zone_code === zone.zone_code)
+        if (rollbackIdx !== -1) {
+          zones.value[rollbackIdx] = { ...zones.value[rollbackIdx], status: prevStatus }
+        }
+      })
   }
 }
 
 const fetchZones = async () => {
   if (!maintenanceId.value) return
   try {
-    const res = await axios.get(`/api/v1/meals/${maintenanceId.value}`)
+    const res = await api.get(`/meals/${maintenanceId.value}`)
     if (res.data?.zones) {
       res.data.zones.forEach(z => {
         const idx = zones.value.findIndex(x => x.zone_code === z.zone_code)
         if (idx !== -1) {
-          zones.value[idx].status = z.status
+          zones.value[idx].status = normalizeStatus(z.status)
         }
       })
     }
@@ -168,13 +181,13 @@ onUnmounted(() => {
 }
 
 .light-red {
-  background: #ef4444;
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.7);
+  background: #ff1744;
+  box-shadow: 0 0 8px 1px rgba(255, 23, 68, 0.7), 0 0 14px 3px rgba(255, 23, 68, 0.3);
 }
 
 .light-green {
-  background: #22c55e;
-  box-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
+  background: #00e676;
+  box-shadow: 0 0 8px 1px rgba(0, 230, 118, 0.7), 0 0 14px 3px rgba(0, 230, 118, 0.3);
 }
 
 .light-readonly {
@@ -210,6 +223,12 @@ onUnmounted(() => {
   font-size: 0.625rem;
   color: white;
   font-weight: bold;
+  animation: check-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes check-pop {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 .zone-label {

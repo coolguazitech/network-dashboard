@@ -8,16 +8,20 @@ from __future__ import annotations
 import csv
 import io
 import re
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
+
+from app.api.endpoints.auth import get_current_user, require_write
 from sqlalchemy import select, func, delete
 
 from app.core.enums import ClientDetectionStatus, TenantGroup
 from app.db.base import get_session_context
+from app.core.enums import UserRole
 from app.db.models import (
-    MaintenanceMacList, ClientCategoryMember, ClientCategory,
+    MaintenanceMacList, ClientCategoryMember, ClientCategory, User,
+    ClientRecord,
 )
 from app.services.client_comparison_service import ClientComparisonService
 from app.services.system_log import write_log
@@ -40,6 +44,7 @@ class ClientCreate(BaseModel):
     ip_address: str
     tenant_group: TenantGroup = TenantGroup.F18
     description: str | None = None
+    default_assignee: str | None = None
     category_ids: list[int] | None = None  # 分類 ID 列表（必須是已存在的分類）
 
 
@@ -49,6 +54,7 @@ class ClientUpdate(BaseModel):
     ip_address: str | None = None
     tenant_group: TenantGroup | None = None
     description: str | None = None
+    default_assignee: str | None = None
 
 
 class ClientResponse(BaseModel):
@@ -59,6 +65,7 @@ class ClientResponse(BaseModel):
     tenant_group: TenantGroup
     detection_status: ClientDetectionStatus
     description: str | None
+    default_assignee: str | None = None
     maintenance_id: str
     # 擴充欄位
     category_name: str | None = None  # 所屬分類
@@ -162,8 +169,43 @@ def parse_tenant_group(value: str) -> TenantGroup:
         )
 
 
+async def resolve_default_assignee(
+    session, display_name: str | None,
+) -> str:
+    """
+    解析 default_assignee：驗證使用者存在，或回傳系統管理員。
+
+    - 有指定 → 查 User 表驗證 display_name 存在且 is_active
+    - 未指定 → 取 ROOT 使用者的 display_name 作為預設
+    """
+    if display_name and display_name.strip():
+        name = display_name.strip()
+        stmt = select(User).where(
+            User.display_name == name,
+            User.is_active == True,  # noqa: E712
+        )
+        result = await session.execute(stmt)
+        if not result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail=f"使用者 '{name}' 不存在或未啟用",
+            )
+        return name
+
+    # 未指定 → 取第一個 ROOT 使用者
+    stmt = select(User.display_name).where(
+        User.role == UserRole.ROOT,
+        User.is_active == True,  # noqa: E712
+    ).limit(1)
+    result = await session.execute(stmt)
+    row = result.first()
+    return row[0] if row else "系統管理員"
+
+
 @router.get("/tenant-group-options")
-async def get_tenant_group_options() -> list[dict[str, str]]:
+async def get_tenant_group_options(
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> list[dict[str, str]]:
     """獲取 TenantGroup 選項列表。"""
     return [
         {"value": t.value, "label": t.value}
@@ -172,7 +214,9 @@ async def get_tenant_group_options() -> list[dict[str, str]]:
 
 
 @router.get("/detection-status-options")
-async def get_detection_status_options() -> list[dict[str, str]]:
+async def get_detection_status_options(
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> list[dict[str, str]]:
     """獲取偵測狀態選項列表。"""
     labels = {
         ClientDetectionStatus.NOT_CHECKED: "未檢查",
@@ -189,6 +233,7 @@ async def get_detection_status_options() -> list[dict[str, str]]:
 @router.get("/{maintenance_id}", response_model=list[ClientResponse])
 async def list_clients(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     search: str | None = Query(None, description="搜尋 MAC、IP 或備註"),
     limit: int = Query(1000, description="返回數量上限"),
     offset: int = Query(0, description="偏移量"),
@@ -244,6 +289,7 @@ async def list_clients(
                 "tenant_group": c.tenant_group,
                 "detection_status": c.detection_status,
                 "description": c.description,
+                "default_assignee": c.default_assignee,
                 "maintenance_id": c.maintenance_id,
             }
             for c in clients
@@ -251,7 +297,10 @@ async def list_clients(
 
 
 @router.get("/{maintenance_id}/stats", response_model=ClientListStats)
-async def get_stats(maintenance_id: str) -> dict[str, int]:
+async def get_stats(
+    maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> dict[str, int]:
     """獲取 Client 清單統計。"""
     async with get_session_context() as session:
         # 獲取已導入的 Client 清單
@@ -384,6 +433,7 @@ async def add_mac_to_category(
 @router.post("/{maintenance_id}", response_model=ClientResponse)
 async def add_client(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: ClientCreate,
 ) -> dict[str, Any]:
     """新增單一 Client（IP + MAC）。"""
@@ -403,6 +453,11 @@ async def add_client(
                 detail=f"MAC {mac} 已存在於此歲修清單中"
             )
 
+        # 解析 default_assignee
+        assignee = await resolve_default_assignee(
+            session, data.default_assignee,
+        )
+
         # 新增 Client
         entry = MaintenanceMacList(
             maintenance_id=maintenance_id,
@@ -411,6 +466,7 @@ async def add_client(
             tenant_group=data.tenant_group,
             detection_status=ClientDetectionStatus.NOT_CHECKED,
             description=data.description,
+            default_assignee=assignee,
         )
         session.add(entry)
 
@@ -463,6 +519,7 @@ async def add_client(
             "tenant_group": entry.tenant_group,
             "detection_status": entry.detection_status,
             "description": entry.description,
+            "default_assignee": entry.default_assignee,
             "maintenance_id": entry.maintenance_id,
             "category_id": category_ids[0] if category_ids else None,
             "category_name": ";".join(category_names) if category_names else None,
@@ -473,6 +530,7 @@ async def add_client(
 async def update_client(
     maintenance_id: str,
     client_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: ClientUpdate,
 ) -> dict[str, Any]:
     """
@@ -529,6 +587,12 @@ async def update_client(
         if data.description is not None:
             entry.description = data.description if data.description else None
 
+        if data.default_assignee is not None:
+            assignee = await resolve_default_assignee(
+                session, data.default_assignee or None,
+            )
+            entry.default_assignee = assignee
+
         # 注意：編輯功能不處理分類，請使用「分類」按鈕修改分類
 
         await session.commit()
@@ -552,6 +616,7 @@ async def update_client(
             "tenant_group": entry.tenant_group,
             "detection_status": entry.detection_status,
             "description": entry.description,
+            "default_assignee": entry.default_assignee,
             "maintenance_id": entry.maintenance_id,
             "category_id": None,
             "category_name": None,
@@ -562,6 +627,7 @@ async def update_client(
 async def remove_mac(
     maintenance_id: str,
     mac_address: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
 ) -> dict[str, str]:
     """移除單一 MAC（同時從所有分類中移除）。"""
     mac = normalize_mac(mac_address)
@@ -612,6 +678,7 @@ async def remove_mac(
 @router.post("/{maintenance_id}/batch-delete")
 async def batch_delete_macs(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     mac_ids: list[int] = Body(..., embed=True),
 ) -> dict[str, Any]:
     """批量刪除 MAC 位址（同時從所有分類中移除）。"""
@@ -674,7 +741,10 @@ async def batch_delete_macs(
 
 
 @router.delete("/{maintenance_id}")
-async def clear_all(maintenance_id: str) -> dict[str, Any]:
+async def clear_all(
+    maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
+) -> dict[str, Any]:
     """清空該歲修的所有 MAC。"""
     async with get_session_context() as session:
         stmt = delete(MaintenanceMacList).where(
@@ -703,6 +773,7 @@ async def clear_all(maintenance_id: str) -> dict[str, Any]:
 @router.post("/{maintenance_id}/import-csv")
 async def import_csv(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     file: UploadFile = File(...),
     replace: bool = Query(
         False, description="是否清空現有清單後再導入"
@@ -711,12 +782,12 @@ async def import_csv(
     """
     從 CSV 批量導入 Client。
 
-    CSV 格式: mac_address,ip_address,tenant_group,description,category
+    CSV 格式: mac_address,ip_address,tenant_group,description,default_assignee
     - mac_address: 必填
     - ip_address: 必填
     - tenant_group: 選填（預設 F18，有效值: F18/F6/AP/F14/F12）
     - description: 選填
-    - category: 選填（必須是已存在的分類名稱，可用分號分隔多個分類，如 "EQP;AMHS"）
+    - default_assignee: 選填（必須是已存在的使用者顯示名稱，未指定則預設為系統管理員）
     """
     async with get_session_context() as session:
         # 如果需要清空現有清單
@@ -725,14 +796,6 @@ async def import_csv(
                 MaintenanceMacList.maintenance_id == maintenance_id
             )
             await session.execute(del_stmt)
-
-        # 先載入所有現有分類（用於驗證）
-        cat_stmt = select(ClientCategory).where(
-            ClientCategory.maintenance_id == maintenance_id,
-            ClientCategory.is_active == True,  # noqa: E712
-        )
-        cat_result = await session.execute(cat_stmt)
-        existing_categories = {c.name: c for c in cat_result.scalars().all()}
 
         # 讀取 CSV
         content = await file.read()
@@ -746,7 +809,6 @@ async def import_csv(
         imported = 0
         skipped = 0
         errors = []
-        categories_used = set()
 
         valid_tenant_groups = {t.value for t in TenantGroup}
 
@@ -755,7 +817,7 @@ async def import_csv(
             raw_ip = row.get("ip_address", "").strip()
             raw_tg = row.get("tenant_group", "F18").strip().upper()
             desc = row.get("description", "").strip() or None
-            category_name = row.get("category", "").strip() or None
+            raw_assignee = row.get("default_assignee", "").strip() or None
 
             # 驗證 MAC
             if not raw_mac:
@@ -792,25 +854,13 @@ async def import_csv(
                 skipped += 1
                 continue
 
-            # 先驗證所有分類（必須全部存在才能匯入）
-            valid_cat_list = []
-            invalid_cats = []
-            if category_name:
-                cat_names = [
-                    name.strip() for name in category_name.split(";")
-                    if name.strip()
-                ]
-                for cat_name in cat_names:
-                    if cat_name in existing_categories:
-                        valid_cat_list.append(existing_categories[cat_name])
-                    else:
-                        invalid_cats.append(cat_name)
-
-            # 如果有任何無效分類，跳過整行
-            if invalid_cats:
-                errors.append(
-                    f"Row {row_num}: 分類 {invalid_cats} 不存在，整行已跳過"
+            # 驗證 default_assignee
+            try:
+                assignee = await resolve_default_assignee(
+                    session, raw_assignee,
                 )
+            except HTTPException as exc:
+                errors.append(f"Row {row_num}: {exc.detail}")
                 continue
 
             # 新增 Client
@@ -821,19 +871,14 @@ async def import_csv(
                 tenant_group=tenant_group,
                 detection_status=ClientDetectionStatus.NOT_CHECKED,
                 description=desc,
+                default_assignee=assignee,
             )
             session.add(entry)
-
-            # 將 MAC 加入所有有效分類
-            for category in valid_cat_list:
-                await add_mac_to_category(session, mac, category.id)
-                categories_used.add(category.name)
-
             imported += 1
 
         await session.commit()
 
-        # 自動重新生成比較結果
+        # 自動重新生成比較結果 + 同步案件
         if imported > 0:
             await write_log(
                 level="INFO",
@@ -844,18 +889,23 @@ async def import_csv(
             )
             await regenerate_comparisons(maintenance_id, session)
 
+            # 自動同步案件（為新匯入的 MAC 建立 Case 記錄）
+            from app.services.case_service import CaseService
+            case_svc = CaseService()
+            await case_svc.sync_cases(maintenance_id, session)
+
         return {
             "imported": imported,
             "skipped": skipped,
             "errors": errors,  # 返回所有錯誤，讓前端顯示完整錯誤清單
             "total_errors": len(errors),
-            "categories_used": list(categories_used),
         }
 
 
 @router.get("/{maintenance_id}/detailed")
 async def list_clients_detailed(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     search: str | None = Query(None, description="搜尋 MAC、IP 或備註"),
     filter_status: str | None = Query(
         None, description="detected/mismatch/not_detected/not_checked/all"
@@ -900,13 +950,22 @@ async def list_clients_detailed(
 
                 stmt = stmt.where(or_(*field_conditions))
 
-        stmt = stmt.order_by(MaintenanceMacList.mac_address)
-        result = await session.execute(stmt)
-        clients = result.scalars().all()
+        # ── 在 SQL 層套用 filter_status ──
+        if filter_status and filter_status != "all":
+            from app.core.enums import ClientDetectionStatus as CDS
+            _status_map = {s.value: s for s in CDS}
+            status_enum = _status_map.get(filter_status)
+            if status_enum:
+                stmt = stmt.where(
+                    MaintenanceMacList.detection_status == status_enum
+                )
+            elif filter_status == "not_checked":
+                stmt = stmt.where(
+                    MaintenanceMacList.detection_status.is_(None)
+                )
 
-        mac_addresses = [c.mac_address for c in clients]
-
-        # 獲取分類資訊
+        # ── 在 SQL 層套用 filter_category ──
+        # 需要先查分類再 join，以便在 DB 層做過濾
         cat_stmt = select(ClientCategory).where(
             ClientCategory.maintenance_id == maintenance_id,
             ClientCategory.is_active == True,  # noqa: E712
@@ -915,7 +974,41 @@ async def list_clients_detailed(
         categories = {c.id: c for c in cat_result.scalars().all()}
         cat_ids = list(categories.keys())
 
-        # 獲取 MAC 的分類歸屬（支援多分類）
+        if filter_category == "uncategorized" and cat_ids:
+            # 找出所有有分類的 MAC，然後排除
+            categorized_macs = (
+                select(ClientCategoryMember.mac_address)
+                .where(ClientCategoryMember.category_id.in_(cat_ids))
+                .distinct()
+                .subquery()
+            )
+            stmt = stmt.where(
+                MaintenanceMacList.mac_address.notin_(
+                    select(categorized_macs.c.mac_address)
+                )
+            )
+        elif filter_category and filter_category.isdigit():
+            cat_id = int(filter_category)
+            target_macs = (
+                select(ClientCategoryMember.mac_address)
+                .where(ClientCategoryMember.category_id == cat_id)
+                .subquery()
+            )
+            stmt = stmt.where(
+                MaintenanceMacList.mac_address.in_(
+                    select(target_macs.c.mac_address)
+                )
+            )
+
+        # ── SQL 層分頁 ──
+        stmt = stmt.order_by(MaintenanceMacList.mac_address)
+        stmt = stmt.offset(offset).limit(limit)
+        result = await session.execute(stmt)
+        clients = result.scalars().all()
+
+        mac_addresses = [c.mac_address for c in clients]
+
+        # 獲取 MAC 的分類歸屬（只查本頁的 MAC）
         mac_categories: dict[str, list[dict]] = {}
         if cat_ids and mac_addresses:
             member_stmt = select(ClientCategoryMember).where(
@@ -933,32 +1026,43 @@ async def list_clients_detailed(
                         "name": cat.name,
                     })
 
+        # 獲取每個 MAC 最新的 ping_reachable 狀態（只查本頁的 MAC）
+        ping_status: dict[str, bool | None] = {}
+        if mac_addresses:
+            from sqlalchemy import and_
+            latest_sub = (
+                select(
+                    ClientRecord.mac_address,
+                    func.max(ClientRecord.collected_at).label("max_at"),
+                )
+                .where(
+                    ClientRecord.maintenance_id == maintenance_id,
+                    ClientRecord.mac_address.in_(mac_addresses),
+                    ClientRecord.ping_reachable.isnot(None),
+                )
+                .group_by(ClientRecord.mac_address)
+                .subquery()
+            )
+            ping_stmt = (
+                select(ClientRecord.mac_address, ClientRecord.ping_reachable)
+                .join(
+                    latest_sub,
+                    and_(
+                        ClientRecord.mac_address == latest_sub.c.mac_address,
+                        ClientRecord.collected_at == latest_sub.c.max_at,
+                    ),
+                )
+            )
+            ping_result = await session.execute(ping_stmt)
+            for row in ping_result:
+                ping_status[row.mac_address] = row.ping_reachable
+
         # 組合結果
         results = []
         for c in clients:
             cat_list = mac_categories.get(c.mac_address, [])
-            if c.detection_status:
-                status = c.detection_status.value
-            else:
-                status = "not_checked"
-
-            # 過濾條件 - 偵測狀態
-            if filter_status and filter_status != "all":
-                if status != filter_status:
-                    continue
-
-            # 過濾條件 - 分類
-            if filter_category == "uncategorized" and cat_list:
-                continue
-            if filter_category and filter_category.isdigit():
-                cat_id = int(filter_category)
-                cat_ids_in_list = [c["id"] for c in cat_list]
-                if cat_id not in cat_ids_in_list:
-                    continue
-
-            # 多分類：用分號連接分類名稱
-            category_names = ";".join([c["name"] for c in cat_list])
-            category_ids = [c["id"] for c in cat_list]
+            category_names = ";".join([ct["name"] for ct in cat_list])
+            category_ids = [ct["id"] for ct in cat_list]
 
             results.append({
                 "id": c.id,
@@ -967,21 +1071,21 @@ async def list_clients_detailed(
                 "tenant_group": c.tenant_group,
                 "detection_status": c.detection_status,
                 "description": c.description,
+                "default_assignee": c.default_assignee,
                 "maintenance_id": c.maintenance_id,
-                # 保留舊欄位（第一個分類）供相容
+                "last_ping_reachable": ping_status.get(c.mac_address),
                 "category_id": cat_list[0]["id"] if cat_list else None,
                 "category_name": category_names if category_names else None,
-                # 新增多分類欄位
                 "category_ids": category_ids,
             })
 
-        # 分頁
-        return results[offset:offset + limit]
+        return results
 
 
 @router.get("/{maintenance_id}/export-csv")
 async def export_csv(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     search: str | None = Query(None, description="搜尋過濾"),
     filter_status: str | None = Query(
         None, description="detected/mismatch/not_detected/not_checked/all"
@@ -1027,73 +1131,73 @@ async def export_csv(
 
                 stmt = stmt.where(or_(*field_conditions))
 
+        # 在 SQL 層套用 filter_status
+        if filter_status and filter_status != "all":
+            from app.core.enums import ClientDetectionStatus as CDS
+            _status_map = {s.value: s for s in CDS}
+            status_enum = _status_map.get(filter_status)
+            if status_enum:
+                stmt = stmt.where(
+                    MaintenanceMacList.detection_status == status_enum
+                )
+            elif filter_status == "not_checked":
+                stmt = stmt.where(
+                    MaintenanceMacList.detection_status.is_(None)
+                )
+
+        # 在 SQL 層套用 filter_category
+        if filter_category:
+            cat_stmt = select(ClientCategory).where(
+                ClientCategory.maintenance_id == maintenance_id,
+                ClientCategory.is_active == True,  # noqa: E712
+            )
+            cat_result_q = await session.execute(cat_stmt)
+            all_cat_ids = [c.id for c in cat_result_q.scalars().all()]
+
+            if filter_category == "uncategorized" and all_cat_ids:
+                categorized_macs = (
+                    select(ClientCategoryMember.mac_address)
+                    .where(ClientCategoryMember.category_id.in_(all_cat_ids))
+                    .distinct()
+                    .subquery()
+                )
+                stmt = stmt.where(
+                    MaintenanceMacList.mac_address.notin_(
+                        select(categorized_macs.c.mac_address)
+                    )
+                )
+            elif filter_category.isdigit():
+                target_macs = (
+                    select(ClientCategoryMember.mac_address)
+                    .where(ClientCategoryMember.category_id == int(filter_category))
+                    .subquery()
+                )
+                stmt = stmt.where(
+                    MaintenanceMacList.mac_address.in_(
+                        select(target_macs.c.mac_address)
+                    )
+                )
+
         stmt = stmt.order_by(MaintenanceMacList.mac_address)
         result = await session.execute(stmt)
         clients = result.scalars().all()
 
-        # 獲取分類資訊（支援多分類）
-        cat_stmt = select(ClientCategory).where(
-            ClientCategory.maintenance_id == maintenance_id,
-            ClientCategory.is_active == True,  # noqa: E712
-        )
-        cat_result = await session.execute(cat_stmt)
-        categories = {c.id: c for c in cat_result.scalars().all()}
-        cat_ids = list(categories.keys())
-
-        # 獲取 MAC 的分類歸屬（支援多分類）
-        mac_categories: dict[str, list[str]] = {}
-        mac_cat_ids: dict[str, list[int]] = {}
-        if cat_ids:
-            mac_addresses = [c.mac_address for c in clients]
-            if mac_addresses:
-                member_stmt = select(ClientCategoryMember).where(
-                    ClientCategoryMember.category_id.in_(cat_ids),
-                    ClientCategoryMember.mac_address.in_(mac_addresses),
-                )
-                member_result = await session.execute(member_stmt)
-                for member in member_result.scalars().all():
-                    cat = categories.get(member.category_id)
-                    if cat:
-                        if member.mac_address not in mac_categories:
-                            mac_categories[member.mac_address] = []
-                            mac_cat_ids[member.mac_address] = []
-                        mac_categories[member.mac_address].append(cat.name)
-                        mac_cat_ids[member.mac_address].append(cat.id)
-
-        # 過濾並生成 CSV
+        # 生成 CSV
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow([
             "mac_address", "ip_address", "tenant_group",
-            "description", "category"
+            "description", "default_assignee",
         ])
 
         for c in clients:
-            # 偵測狀態過濾
-            status = c.detection_status.value if c.detection_status else "not_checked"
-            if filter_status and filter_status != "all":
-                if status != filter_status:
-                    continue
-
-            # 分類過濾
-            cat_names = mac_categories.get(c.mac_address, [])
-            cat_id_list = mac_cat_ids.get(c.mac_address, [])
-            if filter_category == "uncategorized" and cat_names:
-                continue
-            if filter_category and filter_category.isdigit():
-                target_cat_id = int(filter_category)
-                if target_cat_id not in cat_id_list:
-                    continue
-
             tg = c.tenant_group.value if c.tenant_group else "F18"
-            # 多分類用分號連接
-            category_str = ";".join(cat_names) if cat_names else ""
             writer.writerow([
                 c.mac_address,
                 c.ip_address,
                 tg,
                 c.description or "",
-                category_str,
+                c.default_assignee or "",
             ])
 
         output.seek(0)
@@ -1111,24 +1215,31 @@ async def export_csv(
 
 
 @router.get("/{maintenance_id}/template-csv")
-async def download_template(maintenance_id: str):
+async def download_template(
+    maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+):
     """下載 Client 清單 CSV 範本。"""
     from fastapi.responses import StreamingResponse
 
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "mac_address", "ip_address", "tenant_group", "description", "category"
+        "mac_address", "ip_address", "tenant_group",
+        "description", "default_assignee",
     ])
     # 範例資料
     writer.writerow([
-        "AA:BB:CC:DD:EE:01", "192.168.1.100", "F18", "單一分類範例", "生產機台"
+        "AA:BB:CC:DD:EE:01", "192.168.1.100", "F18",
+        "1號機台", "系統管理員",
     ])
     writer.writerow([
-        "AA:BB:CC:DD:EE:02", "192.168.1.101", "F6", "多分類範例(用分號分隔)", "EQP;AMHS"
+        "AA:BB:CC:DD:EE:02", "192.168.1.101", "F6",
+        "2號機台", "",
     ])
     writer.writerow([
-        "AA:BB:CC:DD:EE:03", "192.168.1.102", "AP", "無分類範例", ""
+        "AA:BB:CC:DD:EE:03", "192.168.1.102", "AP",
+        "", "",
     ])
 
     output.seek(0)
@@ -1146,14 +1257,16 @@ async def download_template(maintenance_id: str):
 
 
 @router.post("/{maintenance_id}/detect")
-async def detect_clients(maintenance_id: str) -> dict[str, Any]:
+async def detect_clients(
+    maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
+) -> dict[str, Any]:
     """
     觸發客戶端偵測。
 
     流程：
     1. 從 Client 清單載入所有 IP + MAC + tenant_group
-    2. 從 ARP 資料檢查 IP-MAC 是否匹配
-    3. 按 tenant_group 分組呼叫 GNMS Ping 檢查可達性
+    2. 按 tenant_group 分組呼叫 GNMS Ping 檢查可達性
     4. 更新偵測狀態：DETECTED / MISMATCH / NOT_DETECTED
 
     Returns:

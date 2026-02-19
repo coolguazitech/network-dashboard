@@ -81,6 +81,7 @@ def load_fetcher_config() -> dict[str, Any]:
         jobs.append({
             "name": name,
             "interval": fc.get("interval", default_interval),
+            "source": fc.get("source", ""),
         })
 
     # Parse tasks section
@@ -111,18 +112,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting application...")
     await init_db()
 
-    # Create default root account if not exists
-    from app.services.auth_service import AuthService
-    root_user = await AuthService.create_root_if_not_exists()
-    if root_user:
-        logger.info(f"Root account ready: {root_user.username}")
+    # Ensure MinIO bucket exists
+    from app.services.storage import ensure_bucket
+    try:
+        await ensure_bucket()
+    except Exception as e:
+        logger.warning("MinIO bucket init failed (uploads may not work): %s", e)
 
     auto_discover_parsers()
 
     # Load fetcher config from YAML
     fetcher_config = load_fetcher_config()
     setup_fetchers(
-        use_mock=settings.use_mock_api,
         fetcher_configs=fetcher_config.get("fetchers"),
     )
 
@@ -247,10 +248,45 @@ def create_app() -> FastAPI:
             content={"detail": "內部伺服器錯誤"},
         )
 
-    # Import and include routers
-    from app.api.routes import api_router
+    # API endpoints
+    from app.api.endpoints import (
+        auth,
+        cases,
+        categories,
+        comparisons,
+        contacts,
+        dashboard,
+        expectations,
+        indicators,
+        mac_list,
+        maintenance,
+        maintenance_devices,
+        meals,
+        reports,
+        system_logs,
+        thresholds,
+        uploads,
+        users,
+    )
 
-    app.include_router(api_router, prefix=settings.api_prefix)
+    prefix = settings.api_prefix
+    app.include_router(auth.router, prefix=prefix, tags=["Auth"])
+    app.include_router(maintenance.router, prefix=prefix, tags=["Maintenance"])
+    app.include_router(maintenance_devices.router, prefix=prefix, tags=["Maintenance Devices"])
+    app.include_router(dashboard.router, prefix=f"{prefix}/dashboard", tags=["Dashboard"])
+    app.include_router(indicators.router, prefix=f"{prefix}/indicators", tags=["Indicators"])
+    app.include_router(thresholds.router, prefix=prefix, tags=["Thresholds"])
+    app.include_router(expectations.router, prefix=f"{prefix}/expectations", tags=["Expectations"])
+    app.include_router(contacts.router, prefix=prefix, tags=["Contacts"])
+    app.include_router(categories.router, prefix=prefix, tags=["Categories"])
+    app.include_router(comparisons.router, prefix=prefix, tags=["Comparisons"])
+    app.include_router(cases.router, prefix=prefix, tags=["Cases"])
+    app.include_router(mac_list.router, prefix=prefix, tags=["MAC List"])
+    app.include_router(meals.router, prefix=prefix, tags=["Meals"])
+    app.include_router(reports.router, prefix=prefix, tags=["Reports"])
+    app.include_router(system_logs.router, prefix=prefix, tags=["System Logs"])
+    app.include_router(users.router, prefix=prefix, tags=["Users"])
+    app.include_router(uploads.router, prefix=prefix, tags=["Uploads"])
 
     # Health check endpoint
     @app.get("/health")

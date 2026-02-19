@@ -1,4 +1,16 @@
-"""Parser for 'get_mac_table_ios_dna' API."""
+"""Parser for 'get_mac_table_ios_dna' API.
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class MacTableData(ParsedData):
+    mac_address: str                         # auto-normalized → AA:BB:CC:DD:EE:FF
+    interface_name: str                      # port name
+    vlan_id: int                             # VLAN ID (1-4094)
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: show mac address-table
+=== End Real CLI Command ===
+"""
 from __future__ import annotations
 
 import csv

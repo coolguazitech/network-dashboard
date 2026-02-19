@@ -1,0 +1,6 @@
+Slot ID   : 1
+Total connections : 2
+
+Interface         MAC Address     Auth State      ACL Number
+GE1/0/1           aabb-ccdd-0004  Authenticated   3002
+GE1/0/2           aabb-ccdd-0005  Authenticated   3002

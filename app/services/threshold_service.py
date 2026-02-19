@@ -44,7 +44,6 @@ THRESHOLD_FIELDS: dict[str, tuple[str, str, str]] = {
     "transceiver_temperature_max": ("transceiver_temperature_max", "°C", "溫度上限"),
     "transceiver_voltage_min": ("transceiver_voltage_min", "V", "電壓下限"),
     "transceiver_voltage_max": ("transceiver_voltage_max", "V", "電壓上限"),
-    "error_count_same_device_max": ("error_count_same_device_max", "", "未換設備 error 容許上限"),
 }
 
 # 按指標分組（前端 UI 用）
@@ -54,9 +53,6 @@ THRESHOLD_GROUPS: dict[str, list[str]] = {
         "transceiver_rx_power_min", "transceiver_rx_power_max",
         "transceiver_temperature_min", "transceiver_temperature_max",
         "transceiver_voltage_min", "transceiver_voltage_max",
-    ],
-    "error_count": [
-        "error_count_same_device_max",
     ],
 }
 

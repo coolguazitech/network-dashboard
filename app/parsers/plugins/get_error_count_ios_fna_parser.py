@@ -1,4 +1,19 @@
-"""Parser for 'get_error_count_ios_fna' API."""
+"""
+Parser for 'get_error_count_ios_fna' API.
+
+Parses Cisco IOS/IOS-XE ``show interfaces counters errors`` tabular output
+to extract per-interface error counters.
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class InterfaceErrorData(ParsedData):
+    interface_name: str                      # e.g. "Gi1/0/1", "GE1/0/1"
+    crc_errors: int = 0                      # CRC error count only, >= 0
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: show interfaces counters errors
+=== End Real CLI Command ===
+"""
 from __future__ import annotations
 
 import re

@@ -1,9 +1,12 @@
 """
 Interface Error Count indicator evaluator.
 
-兩階段閾值（依 MaintenanceDeviceList.is_replaced 欄位判斷）：
-- 換設備（is_replaced=True）→ error 必須為 0（新設備應已清空計數器）
-- 未換設備（is_replaced=False）→ error <= ERROR_COUNT_SAME_DEVICE_MAX
+增量判定邏輯：
+    delta = 最新變化點 crc_errors - 上一個變化點 crc_errors
+    若 delta > 0 → 異常（error 計數器有增長）
+
+只有一筆 batch（首次採集）時：無歷史可比，視為通過。
+delta <= 0（未增長或計數器重置）→ 通過。
 """
 from __future__ import annotations
 
@@ -12,7 +15,7 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import InterfaceErrorRecord, MaintenanceDeviceList
+from app.db.models import CollectionBatch, InterfaceErrorRecord
 from app.indicators.base import (
     BaseIndicator,
     DisplayConfig,
@@ -23,28 +26,17 @@ from app.indicators.base import (
     TimeSeriesPoint,
 )
 from app.repositories.typed_records import InterfaceErrorRecordRepo
-from app.services.threshold_service import get_threshold
 
 
 class ErrorCountIndicator(BaseIndicator):
     """
     Error Count 指標評估器。
 
-    檢查項目（依 MaintenanceDeviceList.is_replaced 判斷，不以 hostname 推斷）：
-    1. 換設備（is_replaced=True）→ CRC/Input/Output 必須全為 0
-    2. 未換設備（is_replaced=False）→ 各項 <= 容許閾值（ERROR_COUNT_SAME_DEVICE_MAX）
-
-    閾值來源：DB 動態覆寫 → .env 預設值（透過 threshold_service.get_threshold()）。
+    公式：delta = 最新 crc_errors - 上次變化點 crc_errors
+    若 delta > 0 → 異常（計數器增長代表有新錯誤產生）
     """
 
     indicator_type = "error_count"
-
-    # 當前評估中的歲修 ID
-    _maintenance_id: str | None = None
-
-    @property
-    def SAME_DEVICE_MAX(self) -> int:
-        return get_threshold("error_count_same_device_max", self._maintenance_id)
 
     async def evaluate(
         self,
@@ -52,53 +44,75 @@ class ErrorCountIndicator(BaseIndicator):
         session: AsyncSession,
     ) -> IndicatorEvaluationResult:
         """評估錯誤計數指標。"""
-        self._maintenance_id = maintenance_id
-        # 1. 載入設備清單，判斷哪些 hostname 是換過的設備（依 is_replaced 欄位）
-        replaced_hostnames = await self._get_replaced_devices(
-            session, maintenance_id
+        repo = InterfaceErrorRecordRepo(session)
+
+        # 1. 取最新採集（per device 最新 batch 的所有 rows）
+        current_records = await repo.get_latest_per_device(maintenance_id)
+
+        # 2. 按 device 分組，記錄每台設備的 latest batch_id
+        device_batch: dict[str, int] = {}
+        current_by_device: dict[str, list[InterfaceErrorRecord]] = defaultdict(list)
+        for r in current_records:
+            current_by_device[r.switch_hostname].append(r)
+            device_batch[r.switch_hostname] = r.batch_id
+
+        # 3. 找每台設備的上一個 batch（倒數第二個變化點）
+        prev_by_device = await self._get_previous_batches(
+            session, maintenance_id, device_batch,
         )
 
-        # 2. 取最新採集
-        repo = InterfaceErrorRecordRepo(session)
-        records = await repo.get_latest_per_device(maintenance_id)
-
+        # 4. 逐介面評估
         total_count = 0
         pass_count = 0
-        failures = []
-        passes = []
+        failures: list[dict] = []
+        passes: list[dict] = []
 
-        for record in records:
-            total_count += 1
-            is_replaced = record.switch_hostname in replaced_hostnames
-            threshold = 0 if is_replaced else self.SAME_DEVICE_MAX
+        for hostname, current_rows in current_by_device.items():
+            prev_rows = prev_by_device.get(hostname, {})
 
-            errors = self._check_record(record, threshold)
+            for record in current_rows:
+                total_count += 1
+                iface = record.interface_name
+                cur_crc = record.crc_errors
 
-            if not errors:
-                pass_count += 1
-                if len(passes) < 10:
-                    passes.append({
-                        "device": record.switch_hostname,
-                        "interface": record.interface_name,
-                        "reason": "無錯誤" if is_replaced else f"錯誤數在容許範圍 (<= {threshold})",
+                prev_info = prev_rows.get(iface)
+                if prev_info is None:
+                    # 首次採集，無歷史比對 → 通過
+                    pass_count += 1
+                    if len(passes) < 10:
+                        passes.append({
+                            "device": hostname,
+                            "interface": iface,
+                            "reason": "首次採集，無歷史比對",
+                            "data": {"crc_errors": cur_crc, "delta": 0},
+                        })
+                    continue
+
+                prev_crc = prev_info["crc_errors"]
+                delta = cur_crc - prev_crc
+
+                if delta <= 0:
+                    # 未增長 or 計數器重置 → 通過
+                    pass_count += 1
+                    if len(passes) < 10:
+                        passes.append({
+                            "device": hostname,
+                            "interface": iface,
+                            "reason": "計數器未增長" if delta == 0 else "計數器已重置",
+                            "data": {"crc_errors": cur_crc, "delta": delta},
+                        })
+                else:
+                    # delta > 0 → 異常
+                    failures.append({
+                        "device": hostname,
+                        "interface": iface,
+                        "reason": f"CRC 增長 +{delta} ({prev_crc} → {cur_crc})",
                         "data": {
-                            "crc_errors": record.crc_errors,
-                            "input_errors": record.input_errors,
-                            "output_errors": record.output_errors,
+                            "crc_errors": cur_crc,
+                            "prev_crc_errors": prev_crc,
+                            "delta": delta,
                         },
                     })
-            else:
-                label = "換新設備，必須為 0" if is_replaced else f"閾值: {threshold}"
-                failures.append({
-                    "device": record.switch_hostname,
-                    "interface": record.interface_name,
-                    "reason": f"{', '.join(errors)} ({label})",
-                    "data": {
-                        "crc_errors": record.crc_errors,
-                        "input_errors": record.input_errors,
-                        "output_errors": record.output_errors,
-                    },
-                })
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
@@ -107,42 +121,61 @@ class ErrorCountIndicator(BaseIndicator):
             pass_count=pass_count,
             fail_count=total_count - pass_count,
             pass_rates={
-                "error_free": self._calc_percent(pass_count, total_count)
+                "error_no_growth": self._calc_percent(pass_count, total_count),
             },
             failures=failures if failures else None,
             passes=passes if passes else None,
-            summary=f"錯誤計數: {pass_count}/{total_count} 介面通過"
+            summary=f"錯誤計數: {pass_count}/{total_count} 介面通過",
         )
 
     @staticmethod
-    def _check_record(
-        record: InterfaceErrorRecord, threshold: int
-    ) -> list[str]:
-        """檢查單筆記錄，回傳超標項目的描述列表。"""
-        errors = []
-        if record.crc_errors > threshold:
-            errors.append(f"CRC: {record.crc_errors}")
-        if record.input_errors > threshold:
-            errors.append(f"In: {record.input_errors}")
-        if record.output_errors > threshold:
-            errors.append(f"Out: {record.output_errors}")
-        return errors
+    async def _get_previous_batches(
+        session: AsyncSession,
+        maintenance_id: str,
+        device_batch: dict[str, int],
+    ) -> dict[str, dict[str, dict]]:
+        """
+        取每台設備上一個變化點的 interface error 資料。
 
-    @staticmethod
-    async def _get_replaced_devices(
-        session: AsyncSession, maintenance_id: str
-    ) -> set[str]:
-        """回傳有換設備的 new_hostname 集合（依 is_replaced 欄位判斷）。"""
-        stmt = select(MaintenanceDeviceList).where(
-            MaintenanceDeviceList.maintenance_id == maintenance_id
-        )
-        result = await session.execute(stmt)
-        devices = result.scalars().all()
-        return {
-            d.new_hostname
-            for d in devices
-            if d.is_replaced
-        }
+        Returns:
+            {hostname: {interface_name: {"crc_errors": int}}}
+        """
+        result: dict[str, dict[str, dict]] = {}
+
+        for hostname, latest_batch_id in device_batch.items():
+            # 找倒數第二個 batch
+            stmt = (
+                select(CollectionBatch.id)
+                .where(
+                    CollectionBatch.collection_type == "get_error_count",
+                    CollectionBatch.maintenance_id == maintenance_id,
+                    CollectionBatch.switch_hostname == hostname,
+                    CollectionBatch.id < latest_batch_id,
+                )
+                .order_by(CollectionBatch.id.desc())
+                .limit(1)
+            )
+            batch_result = await session.execute(stmt)
+            prev_row = batch_result.scalar_one_or_none()
+
+            if prev_row is None:
+                continue
+
+            # 取該 batch 的所有 rows
+            rows_stmt = select(InterfaceErrorRecord).where(
+                InterfaceErrorRecord.batch_id == prev_row,
+            )
+            rows_result = await session.execute(rows_stmt)
+            prev_records = rows_result.scalars().all()
+
+            iface_map: dict[str, dict] = {}
+            for r in prev_records:
+                iface_map[r.interface_name] = {
+                    "crc_errors": r.crc_errors,
+                }
+            result[hostname] = iface_map
+
+        return result
 
     @staticmethod
     def _calc_percent(passed: int, total: int) -> float:
@@ -153,7 +186,7 @@ class ErrorCountIndicator(BaseIndicator):
         return IndicatorMetadata(
             name="error_count",
             title="Interface Error 監控",
-            description="監控介面 CRC / Input / Output 錯誤計數",
+            description="監控介面 CRC 錯誤計數增量（兩次變化點之間有增長即異常）",
             object_type="interface",
             data_type="integer",
             observed_fields=[
@@ -161,18 +194,6 @@ class ErrorCountIndicator(BaseIndicator):
                     name="crc_errors",
                     display_name="CRC Errors",
                     metric_name="crc_errors",
-                    unit=None,
-                ),
-                ObservedField(
-                    name="input_errors",
-                    display_name="Input Errors",
-                    metric_name="input_errors",
-                    unit=None,
-                ),
-                ObservedField(
-                    name="output_errors",
-                    display_name="Output Errors",
-                    metric_name="output_errors",
                     unit=None,
                 ),
             ],
@@ -199,27 +220,21 @@ class ErrorCountIndicator(BaseIndicator):
         )
 
         ts_map: dict[str, dict] = defaultdict(
-            lambda: {"timestamp": None, "crc_errors": 0, "input_errors": 0}
+            lambda: {"timestamp": None, "crc_errors": 0}
         )
         for record in records:
             key = record.collected_at.isoformat()
             entry = ts_map[key]
             entry["timestamp"] = record.collected_at
             entry["crc_errors"] += record.crc_errors
-            entry["input_errors"] += record.input_errors
 
-        time_series = [
+        return [
             TimeSeriesPoint(
                 timestamp=entry["timestamp"],
-                values={
-                    "crc_errors": float(entry["crc_errors"]),
-                    "input_errors": float(entry["input_errors"]),
-                },
+                values={"crc_errors": float(entry["crc_errors"])},
             )
             for entry in sorted(ts_map.values(), key=lambda e: e["timestamp"])
         ]
-
-        return time_series
 
     async def get_latest_raw_data(
         self,
@@ -234,17 +249,12 @@ class ErrorCountIndicator(BaseIndicator):
             limit=limit,
         )
 
-        raw_data = []
-        for record in records:
-            raw_data.append(
-                RawDataRow(
-                    switch_hostname=record.switch_hostname,
-                    interface_name=record.interface_name,
-                    crc_errors=record.crc_errors,
-                    input_errors=record.input_errors,
-                    output_errors=record.output_errors,
-                    collected_at=record.collected_at,
-                )
+        return [
+            RawDataRow(
+                switch_hostname=record.switch_hostname,
+                interface_name=record.interface_name,
+                crc_errors=record.crc_errors,
+                collected_at=record.collected_at,
             )
-
-        return raw_data
+            for record in records
+        ]

@@ -1,243 +1,167 @@
 """
 Database ORM models.
 
-Defines all database tables and relationships.
+All table/column definitions are aligned with the production MariaDB schema.
+Tables marked "local only" exist in our codebase but not yet in production.
 """
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, String, Text, func, UniqueConstraint, text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import (
-    Column,
-    Integer,
-    Float,
+    JSON,
     Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
 )
+from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.enums import (
-    ClientDetectionStatus,
-    MealDeliveryStatus,
-    Permission,
-    TenantGroup,
-    UserRole,
-)
+from app.core.enums import CaseStatus, ClientDetectionStatus, MealDeliveryStatus, TenantGroup, UserRole
 from app.db.base import Base
 
 
-class UplinkExpectation(Base):
-    """
-    Expected uplink connections for verification.
+# ══════════════════════════════════════════════════════════════════
+# 使用者
+# ══════════════════════════════════════════════════════════════════
 
-    Stores user-defined expected uplink topology.
-    """
 
-    __tablename__ = "uplink_expectations"
-    __table_args__ = (
-        UniqueConstraint(
-            'maintenance_id', 'hostname', 'local_interface',
-            name='uk_uplink_expectation'
-        ),
-    )
+class User(Base):
+    """使用者帳號。"""
+
+    __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    maintenance_id: Mapped[str] = mapped_column(
-        String(100),
-        index=True,
-        nullable=False,
+    username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    display_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole),
+        default=UserRole.GUEST,
     )
-    hostname: Mapped[str] = mapped_column(String(255), index=True)
-    local_interface: Mapped[str] = mapped_column(
-        String(100),
-        nullable=False,
-        comment="Local interface",
+    maintenance_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True,
     )
-    expected_neighbor: Mapped[str] = mapped_column(
-        String(255),
-        comment="Expected neighbor hostname",
-    )
-    expected_interface: Mapped[str] = mapped_column(
-        String(100),
-        nullable=False,
-        comment="Expected neighbor interface",
-    )
-    description: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        comment="備註",
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
+        DateTime, server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
+        DateTime, server_default=func.now(), onupdate=func.now(),
     )
 
     def __repr__(self) -> str:
-        return f"<UplinkExpectation {self.hostname}:{self.local_interface}>"
+        return f"<User {self.username} ({self.role})>"
 
 
-class VersionExpectation(Base):
+# ══════════════════════════════════════════════════════════════════
+# 歲修管理
+# ══════════════════════════════════════════════════════════════════
+
+
+class MaintenanceConfig(Base):
     """
-    Expected software versions for verification.
+    歲修設定。
 
-    Stores user-defined expected firmware/software versions.
-    Multiple versions can be specified using semicolon separator.
-
-    注意：expected_versions 存儲時會自動排序，確保順序無關的唯一性。
+    Scheduler 查詢 is_active=True 的歲修，對其設備執行採集。
     """
 
-    __tablename__ = "version_expectations"
+    __tablename__ = "maintenance_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    maintenance_id = Column(String(100), unique=True, index=True, nullable=False)
+    name = Column(String(200), nullable=True)
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    anchor_time = Column(DateTime, nullable=True, index=True)
+    is_active = Column(Boolean, default=False, nullable=False)
+    config_data = Column(JSON, nullable=True)
+
+    # 累計活躍計時器（local only — 尚未同步至生產）
+    active_seconds_accumulated = Column(Integer, default=0, nullable=False)
+    last_activated_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
+
+
+# 設備廠商選項
+DEVICE_VENDOR_OPTIONS = ["HPE", "Cisco-IOS", "Cisco-NXOS"]
+
+
+class MaintenanceDeviceList(Base):
+    """歲修設備對應清單。"""
+
+    __tablename__ = "maintenance_device_list"
     __table_args__ = (
         UniqueConstraint(
-            'maintenance_id', 'hostname',
-            name='uk_version_expectation'
+            'maintenance_id', 'old_hostname', name='uk_maintenance_old_hostname'
+        ),
+        UniqueConstraint(
+            'maintenance_id', 'new_hostname', name='uk_maintenance_new_hostname'
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    maintenance_id: Mapped[str] = mapped_column(
-        String(100),
-        index=True,
+    id = Column(Integer, primary_key=True, index=True)
+    maintenance_id = Column(String(100), index=True, nullable=False)
+
+    # 舊設備資訊（可為 NULL，表示新設備無舊設備對應）
+    old_hostname = Column(String(255), index=True, nullable=True)
+    old_ip_address = Column(String(45), nullable=True)
+    old_vendor = Column(String(50), nullable=True)
+
+    # 新設備資訊（可為 NULL，表示舊設備無新設備對應）
+    new_hostname = Column(String(255), index=True, nullable=True)
+    new_ip_address = Column(String(45), nullable=True)
+    new_vendor = Column(String(50), nullable=True)
+
+    # 是否實體換機
+    is_replaced = Column(Boolean, nullable=False, default=False, server_default=text('0'))
+    # 新舊設備是否使用相同 port
+    use_same_port = Column(Boolean, nullable=True)
+
+    description = Column(String(500), nullable=True)
+
+    tenant_group = Column(
+        Enum(TenantGroup),
         nullable=False,
+        default=TenantGroup.F18,
     )
-    hostname: Mapped[str] = mapped_column(String(255), index=True)
-    expected_versions: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        comment="Expected versions, semicolon-separated, stored sorted (e.g. 16.10.1;16.10.2)",
-    )
-    description: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        comment="備註",
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
+
+    # 舊設備 Ping 可達性（由 ping indicator 更新）
+    old_is_reachable = Column(Boolean, nullable=True)
+    old_last_check_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(
+        DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP')
     )
 
     def __repr__(self) -> str:
-        return f"<VersionExpectation {self.hostname}>"
+        return f"<MaintenanceDeviceList {self.old_hostname or '(none)'} -> {self.new_hostname or '(none)'}>"
 
 
-class ArpSource(Base):
-    """
-    ARP 來源設備。
-
-    指定從哪些 Router/Gateway 獲取 ARP Table，用於對應 MAC → IP。
-    """
-
-    __tablename__ = "arp_sources"
-    __table_args__ = (
-        UniqueConstraint(
-            'maintenance_id', 'hostname',
-            name='uk_arp_source'
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    maintenance_id: Mapped[str] = mapped_column(
-        String(100),
-        index=True,
-        nullable=False,
-    )
-    hostname: Mapped[str] = mapped_column(String(255), index=True)
-    priority: Mapped[int] = mapped_column(
-        Integer,
-        default=100,
-        comment="Priority order (lower = higher priority)",
-    )
-    description: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        comment="備註",
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-    def __repr__(self) -> str:
-        return f"<ArpSource {self.hostname}>"
-
-
-class PortChannelExpectation(Base):
-    """
-    Port-Channel 期望設定。
-
-    設定指定設備的 Port-Channel 應包含哪些成員介面。
-    檢查邏輯：驗證 Port-Channel 是否包含所有指定的實體介面。
-
-    注意：member_interfaces 存儲時會自動排序，確保順序無關的唯一性。
-    """
-
-    __tablename__ = "port_channel_expectations"
-    __table_args__ = (
-        UniqueConstraint(
-            'maintenance_id', 'hostname', 'port_channel',
-            name='uk_port_channel_expectation'
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    maintenance_id: Mapped[str] = mapped_column(
-        String(100),
-        index=True,
-        nullable=False,
-    )
-    hostname: Mapped[str] = mapped_column(String(255), index=True)
-    port_channel: Mapped[str] = mapped_column(
-        String(100),
-        nullable=False,
-        comment="Port-Channel name (e.g. Po1, Port-channel1)",
-    )
-    member_interfaces: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        comment="Expected member interfaces, semicolon-separated, stored sorted (e.g. Gi1/0/1;Gi1/0/2)",
-    )
-    description: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        comment="備註",
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-    def __repr__(self) -> str:
-        return f"<PortChannelExpectation {self.hostname}:{self.port_channel}>"
+# ══════════════════════════════════════════════════════════════════
+# 採集資料 (CollectionBatch + Typed Records)
+# ══════════════════════════════════════════════════════════════════
 
 
 class CollectionBatch(Base):
-    """
-    採集批次表（取代 CollectionRecord）。
-
-    每次 DataCollectionService 對一台設備採集一種指標，產生一個 batch。
-    保留 raw_data（除錯用），並作為 typed rows 的 parent。
-    """
+    """採集批次表。"""
 
     __tablename__ = "collection_batches"
     __table_args__ = (
@@ -250,34 +174,62 @@ class CollectionBatch(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     collection_type: Mapped[str] = mapped_column(String(100), index=True)
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    maintenance_id: Mapped[str] = mapped_column(
-        String(100),
-        index=True,
-    )
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     raw_data: Mapped[str | None] = mapped_column(Text, nullable=True)
     item_count: Mapped[int] = mapped_column(Integer, default=0)
     collected_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-        index=True,
+        DateTime, server_default=func.now(), index=True,
     )
 
     def __repr__(self) -> str:
         return f"<CollectionBatch {self.collection_type}@{self.switch_hostname}>"
 
 
+class LatestCollectionBatch(Base):
+    """
+    最新採集狀態指標（基準 + 變化點策略）。
+
+    local only — 尚未同步至生產。
+    """
+
+    __tablename__ = "latest_collection_batches"
+    __table_args__ = (
+        UniqueConstraint(
+            "maintenance_id", "collection_type", "switch_hostname",
+            name="uk_latest_batch",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collection_type: Mapped[str] = mapped_column(String(100))
+    switch_hostname: Mapped[str] = mapped_column(String(255))
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    data_hash: Mapped[str] = mapped_column(String(16))
+    collected_at: Mapped[datetime] = mapped_column(DateTime)
+    last_checked_at: Mapped[datetime] = mapped_column(DateTime)
+
+    def __repr__(self) -> str:
+        return (
+            f"<LatestCollectionBatch {self.collection_type}"
+            f"@{self.switch_hostname}>"
+        )
+
+
 # ── Typed Record Models ──────────────────────────────────────────
 
 
 class TransceiverRecord(Base):
-    """光模塊採集記錄（typed table）。"""
+    """光模組診斷數據（對應 transceiver_records）。"""
 
     __tablename__ = "transceiver_records"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     batch_id: Mapped[int] = mapped_column(
-        ForeignKey("collection_batches.id", ondelete="CASCADE"),
-        index=True,
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
@@ -293,65 +245,14 @@ class TransceiverRecord(Base):
         return f"<TransceiverRecord {self.switch_hostname}:{self.interface_name}>"
 
 
-class VersionRecord(Base):
-    """韌體版本採集記錄（typed table）。"""
-
-    __tablename__ = "version_records"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    batch_id: Mapped[int] = mapped_column(
-        ForeignKey("collection_batches.id", ondelete="CASCADE"),
-        index=True,
-    )
-    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
-    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-
-    version: Mapped[str] = mapped_column(String(255))
-    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    serial_number: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )
-    uptime: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    def __repr__(self) -> str:
-        return f"<VersionRecord {self.switch_hostname}:{self.version}>"
-
-
-class NeighborRecord(Base):
-    """LLDP 鄰居採集記錄（typed table，uplink indicator 用）。"""
-
-    __tablename__ = "neighbor_records"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    batch_id: Mapped[int] = mapped_column(
-        ForeignKey("collection_batches.id", ondelete="CASCADE"),
-        index=True,
-    )
-    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
-    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-
-    local_interface: Mapped[str] = mapped_column(String(100))
-    remote_hostname: Mapped[str] = mapped_column(String(255))
-    remote_interface: Mapped[str] = mapped_column(String(100))
-    remote_platform: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )
-
-    def __repr__(self) -> str:
-        return f"<NeighborRecord {self.switch_hostname}:{self.local_interface}>"
-
-
 class PortChannelRecord(Base):
-    """Port-Channel 採集記錄（typed table）。"""
+    """Port-Channel / LAG 記錄（對應 port_channel_records）。"""
 
     __tablename__ = "port_channel_records"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     batch_id: Mapped[int] = mapped_column(
-        ForeignKey("collection_batches.id", ondelete="CASCADE"),
-        index=True,
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
@@ -360,80 +261,43 @@ class PortChannelRecord(Base):
     interface_name: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(50))
     protocol: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    members: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
-    member_status: Mapped[dict[str, str] | None] = mapped_column(
-        JSON, nullable=True
-    )
+    members: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    member_status: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     def __repr__(self) -> str:
         return f"<PortChannelRecord {self.switch_hostname}:{self.interface_name}>"
 
 
-class PowerRecord(Base):
-    """電源狀態採集記錄（typed table）。"""
+class NeighborRecord(Base):
+    """CDP/LLDP 鄰居記錄（對應 neighbor_records）。"""
 
-    __tablename__ = "power_records"
+    __tablename__ = "neighbor_records"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     batch_id: Mapped[int] = mapped_column(
-        ForeignKey("collection_batches.id", ondelete="CASCADE"),
-        index=True,
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
-    ps_id: Mapped[str] = mapped_column(String(50))
-    status: Mapped[str] = mapped_column(String(50))
-    input_status: Mapped[str | None] = mapped_column(
-        String(50), nullable=True
-    )
-    output_status: Mapped[str | None] = mapped_column(
-        String(50), nullable=True
-    )
-    capacity_watts: Mapped[float | None] = mapped_column(
-        Float, nullable=True
-    )
-    actual_output_watts: Mapped[float | None] = mapped_column(
-        Float, nullable=True
-    )
+    local_interface: Mapped[str] = mapped_column(String(100))
+    remote_hostname: Mapped[str] = mapped_column(String(255))
+    remote_interface: Mapped[str] = mapped_column(String(100))
+    remote_platform: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     def __repr__(self) -> str:
-        return f"<PowerRecord {self.switch_hostname}:{self.ps_id}>"
-
-
-class FanRecord(Base):
-    """風扇狀態採集記錄（typed table）。"""
-
-    __tablename__ = "fan_records"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    batch_id: Mapped[int] = mapped_column(
-        ForeignKey("collection_batches.id", ondelete="CASCADE"),
-        index=True,
-    )
-    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
-    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
-    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-
-    fan_id: Mapped[str] = mapped_column(String(50))
-    status: Mapped[str] = mapped_column(String(50))
-    speed_rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    speed_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    def __repr__(self) -> str:
-        return f"<FanRecord {self.switch_hostname}:{self.fan_id}>"
+        return f"<NeighborRecord {self.switch_hostname}:{self.local_interface}>"
 
 
 class InterfaceErrorRecord(Base):
-    """介面錯誤計數採集記錄（typed table）。"""
+    """介面錯誤計數（對應 interface_error_records）。"""
 
     __tablename__ = "interface_error_records"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     batch_id: Mapped[int] = mapped_column(
-        ForeignKey("collection_batches.id", ondelete="CASCADE"),
-        index=True,
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
@@ -451,15 +315,144 @@ class InterfaceErrorRecord(Base):
         return f"<InterfaceErrorRecord {self.switch_hostname}:{self.interface_name}>"
 
 
+class StaticAclRecord(Base):
+    """Static ACL 綁定（local only）。"""
+
+    __tablename__ = "static_acl_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    interface_name: Mapped[str] = mapped_column(String(100))
+    acl_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<StaticAclRecord {self.switch_hostname}:{self.interface_name}>"
+
+
+class DynamicAclRecord(Base):
+    """Dynamic ACL 綁定（local only）。"""
+
+    __tablename__ = "dynamic_acl_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    interface_name: Mapped[str] = mapped_column(String(100))
+    acl_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<DynamicAclRecord {self.switch_hostname}:{self.interface_name}>"
+
+
+
+class MacTableRecord(Base):
+    """MAC 位址表（local only）。"""
+
+    __tablename__ = "mac_table_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    mac_address: Mapped[str] = mapped_column(String(17))
+    interface_name: Mapped[str] = mapped_column(String(100))
+    vlan_id: Mapped[int] = mapped_column(Integer)
+
+    def __repr__(self) -> str:
+        return f"<MacTableRecord {self.switch_hostname}:{self.mac_address}>"
+
+
+class FanRecord(Base):
+    """風扇狀態。"""
+
+    __tablename__ = "fan_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    fan_id: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(50))
+    speed_rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    speed_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<FanRecord {self.switch_hostname}:{self.fan_id}>"
+
+
+class PowerRecord(Base):
+    """電源供應器狀態。"""
+
+    __tablename__ = "power_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    ps_id: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(50))
+    input_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    output_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    capacity_watts: Mapped[float | None] = mapped_column(Float, nullable=True)
+    actual_output_watts: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<PowerRecord {self.switch_hostname}:{self.ps_id}>"
+
+
+class VersionRecord(Base):
+    """韌體版本。"""
+
+    __tablename__ = "version_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
+    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    version: Mapped[str] = mapped_column(String(255))
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    serial_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    uptime: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<VersionRecord {self.switch_hostname}:{self.version}>"
+
+
 class PingRecord(Base):
-    """Ping 可達性採集記錄（typed table）。"""
+    """Ping 可達性記錄。"""
 
     __tablename__ = "ping_records"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     batch_id: Mapped[int] = mapped_column(
-        ForeignKey("collection_batches.id", ondelete="CASCADE"),
-        index=True,
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
     )
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
@@ -474,52 +467,115 @@ class PingRecord(Base):
         return f"<PingRecord {self.switch_hostname}:{self.target}>"
 
 
-class IndicatorResult(Base):
-    """
-    Evaluated indicator results.
+class InterfaceStatusRecord(Base):
+    """介面狀態記錄（速率/雙工/連線狀態）。"""
 
-    Stores calculated pass rates and scores.
-    """
-
-    __tablename__ = "indicator_results"
+    __tablename__ = "interface_status_records"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    indicator_type: Mapped[str] = mapped_column(String(100), index=True)
-    maintenance_id: Mapped[str | None] = mapped_column(
-        String(100),
-        nullable=True,
-        index=True,
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("collection_batches.id", ondelete="CASCADE"), index=True,
     )
-    pass_rates: Mapped[dict[str, float]] = mapped_column(
-        JSON,
-        comment="Pass rates for each metric",
-    )
-    total_count: Mapped[int] = mapped_column(default=0)
-    pass_count: Mapped[int] = mapped_column(default=0)
-    fail_count: Mapped[int] = mapped_column(default=0)
-    details: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON,
-        nullable=True,
-    )
-    evaluated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-        index=True,
-    )
+    switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    interface_name: Mapped[str] = mapped_column(String(100))
+    link_status: Mapped[str] = mapped_column(String(20))
+    speed: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    duplex: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     def __repr__(self) -> str:
-        return f"<IndicatorResult {self.indicator_type}>"
+        return f"<InterfaceStatusRecord {self.switch_hostname}:{self.interface_name}>"
+
+
+# ══════════════════════════════════════════════════════════════════
+# 期望值（Expectations）
+# ══════════════════════════════════════════════════════════════════
+
+
+class VersionExpectation(Base):
+    """版本期望值。"""
+
+    __tablename__ = "version_expectations"
+    __table_args__ = (
+        UniqueConstraint(
+            "maintenance_id", "hostname",
+            name="uk_version_expectation",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    hostname: Mapped[str] = mapped_column(String(255), index=True)
+    expected_versions: Mapped[str] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class UplinkExpectation(Base):
+    """Uplink 拓樸期望值。"""
+
+    __tablename__ = "uplink_expectations"
+    __table_args__ = (
+        UniqueConstraint(
+            "maintenance_id", "hostname", "local_interface",
+            name="uk_uplink_expectation",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    hostname: Mapped[str] = mapped_column(String(255), index=True)
+    local_interface: Mapped[str] = mapped_column(String(100))
+    expected_neighbor: Mapped[str] = mapped_column(String(255))
+    expected_interface: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class PortChannelExpectation(Base):
+    """Port-Channel 期望值。"""
+
+    __tablename__ = "port_channel_expectations"
+    __table_args__ = (
+        UniqueConstraint(
+            "maintenance_id", "hostname", "port_channel",
+            name="uk_port_channel_expectation",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    hostname: Mapped[str] = mapped_column(String(255), index=True)
+    port_channel: Mapped[str] = mapped_column(String(100))
+    member_interfaces: Mapped[str] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
+# 錯誤追蹤 + 審計日誌
+# ══════════════════════════════════════════════════════════════════
 
 
 class CollectionError(Base):
-    """
-    採集錯誤記錄（current-state 表）。
-
-    當 DataCollectionService 對某設備採集失敗時，UPSERT 一筆錯誤。
-    成功採集時 DELETE 該筆（錯誤已解決）。
-    用於在 Dashboard 前端顯示「系統異常」，讓用戶區分
-    「尚未採集」與「採集失敗」。
-    """
+    """採集錯誤記錄（current-state 表）。"""
 
     __tablename__ = "collection_errors"
     __table_args__ = (
@@ -541,22 +597,16 @@ class CollectionError(Base):
 
 
 class SystemLog(Base):
-    """
-    系統日誌（audit log 表）。
-
-    記錄所有系統錯誤和重要事件，供 ROOT 管理員在前端查閱。
-    與 CollectionError 共存：CollectionError 是 current-state（Dashboard 用），
-    SystemLog 是 audit log（管理員日誌頁面用）。
-    """
+    """系統日誌（audit log）。"""
 
     __tablename__ = "system_logs"
 
     id = Column(Integer, primary_key=True)
-    level = Column(String(20), index=True, nullable=False)  # ERROR, WARNING, INFO
-    source = Column(String(50), index=True, nullable=False)  # api, scheduler, frontend, service
-    module = Column(String(200), nullable=True)  # e.g. "data_collection", "auth"
-    summary = Column(String(500), nullable=False)  # 中文摘要
-    detail = Column(Text, nullable=True)  # traceback / 技術細節
+    level = Column(String(20), index=True, nullable=False)
+    source = Column(String(50), index=True, nullable=False)
+    module = Column(String(200), nullable=True)
+    summary = Column(String(500), nullable=False)
+    detail = Column(Text, nullable=True)
     user_id = Column(Integer, nullable=True)
     username = Column(String(100), nullable=True)
     maintenance_id = Column(String(100), nullable=True, index=True)
@@ -570,677 +620,392 @@ class SystemLog(Base):
         return f"<SystemLog [{self.level}] {self.source}: {self.summary[:30]}>"
 
 
-class ClientRecord(Base):
-    """客戶端追蹤記錄。"""
-    __tablename__ = "client_records"
-    __table_args__ = (
-        Index(
-            "ix_client_records_maint_collected",
-            "maintenance_id", "collected_at",
-        ),
-        Index(
-            "ix_client_records_maint_mac_collected",
-            "maintenance_id", "mac_address", "collected_at",
-        ),
-    )
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    # 基本信息
-    maintenance_id = Column(String(50), index=True)
-    collected_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-
-    # 客戶端信息
-    mac_address = Column(String(17), index=True)  # AA:BB:CC:DD:EE:FF
-    ip_address = Column(String(15), index=True, nullable=True)   # IPv4
-
-    # 網絡連接信息
-    switch_hostname = Column(String(100), index=True)
-    interface_name = Column(String(50))
-    vlan_id = Column(Integer, nullable=True)
-
-    # 性能指標
-    speed = Column(String(20), nullable=True)     # 1G, 10G, etc.
-    duplex = Column(String(20), nullable=True)    # full, half
-    link_status = Column(String(20), nullable=True)  # up, down
-
-    # 健康檢查
-    ping_reachable = Column(Boolean, nullable=True)
-
-    # ACL 檢查
-    acl_rules_applied = Column(JSON, nullable=True)
-    acl_passes = Column(Boolean, nullable=True)
-
-    # 收集的原始數據
-    raw_data = Column(Text, nullable=True)
-    parsed_data = Column(JSON, nullable=True)
-
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-
-
-class ClientComparison(Base):
-    """
-    客戶端在新舊設備間的比較結果。
-
-    記錄同一個 MAC 地址在 OLD phase（舊設備）與 NEW phase（新設備）的變化情況。
-    注意：old/new 指的是設備類別，不是時間先後。
-    """
-    __tablename__ = "client_comparisons"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    # 基本信息
-    maintenance_id = Column(String(50), index=True)
-    collected_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), index=True)
-
-    # 客戶端識別
-    mac_address = Column(String(17), index=True)  # AA:BB:CC:DD:EE:FF
-
-    # OLD phase 數據快照（舊設備）
-    old_ip_address = Column(String(15), nullable=True)
-    old_switch_hostname = Column(String(100), nullable=True)
-    old_interface_name = Column(String(50), nullable=True)
-    old_vlan_id = Column(Integer, nullable=True)
-    old_speed = Column(String(20), nullable=True)
-    old_duplex = Column(String(20), nullable=True)
-    old_link_status = Column(String(20), nullable=True)
-    old_ping_reachable = Column(Boolean, nullable=True)
-    old_acl_passes = Column(Boolean, nullable=True)
-
-    # NEW phase 數據快照（新設備）
-    new_ip_address = Column(String(15), nullable=True)
-    new_switch_hostname = Column(String(100), nullable=True)
-    new_interface_name = Column(String(50), nullable=True)
-    new_vlan_id = Column(Integer, nullable=True)
-    new_speed = Column(String(20), nullable=True)
-    new_duplex = Column(String(20), nullable=True)
-    new_link_status = Column(String(20), nullable=True)
-    new_ping_reachable = Column(Boolean, nullable=True)
-    new_acl_passes = Column(Boolean, nullable=True)
-    
-    # 比較結果
-    differences = Column(JSON, nullable=True)  # 記錄哪些欄位有變化
-    is_changed = Column(Boolean, default=False)  # 是否有變化
-    severity = Column(String(50), nullable=True)  # critical, warning, info
-    
-    # 額外信息
-    notes = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
-
-
-class Checkpoint(Base):
-    """
-    Checkpoint model for marking important time points during maintenance.
-    
-    允許用戶標記歲修過程中的重要時間點並生成快照摘要。
-    """
-    
-    __tablename__ = "checkpoints"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    maintenance_id = Column(String(100), index=True, nullable=False)
-    name = Column(String(200), nullable=False)
-    checkpoint_time = Column(DateTime, nullable=False, index=True)
-    description = Column(Text, nullable=True)
-    summary_data = Column(JSON, nullable=True)  # 存儲該時間點的統計摘要
-    created_by = Column(String(100), nullable=True)
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-
-
-class ReferenceClient(Base):
-    """
-    Reference Client model for always-on test machines.
-
-    不斷電機台：歲修期間不會關機的測試設備，
-    用於驗證網路連通性，理論上歲修前後應該保持一致。
-
-    每個歲修有自己獨立的不斷電機台清單，避免資料混淆。
-    """
-
-    __tablename__ = "reference_clients"
-    __table_args__ = (
-        # MAC 地址在同一歲修內唯一
-        UniqueConstraint(
-            "maintenance_id", "mac_address",
-            name="uq_reference_client_maintenance_mac"
-        ),
-    )
-
-    id = Column(Integer, primary_key=True, index=True)
-    maintenance_id = Column(String(100), index=True, nullable=False)  # 歲修專屬
-    mac_address = Column(String(17), index=True, nullable=False)
-    description = Column(String(200), nullable=True)
-    location = Column(String(200), nullable=True)
-    reason = Column(Text, nullable=True)
-    is_active = Column(Boolean, default=True, index=True)
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
-
-
-class MaintenanceConfig(Base):
-    """
-    Maintenance configuration model.
-    
-    存儲歲修配置，包括 anchor_time（錨點時間）等重要設定。
-    """
-    
-    __tablename__ = "maintenance_configs"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    maintenance_id = Column(String(100), unique=True, index=True, nullable=False)
-    name = Column(String(200), nullable=True)
-    start_date = Column(DateTime, nullable=True)
-    end_date = Column(DateTime, nullable=True)
-    anchor_time = Column(DateTime, nullable=True, index=True)  # 歲修開始錨點時間
-    is_active = Column(Boolean, default=True, nullable=False)  # 是否為活躍歲修
-    config_data = Column(JSON, nullable=True)  # 其他配置數據
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
-
-
-class ClientCategory(Base):
-    """
-    客戶端機台種類定義。
-    
-    用戶自定義的機台分類，最多支援 5 個種類。
-    每個歲修都有自己獨立的分類體系。
-    """
-    
-    __tablename__ = "client_categories"
-
-    id = Column(Integer, primary_key=True, index=True)
-    maintenance_id = Column(String(100), index=True, nullable=False)  # 歲修專屬（必填）
-    name = Column(String(100), nullable=False)
-    description = Column(String(500), nullable=True)
-    color = Column(String(20), nullable=True)  # 用於前端顯示的顏色代碼
-    sort_order = Column(Integer, default=0)  # 排序順序
-    is_active = Column(Boolean, default=True, index=True)
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
-    
-    # Relationships
-    members: Mapped[list["ClientCategoryMember"]] = relationship(
-        "ClientCategoryMember",
-        back_populates="category",
-        cascade="all, delete-orphan",
-    )
-
-    def __repr__(self) -> str:
-        return f"<ClientCategory {self.name} ({self.maintenance_id})>"
-
-
-class ClientCategoryMember(Base):
-    """
-    機台種類成員關聯。
-    
-    記錄哪些 MAC 地址屬於哪個種類。
-    一個 MAC 可以屬於多個種類（多對多關係）。
-    """
-    
-    __tablename__ = "client_category_members"
-    __table_args__ = (
-        # 組合唯一約束：同一分類中不能重複添加同一 MAC
-        {'mysql_charset': 'utf8mb4'},
-    )
-    
-    id = Column(Integer, primary_key=True, index=True)
-    category_id = Column(
-        Integer,
-        ForeignKey("client_categories.id", ondelete="CASCADE"),
-        index=True,
-        nullable=False,
-    )
-    # 移除 unique=True，允許同一 MAC 出現在多個分類
-    mac_address = Column(String(17), index=True, nullable=False)
-    description = Column(String(200), nullable=True)  # 機台備註
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    
-    # Relationships
-    category: Mapped["ClientCategory"] = relationship(
-        "ClientCategory",
-        back_populates="members",
-    )
-
-    def __repr__(self) -> str:
-        return f"<ClientCategoryMember {self.mac_address}>"
-
-
-class MaintenanceMacList(Base):
-    """
-    歲修 Client 清單（原 MAC 清單）。
-
-    存放該歲修涉及的全部 Client，每個 Client 需指定 IP + MAC。
-    用於：
-    1. ARP 檢查：比對 fetcher 取得的 ARP 資料是否與用戶輸入的 IP-MAC 對應
-    2. GNMS Ping：使用用戶給定的 IP + tenant_group ping client
-
-    偵測狀態說明：
-    - NOT_CHECKED: 初始狀態，尚未檢查
-    - DETECTED: Client IP 可透過 GNMS Ping 到達
-    - MISMATCH: ARP 資料顯示的 IP-MAC 對應與用戶輸入不符
-    - NOT_DETECTED: Client IP 無法到達
-    """
-
-    __tablename__ = "maintenance_mac_list"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    maintenance_id: Mapped[str] = mapped_column(String(50), index=True)
-    mac_address: Mapped[str] = mapped_column(String(17))
-    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
-    tenant_group = Column(
-        Enum(TenantGroup),
-        nullable=False,
-        default=TenantGroup.F18,
-    )
-    detection_status = Column(
-        Enum(ClientDetectionStatus),
-        nullable=False,
-        default=ClientDetectionStatus.NOT_CHECKED,
-    )
-    description: Mapped[str | None] = mapped_column(String(255))
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-
-    __table_args__ = (
-        UniqueConstraint(
-            "maintenance_id", "mac_address", name="uk_maintenance_mac"
-        ),
-    )
-
-
-# 設備廠商選項
-DEVICE_VENDOR_OPTIONS = ["HPE", "Cisco-IOS", "Cisco-NXOS"]
-
-
-class MaintenanceDeviceList(Base):
-    """
-    歲修設備對應清單。
-
-    每筆資料包含一組新舊設備的對應關係。
-
-    重要設計原則：
-    - old_hostname / new_hostname 的相同與否 **不代表** 設備是否被物理更換
-    - 設備是否更換由 ``is_replaced`` 欄位明確指定（由管理員在上傳清單時填寫）
-    - 即使 is_replaced=True，new_hostname 和 new_ip 也可能與 old 完全相同
-      （例如：新設備沿用舊 hostname / IP）
-    - 即使 is_replaced=False，new_hostname 和 new_ip 也可能與 old 不同
-      （例如：同一台設備改了 hostname 或 IP）
-    """
-
-    __tablename__ = "maintenance_device_list"
-    __table_args__ = (
-        UniqueConstraint(
-            'maintenance_id', 'old_hostname', name='uk_maintenance_old_hostname'
-        ),
-    )
-
-    id = Column(Integer, primary_key=True, index=True)
-    maintenance_id = Column(String(100), index=True, nullable=False)
-
-    # 舊設備資訊（必填）
-    old_hostname = Column(String(255), index=True, nullable=False)
-    old_ip_address = Column(String(45), nullable=False)
-    old_vendor = Column(String(50), nullable=False)  # HPE, Cisco-IOS, Cisco-NXOS
-
-    # 新設備資訊（必填）
-    new_hostname = Column(String(255), index=True, nullable=False)
-    new_ip_address = Column(String(45), nullable=False)
-    new_vendor = Column(String(50), nullable=False)  # HPE, Cisco-IOS, Cisco-NXOS
-
-    # 是否為更換設備（由管理員在上傳清單時明確指定）
-    # True = 物理上換了一台新設備（error_count 要求全為 0）
-    # False = 同一台設備（error_count 容許閾值內的錯誤）
-    is_replaced = Column(Boolean, nullable=False, default=False)
-
-    # 對應設定
-    use_same_port = Column(Boolean, default=True)  # 是否同埠對應
-
-    # 可達性狀態（舊設備）
-    old_is_reachable = Column(Boolean, nullable=True)  # NULL=未檢查
-    old_last_check_at = Column(DateTime, nullable=True)
-
-    # 可達性狀態（新設備）- 保留原欄位名稱以維持相容性
-    is_reachable = Column(Boolean, nullable=True)  # NULL=未檢查 (新設備)
-    last_check_at = Column(DateTime, nullable=True)
-    
-    # 備註（選填）
-    description = Column(String(500), nullable=True)
-
-    # GNMS Ping 所需的 tenant group
-    tenant_group = Column(
-        Enum(TenantGroup),
-        nullable=False,
-        default=TenantGroup.F18,
-    )
-
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at = Column(
-        DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP')
-    )
-
-    def __repr__(self) -> str:
-        return f"<MaintenanceDeviceList {self.old_hostname} -> {self.new_hostname}>"
-
-
-class SeverityOverride(Base):
-    """
-    手動覆蓋嚴重程度記錄。
-    
-    允許用戶手動覆蓋某個 MAC 的嚴重程度判定，
-    以便在自動判斷不準確時進行人工調整。
-    """
-    
-    __tablename__ = "client_severity_overrides"
-    __table_args__ = (
-        UniqueConstraint('maintenance_id', 'mac_address', name='uq_override_maintenance_mac'),
-    )
-    
-    id = Column(Integer, primary_key=True, index=True)
-    maintenance_id = Column(String(50), index=True, nullable=False)
-    mac_address = Column(String(20), index=True, nullable=False)
-    override_severity = Column(String(20), nullable=False)  # 'critical', 'warning', 'info'
-    original_severity = Column(String(20), nullable=True)   # 保存原本的自動判斷值
-    note = Column(Text, nullable=True)  # 用戶備註
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP'))
-
-    def __repr__(self) -> str:
-        return f"<SeverityOverride {self.mac_address}: {self.override_severity}>"
-
-
 # ══════════════════════════════════════════════════════════════════
-# 通訊錄模型
+# 閾值設定
 # ══════════════════════════════════════════════════════════════════
-
-
-class ContactCategory(Base):
-    """
-    通訊錄分類。
-
-    每個歲修有自己獨立的通訊錄分類體系。
-    用於將聯絡人組織成不同群組（如：網路組、機電組、廠務等）。
-    """
-
-    __tablename__ = "contact_categories"
-    __table_args__ = (
-        UniqueConstraint(
-            "maintenance_id", "name",
-            name="uk_contact_category_name"
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    maintenance_id: Mapped[str] = mapped_column(
-        String(100), index=True, nullable=False
-    )
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    color: Mapped[str | None] = mapped_column(
-        String(20), default="#3B82F6"
-    )  # 前端顯示顏色
-    icon: Mapped[str | None] = mapped_column(
-        String(10), nullable=True
-    )  # emoji 圖示
-    sort_order: Mapped[int] = mapped_column(Integer, default=0)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
-    )
-
-    # Relationships
-    contacts: Mapped[list["Contact"]] = relationship(
-        "Contact",
-        back_populates="category",
-        cascade="all, delete-orphan",
-    )
-
-    def __repr__(self) -> str:
-        return f"<ContactCategory {self.name}>"
-
-
-class Contact(Base):
-    """
-    通訊錄聯絡人。
-
-    每個聯絡人屬於一個分類，每個歲修有自己的通訊錄。
-    """
-
-    __tablename__ = "contacts"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    maintenance_id: Mapped[str] = mapped_column(
-        String(100), index=True, nullable=False
-    )
-    category_id: Mapped[int | None] = mapped_column(
-        ForeignKey("contact_categories.id", ondelete="SET NULL"),
-        index=True,
-        nullable=True,
-    )
-
-    # 基本資訊
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    title: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )  # 職稱
-    department: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )  # 部門
-    company: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )  # 公司
-
-    # 聯絡方式
-    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    mobile: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    extension: Mapped[str | None] = mapped_column(
-        String(20), nullable=True
-    )  # 分機
-
-    # 額外資訊
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sort_order: Mapped[int] = mapped_column(Integer, default=0)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
-    )
-
-    # Relationships
-    category: Mapped["ContactCategory"] = relationship(
-        "ContactCategory",
-        back_populates="contacts",
-    )
-
-    def __repr__(self) -> str:
-        return f"<Contact {self.name}>"
-
-
-# ══════════════════════════════════════════════════════════════════
-# 餐點到達通知模型
-# ══════════════════════════════════════════════════════════════════
-
-
-class MealZone(Base):
-    """
-    餐點配送區域。
-
-    記錄每個區域的餐點狀態，以歲修 ID 區分。
-    三個區域：竹科 (HSP)、中科 (CSP)、南科 (SSP)
-    """
-
-    __tablename__ = "meal_zones"
-    __table_args__ = (
-        UniqueConstraint(
-            "maintenance_id", "zone_code",
-            name="uk_meal_zone"
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    maintenance_id: Mapped[str] = mapped_column(
-        String(100), index=True, nullable=False
-    )
-
-    zone_code: Mapped[str] = mapped_column(
-        String(20), nullable=False
-    )  # HSP, CSP, SSP
-    zone_name: Mapped[str] = mapped_column(
-        String(50), nullable=False
-    )  # 竹科, 中科, 南科
-
-    # 狀態
-    status = Column(
-        Enum(MealDeliveryStatus),
-        default=MealDeliveryStatus.NO_MEAL,
-        nullable=False,
-    )
-
-    # 預計到達時間
-    expected_time: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
-
-    # 實際到達時間
-    arrived_time: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
-
-    # 餐點數量
-    meal_count: Mapped[int] = mapped_column(Integer, default=0)
-
-    # 備註
-    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
-
-    # 更新者
-    updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
-    )
-
-    def __repr__(self) -> str:
-        return f"<MealZone {self.zone_name} ({self.status.value})>"
-
-
-# ══════════════════════════════════════════════════════════════════
-# 使用者認證授權模型
-# ══════════════════════════════════════════════════════════════════
-
-
-class User(Base):
-    """
-    系統使用者。
-
-    角色說明：
-    - ROOT: 超級管理員，可管理歲修和使用者
-    - PM: 專案經理，有歲修內的所有寫入權限
-    - GUEST: 訪客，只有讀取權限
-    """
-
-    __tablename__ = "users"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    username: Mapped[str] = mapped_column(
-        String(100), unique=True, index=True, nullable=False
-    )
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    display_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(200), nullable=True)
-
-    # 使用者角色
-    role = Column(
-        Enum(UserRole),
-        default=UserRole.GUEST,
-        nullable=False,
-    )
-
-    # 所屬歲修 ID（ROOT 不需要，PM/GUEST 必填）
-    maintenance_id: Mapped[str | None] = mapped_column(
-        String(100), index=True, nullable=True
-    )
-
-    # 帳號狀態（Guest 需等待啟用）
-    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
-    # 最後登入時間
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
-    )
-
-    @property
-    def is_root(self) -> bool:
-        """向後相容：檢查是否為 ROOT 角色。"""
-        return self.role == UserRole.ROOT
-
-    def __repr__(self) -> str:
-        return f"<User {self.username} ({self.role.value})>"
 
 
 class ThresholdConfig(Base):
-    """
-    動態閾值覆寫設定（每歲修一行）。
-
-    NULL 欄位表示使用 .env 預設值；非 NULL 表示覆寫。
-    由 threshold_service 管理快取，indicator 透過 get_threshold() 讀取。
-    """
+    """Per-maintenance 閾值覆寫。"""
 
     __tablename__ = "threshold_config"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(
         String(100), unique=True, nullable=False, index=True,
-        comment="歲修 ID（每歲修獨立閾值設定）",
     )
 
-    # Transceiver 光模塊閾值（雙向 min/max）
-    transceiver_tx_power_min: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="TX Power 下限 (dBm)"
-    )
-    transceiver_tx_power_max: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="TX Power 上限 (dBm)"
-    )
-    transceiver_rx_power_min: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="RX Power 下限 (dBm)"
-    )
-    transceiver_rx_power_max: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="RX Power 上限 (dBm)"
-    )
-    transceiver_temperature_min: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="溫度下限 (°C)"
-    )
-    transceiver_temperature_max: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="溫度上限 (°C)"
-    )
-    transceiver_voltage_min: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="電壓下限 (V)"
-    )
-    transceiver_voltage_max: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="電壓上限 (V)"
-    )
+    transceiver_tx_power_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    transceiver_tx_power_max: Mapped[float | None] = mapped_column(Float, nullable=True)
+    transceiver_rx_power_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    transceiver_rx_power_max: Mapped[float | None] = mapped_column(Float, nullable=True)
+    transceiver_temperature_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    transceiver_temperature_max: Mapped[float | None] = mapped_column(Float, nullable=True)
+    transceiver_voltage_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    transceiver_voltage_max: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # Error Count 閾值
-    error_count_same_device_max: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, comment="未換設備 error 容許上限"
-    )
 
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ThresholdConfig {self.maintenance_id}>"
+
+
+# ══════════════════════════════════════════════════════════════════
+# 指標結果
+# ══════════════════════════════════════════════════════════════════
+
+
+class IndicatorResult(Base):
+    """指標評估結果（歷史記錄）。"""
+
+    __tablename__ = "indicator_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    indicator_type: Mapped[str] = mapped_column(String(100), index=True)
+    maintenance_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True,
+    )
+    pass_rates: Mapped[str] = mapped_column(JSON)
+    total_count: Mapped[int] = mapped_column(Integer)
+    pass_count: Mapped[int] = mapped_column(Integer)
+    fail_count: Mapped[int] = mapped_column(Integer)
+    details: Mapped[str | None] = mapped_column(JSON, nullable=True)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), index=True,
+    )
+
+    def __repr__(self) -> str:
+        return f"<IndicatorResult {self.indicator_type} {self.pass_count}/{self.total_count}>"
+
+
+# ══════════════════════════════════════════════════════════════════
+# 業務模型
+# ══════════════════════════════════════════════════════════════════
+
+
+
+class Checkpoint(Base):
+    """歲修檢查點。"""
+
+    __tablename__ = "checkpoints"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    checkpoint_time: Mapped[datetime] = mapped_column(DateTime, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_data: Mapped[str | None] = mapped_column(JSON, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
     )
 
 
+class ClientCategory(Base):
+    """客戶分類。"""
+
+    __tablename__ = "client_categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    color: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True, index=True)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class ClientCategoryMember(Base):
+    """客戶分類成員。"""
+
+    __tablename__ = "client_category_members"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("client_categories.id"), index=True,
+    )
+    mac_address: Mapped[str] = mapped_column(String(17), index=True)
+    description: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+
+
+class ClientComparison(Base):
+    """客戶比較記錄。"""
+
+    __tablename__ = "client_comparisons"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, index=True,
+    )
+    collected_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True, server_default=func.now(),
+    )
+    mac_address: Mapped[str | None] = mapped_column(String(17), nullable=True, index=True)
+
+    # 舊設備端
+    old_ip_address: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    old_switch_hostname: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    old_interface_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    old_vlan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    old_speed: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    old_duplex: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    old_link_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    old_ping_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    old_acl_passes: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # 新設備端
+    new_ip_address: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    new_switch_hostname: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    new_interface_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    new_vlan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    new_speed: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    new_duplex: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    new_link_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    new_ping_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    new_acl_passes: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    differences: Mapped[str | None] = mapped_column(JSON, nullable=True)
+    is_changed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    severity: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class ClientRecord(Base):
+    """客戶記錄。"""
+
+    __tablename__ = "client_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, index=True,
+    )
+    collected_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, server_default=func.now(),
+    )
+    mac_address: Mapped[str | None] = mapped_column(String(17), nullable=True, index=True)
+    ip_address: Mapped[str | None] = mapped_column(String(15), nullable=True, index=True)
+    switch_hostname: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True,
+    )
+    interface_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    vlan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    speed: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    duplex: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    link_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ping_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    acl_rules_applied: Mapped[str | None] = mapped_column(JSON, nullable=True)
+    acl_passes: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    raw_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parsed_data: Mapped[str | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+
+
+class SeverityOverride(Base):
+    """客戶嚴重度覆寫。"""
+
+    __tablename__ = "client_severity_overrides"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(50), index=True)
+    mac_address: Mapped[str] = mapped_column(String(20), index=True)
+    override_severity: Mapped[str] = mapped_column(String(20))
+    original_severity: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class ContactCategory(Base):
+    """通訊錄分類。"""
+
+    __tablename__ = "contact_categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    color: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    icon: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class Contact(Base):
+    """通訊錄聯絡人。"""
+
+    __tablename__ = "contacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contact_categories.id"), nullable=True, index=True,
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    title: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    company: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    mobile: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    extension: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class MaintenanceMacList(Base):
+    """歲修 MAC 清單。"""
+
+    __tablename__ = "maintenance_mac_list"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(50), index=True)
+    mac_address: Mapped[str] = mapped_column(String(17))
+    ip_address: Mapped[str] = mapped_column(String(45))
+    tenant_group: Mapped[TenantGroup] = mapped_column(Enum(TenantGroup))
+    detection_status: Mapped[ClientDetectionStatus] = mapped_column(
+        Enum(ClientDetectionStatus),
+    )
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    default_assignee: Mapped[str | None] = mapped_column(
+        String(100), nullable=True,
+    )
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+
+
+class Case(Base):
+    """案件（每個 MAC 一個案件）。"""
+
+    __tablename__ = "cases"
+    __table_args__ = (
+        UniqueConstraint(
+            "maintenance_id", "mac_address",
+            name="uk_case_maintenance_mac",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    mac_address: Mapped[str] = mapped_column(String(17), index=True)
+
+    # 狀態與指派
+    status: Mapped[CaseStatus] = mapped_column(
+        Enum(CaseStatus), default=CaseStatus.ASSIGNED,
+    )
+    assignee: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # 案件摘要
+    summary: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # 快取最新 ping 狀態（由 client collection 更新，用於快速排序）
+    last_ping_reachable: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True,
+    )
+
+    # Ping 可達起始時間（用於 anti-flapping：持續可達 10 分鐘才自動結案）
+    ping_reachable_since: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True,
+    )
+
+    # 預先計算的屬性變化旗標 {"speed": true, "duplex": false, ...}
+    change_flags: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class CaseNote(Base):
+    """案件筆記（歷史保留，不覆寫）。"""
+
+    __tablename__ = "case_notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("cases.id", ondelete="CASCADE"), index=True,
+    )
+    author: Mapped[str] = mapped_column(String(100))
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+
+
+class MealZone(Base):
+    """餐點配送區域。"""
+
+    __tablename__ = "meal_zones"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    zone_code: Mapped[str] = mapped_column(String(20))
+    zone_name: Mapped[str] = mapped_column(String(50))
+    status: Mapped[MealDeliveryStatus] = mapped_column(Enum(MealDeliveryStatus))
+    expected_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    arrived_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    meal_count: Mapped[int] = mapped_column(Integer, server_default="0")
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class ReferenceClient(Base):
+    """參考客戶端。"""
+
+    __tablename__ = "reference_clients"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    mac_address: Mapped[str] = mapped_column(String(17), index=True)
+    description: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True, index=True)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )

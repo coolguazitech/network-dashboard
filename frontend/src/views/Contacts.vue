@@ -255,12 +255,13 @@
     </div>
 
     <!-- 聯絡人 Modal -->
+    <Transition name="modal">
     <div
       v-if="showContactModal"
-      class="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       @click.self="showContactModal = false"
     >
-      <div class="bg-slate-800 border border-slate-600 rounded-lg p-5 w-[500px] max-w-full mx-4">
+      <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-5 w-[500px] max-w-full modal-content">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-bold text-white">
             {{ editingContact ? '編輯聯絡人' : '新增聯絡人' }}
@@ -330,14 +331,16 @@
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 分類 Modal -->
+    <Transition name="modal">
     <div
       v-if="showCategoryModal"
-      class="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       @click.self="showCategoryModal = false"
     >
-      <div class="bg-slate-800 border border-slate-600 rounded-lg p-5 w-96 max-w-full mx-4">
+      <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-5 w-96 max-w-full modal-content">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-bold text-white">
             {{ editingCategory ? '編輯分類' : '新增分類' }}
@@ -382,14 +385,16 @@
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 刪除確認 Modal -->
+    <Transition name="modal">
     <div
       v-if="showDeleteModal"
-      class="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       @click.self="showDeleteModal = false"
     >
-      <div class="bg-slate-800 border border-red-500/30 rounded-lg p-5 w-96 max-w-full mx-4">
+      <div class="bg-slate-800/95 backdrop-blur-xl border border-red-500/30 rounded-2xl shadow-2xl shadow-black/30 p-5 w-96 max-w-full modal-content">
         <div class="flex items-center gap-3 mb-4">
           <div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
             <span class="text-red-400 text-xl">⚠️</span>
@@ -421,14 +426,16 @@
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- CSV 匯入 Modal -->
+    <Transition name="modal">
     <div
       v-if="showImportModal"
-      class="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       @click.self="showImportModal = false"
     >
-      <div class="bg-slate-800 border border-slate-600 rounded-lg p-5 w-[500px] max-w-full mx-4">
+      <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-5 w-[500px] max-w-full modal-content">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-bold text-white">📥 CSV 匯入</h3>
           <button @click="showImportModal = false" class="text-slate-400 hover:text-white text-xl">&times;</button>
@@ -474,6 +481,7 @@
         </div>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 

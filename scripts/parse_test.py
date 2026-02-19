@@ -113,8 +113,6 @@ def format_record_summary(record: object) -> str:
         return f"  {d.get('interface_name', '?')}: crc_errors={d.get('crc_errors', 0)}"
     elif class_name == "MacTableData":
         return f"  {d.get('mac_address', '?')} vlan={d.get('vlan_id', '?')} port={d.get('interface_name', '?')}"
-    elif class_name == "ArpData":
-        return f"  {d.get('ip_address', '?')} -> {d.get('mac_address', '?')}"
     elif class_name == "AclData":
         return f"  {d.get('interface_name', '?')}: acl={d.get('acl_number', 'none')}"
     elif class_name == "TransceiverData":

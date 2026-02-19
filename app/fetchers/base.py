@@ -2,12 +2,11 @@
 Fetcher base classes.
 
 定義 Fetcher 抽象層的核心型別：
-- BaseFetcher: 所有 Fetcher 的基底類別（Mock / Real 共用介面）
+- BaseFetcher: 所有 Fetcher 的基底類別
 - FetchContext: 每次 fetch 的上下文（switch 資訊 + 額外參數）
 - FetchResult: fetch 回傳結果
 
-Mock Fetcher 繼承 BaseFetcher，直接在 fetch() 產生假資料。
-Real Fetcher (ConfiguredFetcher) 繼承 BaseFetcher，在 fetch() 中根據
+ConfiguredFetcher 繼承 BaseFetcher，在 fetch() 中根據
 .env 的設定呼叫外部 API（GET + 佔位符路徑 + auto query params）。
 
 ★ 開發指南：如何新增一個 Fetcher
@@ -25,7 +24,7 @@ Real Fetcher (ConfiguredFetcher) 繼承 BaseFetcher，在 fetch() 中根據
 
 新增 Fetcher 步驟：
     1. 在 config/scheduler.yaml 加一筆 fetcher entry（source + interval）
-       若 source 為新的外部 API（不在 FNA/DNA/GNMSPING 之中），需額外：
+       若 source 為新的外部 API（不在 FNA/DNA 之中），需額外：
        a. 在 .env 加 FETCHER_SOURCE__{SOURCE}__BASE_URL 和 __TIMEOUT
        b. 在 app/core/config.py 的 FetcherSourceConfig 加對應的欄位
     2. 在 .env 加一筆 FETCHER_ENDPOINT__{NAME}=... endpoint 模板
@@ -34,10 +33,9 @@ Real Fetcher (ConfiguredFetcher) 繼承 BaseFetcher，在 fetch() 中根據
     3. 在 app/parsers/plugins/ 寫對應的 Parser
     4. 完成！ConfiguredFetcher 自動處理 GET 呼叫。
 
-★ Mock vs Real 的選擇
-    - .env 中 USE_MOCK_API=true → 註冊 MockFetcher（開發/測試用）
-    - .env 中 USE_MOCK_API=false → 註冊 ConfiguredFetcher（正式環境）
-    - 兩者共用相同的 fetch_type，framework 透過 registry 切換
+Mock 模式：
+    將 FETCHER_SOURCE__FNA__BASE_URL 和 DNA 指向獨立的 Mock API Server，
+    endpoint 模板改為 /api/{api_name}。Mock Server 會自動處理收斂行為。
 """
 from __future__ import annotations
 
@@ -74,24 +72,18 @@ class FetchContext(BaseModel):
     - {hostname}: 設備 hostname
     - {device_type}: 設備類型（hpe/ios/nxos）
     - {tenant_group}: 租戶群組（f18/f9/etc）
+    - {maintenance_id}: 歲修 ID
 
     可選欄位：
     - params 字典中的任意 key 也可作為佔位符
     - 未被佔位符消耗的變數自動成為 query params
-
-    ★ params 字典的已知 key
-    ========================
-
-    - "switch_ips": list[str] — GNMSPing 的批次 client IP 清單
-    - "uplink_expectations": list[dict] — MockUplinkFetcher 的 uplink 期望值
 
     Attributes:
         switch_ip: 目標 switch IP（必傳）
         switch_hostname: 目標 switch hostname（必傳，用於存入 DB）
         device_type: 設備類型（必傳）
         tenant_group: 租戶群組（必傳）
-        is_old_device: 是否為舊設備（可選，Mock Fetcher 用於收斂方向）
-        maintenance_id: 歲修 ID（可選，Mock Fetcher 用於收斂時間計算）
+        maintenance_id: 歲修 ID（可選，傳遞給 API 作為 query param）
         params: 額外參數字典（可選）
         http: httpx.AsyncClient（可選，由框架注入）
     """
@@ -103,7 +95,6 @@ class FetchContext(BaseModel):
     tenant_group: TenantGroup
 
     # 可選欄位
-    is_old_device: bool | None = None
     maintenance_id: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     http: Any = None  # httpx.AsyncClient，使用 Any 避免 Pydantic 序列化問題

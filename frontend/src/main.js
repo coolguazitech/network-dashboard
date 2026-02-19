@@ -15,6 +15,7 @@ import {
   DataZoomComponent,
   MarkLineComponent,
 } from 'echarts/components'
+import { MotionPlugin } from '@vueuse/motion'
 import { isAuthenticated, isRoot, initAuth } from './utils/auth'
 import { setupErrorReporter } from './utils/errorReporter'
 
@@ -69,9 +70,9 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
-    path: '/comparison',
-    name: 'Comparison',
-    component: () => import('./views/Comparison.vue'),
+    path: '/cases',
+    name: 'Cases',
+    component: () => import('./views/Cases.vue'),
     meta: { requiresAuth: true },
   },
   {
@@ -122,5 +123,6 @@ router.beforeEach(async (to, from, next) => {
 const app = createApp(App)
 app.component('v-chart', ECharts)
 app.use(router)
+app.use(MotionPlugin)
 setupErrorReporter(app)
 app.mount('#app')

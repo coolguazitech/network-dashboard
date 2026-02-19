@@ -1,8 +1,18 @@
 """
 Parser for 'get_dynamic_acl_ios_fna' API.
 
-Parses Cisco IOS ``show authentication sessions`` style output for
-dynamically applied ACL bindings.  Also supports a CSV fallback format.
+Parses Cisco IOS ``show authentication sessions method mab details`` output
+for dynamically applied ACL bindings.  Also supports a CSV fallback format.
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class AclData(ParsedData):
+    interface_name: str                      # e.g. "GigabitEthernet1/0/1"
+    acl_number: str | None = None            # ACL number/name, None if no ACL bound
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: show authentication sessions method mab details
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 
@@ -62,6 +72,12 @@ class GetDynamicAclIosFnaParser(BaseParser[AclData]):
     # Common header keywords to skip
     HEADER_KEYWORDS = {"interface", "port", "---"}
 
+    # Known auth-state values (lowercase) — used to distinguish ACL vs auth columns
+    AUTH_STATE_KEYWORDS = {
+        "authenticated", "unauthenticated", "authorized", "unauthorized",
+        "mac-auth", "auth", "unauth",
+    }
+
     def parse(self, raw_output: str) -> list[AclData]:
         results: list[AclData] = []
 
@@ -77,6 +93,23 @@ class GetDynamicAclIosFnaParser(BaseParser[AclData]):
 
         return results
 
+    def _pick_acl_value(self, col3: str, col4: str) -> str:
+        """Determine which column holds the ACL number.
+
+        Column order may vary between firmware versions:
+          - Interface | MAC | ACL Number | Status  → col3 = ACL
+          - Interface | MAC | Status | ACL Number  → col4 = ACL
+        """
+        c3 = col3.strip()
+        c4 = col4.strip()
+        if c3.lower() in self.AUTH_STATE_KEYWORDS:
+            return c4
+        if c4.lower() in self.AUTH_STATE_KEYWORDS:
+            return c3
+        if c3.isdigit() or c3 in ("--", "-", "N/A", ""):
+            return c3
+        return c4
+
     def _parse_table_format(self, raw_output: str) -> list[AclData]:
         """Parse whitespace-delimited table output."""
         results: list[AclData] = []
@@ -90,7 +123,7 @@ class GetDynamicAclIosFnaParser(BaseParser[AclData]):
             if interface_name.startswith("-"):
                 continue
 
-            acl_val = match.group(3).strip()
+            acl_val = self._pick_acl_value(match.group(3), match.group(4))
             acl_number = (
                 None if acl_val in ("--", "-", "N/A", "") else acl_val
             )

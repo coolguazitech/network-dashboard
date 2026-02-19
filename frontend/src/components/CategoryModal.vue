@@ -1,6 +1,6 @@
 <template>
-  <div class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4" @click.self="$emit('close')">
-    <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+  <div class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="$emit('close')">
+    <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
       <!-- Header -->
       <div class="flex justify-between items-center p-4 border-b border-slate-700 bg-slate-800">
         <h2 class="text-xl font-bold text-slate-100">🏷️ 分類管理</h2>
@@ -161,9 +161,9 @@
       <!-- 確認移除成員對話框 -->
       <div
         v-if="confirmDialog.show"
-        class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-60"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60"
       >
-        <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-lg p-6 w-96">
+        <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-96">
           <h3 class="font-semibold text-slate-100 mb-3">確認移除</h3>
           <p class="text-slate-300 mb-4">
             確定要將 <span class="font-mono font-bold text-slate-100">{{ confirmDialog.macAddress }}</span> 從此分類移除嗎？
@@ -189,9 +189,9 @@
       <!-- 刪除分類確認對話框 -->
       <div
         v-if="deleteDialog.show"
-        class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-60"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60"
       >
-        <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-lg p-6 w-96">
+        <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-96">
           <h3 class="font-semibold text-slate-100 mb-3">⚠️ 確認刪除分類</h3>
           <p class="text-slate-300 mb-2">
             確定要刪除分類「<span class="font-bold text-slate-100">{{ deleteDialog.category?.name }}</span>」嗎？
@@ -219,9 +219,9 @@
       <!-- 錯誤提示對話框 -->
       <div
         v-if="errorDialog.show"
-        class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-60"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60"
       >
-        <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-lg p-6 w-96">
+        <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-96">
           <h3 class="font-semibold text-rose-400 mb-3">❌ 錯誤</h3>
           <p class="text-slate-300 mb-4 whitespace-pre-line">{{ errorDialog.message }}</p>
           <div class="flex justify-end">
@@ -238,9 +238,9 @@
       <!-- 成功提示對話框 -->
       <div
         v-if="successDialog.show"
-        class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-60"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60"
       >
-        <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-lg p-6 w-96">
+        <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-96">
           <h3 class="font-semibold text-green-400 mb-3">✓ 成功</h3>
           <p class="text-slate-300 mb-4 whitespace-pre-line">{{ successDialog.message }}</p>
           <div class="flex justify-end">
@@ -258,7 +258,7 @@
 </template>
 
 <script>
-import { getAuthHeaders } from '@/utils/auth'
+import api from '@/utils/api'
 
 export default {
   name: 'CategoryModal',
@@ -318,14 +318,9 @@ export default {
 
     async loadMembers(categoryId) {
       try {
-        const res = await fetch(`/api/v1/categories/${categoryId}/members`, {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          const members = await res.json();
-          this.categoryMembers[categoryId] = members;
-          this.categoryMembers = { ...this.categoryMembers };
-        }
+        const { data } = await api.get(`/categories/${categoryId}/members`);
+        this.categoryMembers[categoryId] = data;
+        this.categoryMembers = { ...this.categoryMembers };
       } catch (e) {
         console.error('載入成員失敗:', e);
       }
@@ -350,22 +345,14 @@ export default {
           color: this.newCategory.color,
           maintenance_id: this.maintenanceId,
         };
-        const res = await fetch('/api/v1/categories', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify(payload),
-        });
-        if (res.ok) {
-          this.newCategory = { name: '', color: '#3B82F6' };
-          this.$emit('refresh');
-          this.showSuccess('分類建立成功');
-        } else {
-          const err = await res.json();
-          this.showError(err.detail || '建立失敗');
-        }
+        await api.post('/categories', payload);
+        this.newCategory = { name: '', color: '#3B82F6' };
+        this.$emit('refresh');
+        this.showSuccess('分類建立成功');
       } catch (e) {
         console.error('建立分類失敗:', e);
-        this.showError('建立分類失敗，請稍後再試');
+        const detail = e.response?.data?.detail;
+        this.showError(detail || '建立分類失敗，請稍後再試');
       }
     },
 
@@ -391,22 +378,14 @@ export default {
       }
       
       try {
-        const res = await fetch(`/api/v1/categories/${categoryId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ name: name, color: this.editForm.color }),
-        });
-        if (res.ok) {
-          this.editingId = null;
-          this.$emit('refresh');
-          this.showSuccess('分類已更新');
-        } else {
-          const err = await res.json();
-          this.showError(err.detail || '更新失敗');
-        }
+        await api.put(`/categories/${categoryId}`, { name: name, color: this.editForm.color });
+        this.editingId = null;
+        this.$emit('refresh');
+        this.showSuccess('分類已更新');
       } catch (e) {
         console.error('更新分類失敗:', e);
-        this.showError('更新分類失敗，請稍後再試');
+        const detail = e.response?.data?.detail;
+        this.showError(detail || '更新分類失敗，請稍後再試');
       }
     },
 
@@ -422,20 +401,13 @@ export default {
       this.deleteDialog.show = false;
       
       try {
-        const res = await fetch(`/api/v1/categories/${cat.id}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          this.$emit('refresh');
-          this.showSuccess(`分類「${cat.name}」已刪除`);
-        } else {
-          const err = await res.json();
-          this.showError(err.detail || '刪除失敗');
-        }
+        await api.delete(`/categories/${cat.id}`);
+        this.$emit('refresh');
+        this.showSuccess(`分類「${cat.name}」已刪除`);
       } catch (e) {
         console.error('刪除分類失敗:', e);
-        this.showError('刪除分類失敗，請稍後再試');
+        const detail = e.response?.data?.detail;
+        this.showError(detail || '刪除分類失敗，請稍後再試');
       }
     },
 
@@ -453,20 +425,13 @@ export default {
       
       try {
         const encodedMac = encodeURIComponent(macAddress);
-        const res = await fetch(`/api/v1/categories/${categoryId}/members/${encodedMac}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          await this.loadMembers(categoryId);
-          this.$emit('refresh');
-        } else {
-          const err = await res.json();
-          this.showError(err.detail || '移除失敗');
-        }
+        await api.delete(`/categories/${categoryId}/members/${encodedMac}`);
+        await this.loadMembers(categoryId);
+        this.$emit('refresh');
       } catch (e) {
         console.error('移除成員失敗:', e);
-        this.showError('移除成員失敗，請稍後再試');
+        const detail = e.response?.data?.detail;
+        this.showError(detail || '移除成員失敗，請稍後再試');
       }
     },
 

@@ -1,0 +1,4 @@
+Interface             Total(pkts)  Broadcast   Multicast  Err(pkts)
+GE1/0/1                    123456       1234         567          0
+GE1/0/2                     98765        876         432          5
+XGE1/0/25                  654321       5432        1234          0

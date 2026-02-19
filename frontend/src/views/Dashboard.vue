@@ -15,47 +15,50 @@
             📄 匯出報告 <span class="text-xs">▼</span>
           </button>
           <!-- 下拉選單 -->
-          <div
-            v-if="showExportMenu"
-            class="absolute left-0 mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-20 min-w-32"
-          >
-            <button
-              @click="exportReport('preview')"
-              class="w-full px-3 py-2 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition"
+          <Transition name="dropdown">
+            <div
+              v-if="showExportMenu"
+              class="absolute left-0 mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-20 min-w-32"
             >
-              👁️ 預覽
-            </button>
-            <button
-              @click="exportReport('html')"
-              class="w-full px-3 py-2 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition"
-            >
-              📥 下載 HTML
-            </button>
-          </div>
+              <button
+                @click="exportReport('preview')"
+                class="w-full px-3 py-2 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition"
+              >
+                👁️ 預覽
+              </button>
+              <button
+                @click="exportReport('html')"
+                class="w-full px-3 py-2 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition"
+              >
+                📥 下載 HTML
+              </button>
+            </div>
+          </Transition>
         </div>
       </div>
       <!-- 整體通過率 -->
       <div class="text-right" v-if="selectedMaintenanceId">
-        <div class="text-3xl font-black mb-0.5" :class="overallStatusColor">
-          {{ overallPassRate }}%
+        <div class="text-3xl font-black mb-0.5 tabular-nums" :class="overallStatusColor">
+          {{ animatedOverallRate }}%
         </div>
         <p class="text-xs text-slate-400">整體通過率</p>
       </div>
     </div>
 
     <!-- 整體進度條 -->
-    <div v-if="selectedMaintenanceId" class="bg-slate-800/80 rounded border border-slate-600 p-3 mb-3">
+    <div v-if="selectedMaintenanceId" class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-700/30 p-3 mb-3 shadow-sm">
       <div class="flex justify-between text-xs mb-1.5">
         <span class="text-slate-300 font-medium">驗收進度</span>
-        <span class="text-slate-400">
-          {{ summary.overall.pass_count }} / {{ summary.overall.total_count }} 項目通過
+        <span class="text-slate-400 tabular-nums">
+          {{ animatedPassCount }} / {{ animatedTotalCount }} 項目通過
         </span>
       </div>
-      <div class="w-full bg-slate-700 rounded-full h-2">
+      <div class="w-full bg-slate-700/50 rounded-full h-2.5 overflow-hidden">
         <div
-          class="h-2 rounded-full transition-all duration-500"
+          class="h-2.5 rounded-full bar-animate"
           :class="getProgressBarColor(summary.overall)"
           :style="{ width: summary.overall.pass_rate + '%' }"
+          style="box-shadow: 0 0 12px rgba(0, 210, 255, 0.2)"
         ></div>
       </div>
     </div>
@@ -63,13 +66,15 @@
     <!-- 指標卡片 -->
     <div class="grid grid-cols-4 gap-2 mb-3">
       <div
-        v-for="[type, indicator] in sortedIndicators"
+        v-for="([type, indicator], idx) in sortedIndicators"
         :key="type"
         @click="selectIndicator(type)"
+        class="card-stagger"
+        :style="{ animationDelay: idx * 80 + 'ms' }"
         :class="[
           getCardBgColor(indicator),
-          'rounded cursor-pointer transition overflow-hidden border hover:brightness-110',
-          selectedIndicator === type ? 'border-cyan-500 ring-1 ring-cyan-500/50' : 'border-slate-600'
+          'rounded-xl cursor-pointer transition-all duration-200 border hover:brightness-110 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/15',
+          selectedIndicator === type ? 'border-cyan-500/60 ring-1 ring-cyan-500/30 shadow-lg shadow-cyan-500/10' : 'border-slate-600/40'
         ]"
       >
         <div class="px-3 py-2">
@@ -78,8 +83,21 @@
             <div class="flex items-center gap-1.5">
               <span class="text-lg">{{ getIcon(type) }}</span>
               <span class="text-white font-semibold text-sm">{{ getTitle(type) }}</span>
+              <!-- 指標說明 tooltip -->
+              <div class="relative group/info" @click.stop>
+                <svg class="w-3.5 h-3.5 text-slate-500 group-hover/info:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div class="absolute left-0 bottom-full mb-2 w-80 px-3.5 py-2.5 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-xs text-amber-900 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 z-50 pointer-events-none"
+                  style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
+                >
+                  {{ getDescription(type) }}
+                  <div class="absolute left-4 top-full w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-transparent border-t-amber-300"></div>
+                  <div class="absolute left-4 top-full -mt-px w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-transparent border-t-amber-50"></div>
+                </div>
+              </div>
               <button
-                v-if="hasThresholdConfig(type)"
+                v-if="hasThresholdConfig(type) && canWrite"
                 @click.stop="openThresholdModal(type)"
                 class="text-slate-500 hover:text-cyan-400 transition p-0.5"
                 title="閾值設定"
@@ -116,11 +134,11 @@
           </div>
 
           <!-- 迷你進度條（無資料時隱藏） -->
-          <div v-if="indicator.total_count > 0" class="mt-1.5 w-full bg-slate-700 rounded-full h-1">
+          <div v-if="indicator.total_count > 0" class="mt-1.5 w-full bg-slate-700 rounded-full h-1 overflow-hidden">
             <div
-              class="h-1 rounded-full transition-all"
+              class="h-1 rounded-full bar-animate"
               :class="getProgressBarColor(indicator)"
-              :style="{ width: indicator.pass_rate + '%' }"
+              :style="{ width: indicator.pass_rate + '%', animationDelay: (idx * 80 + 200) + 'ms' }"
             ></div>
           </div>
           <div v-else class="mt-1.5 h-1"></div>
@@ -236,8 +254,9 @@
     </div>
 
     <!-- 閾值設定 Modal -->
-    <div v-if="showThresholdModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="showThresholdModal = false">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 w-full max-w-lg max-h-[80vh] overflow-y-auto">
+    <Transition name="modal">
+    <div v-if="showThresholdModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="showThresholdModal = false">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl p-5 w-full max-w-lg max-h-[80vh] overflow-y-auto shadow-2xl shadow-black/30">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-bold text-white">
             {{ getIcon(thresholdModalType) }} {{ getTitle(thresholdModalType) }} - 閾值設定
@@ -273,25 +292,6 @@
           </div>
         </template>
 
-        <!-- Error Count 閾值 -->
-        <template v-if="thresholdModalType === 'error_count'">
-          <div class="mb-3">
-            <div class="flex items-center gap-2 mb-1">
-              <label class="text-sm text-slate-300 font-medium">未換設備 Error 容許上限</label>
-              <span v-if="isOverride('error_count_same_device_max')" class="text-xs px-1.5 py-0.5 bg-cyan-900/50 text-cyan-400 rounded">已覆寫</span>
-            </div>
-            <p class="text-xs text-slate-500 mb-1.5">換設備 (is_replaced=True) 的閾值固定為 0，不可調整</p>
-            <input
-              type="number"
-              step="1"
-              min="0"
-              v-model.number="thresholdForm.error_count_same_device_max"
-              :placeholder="'預設: ' + getDefaultValue('error_count_same_device_max')"
-              class="w-full px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:ring-1 focus:ring-cyan-400 focus:border-cyan-400 outline-none"
-            />
-          </div>
-        </template>
-
         <!-- 操作按鈕 -->
         <div class="flex justify-between items-center mt-5 pt-4 border-t border-slate-700">
           <button
@@ -318,21 +318,25 @@
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- Loading -->
-    <div v-if="loading" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg p-6">
+    <Transition name="modal">
+    <div v-if="loading" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl p-6 shadow-2xl shadow-black/30">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-400 mx-auto mb-2"></div>
         <p class="text-slate-300">載入中...</p>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, inject, watch, onUnmounted } from 'vue'
-import axios from 'axios'
-import { getAuthHeaders } from '../utils/auth.js'
+import api, { downloadFile } from '@/utils/api'
+import { canWrite } from '@/utils/auth'
+import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 
 const loading = ref(false)
 const showExportMenu = ref(false)
@@ -355,7 +359,7 @@ const transceiverFields = [
   { key: 'transceiver_voltage_max', label: '電壓上限', unit: 'V' },
 ]
 
-const hasThresholdConfig = (type) => type === 'transceiver' || type === 'error_count'
+const hasThresholdConfig = (type) => type === 'transceiver'
 
 const getDefaultValue = (key) => {
   if (!thresholdData.value) return ''
@@ -384,7 +388,7 @@ const isOverride = (key) => {
 const fetchThresholds = async () => {
   if (!selectedMaintenanceId.value) return
   try {
-    const response = await axios.get(`/api/v1/thresholds/${selectedMaintenanceId.value}`, { headers: getAuthHeaders() })
+    const response = await api.get(`/thresholds/${selectedMaintenanceId.value}`)
     thresholdData.value = response.data
   } catch (error) {
     console.error('Failed to fetch thresholds:', error)
@@ -418,7 +422,7 @@ const saveThresholds = async () => {
       // 傳 null 清除覆寫，傳數值設定覆寫
       updates[key] = (value === null || value === '') ? null : Number(value)
     }
-    const response = await axios.put(`/api/v1/thresholds/${selectedMaintenanceId.value}`, updates, { headers: getAuthHeaders() })
+    const response = await api.put(`/thresholds/${selectedMaintenanceId.value}`, updates)
     thresholdData.value = response.data
     showThresholdModal.value = false
     // 重新載入 Dashboard 資料
@@ -438,7 +442,7 @@ const resetThresholds = async () => {
     for (const key of Object.keys(thresholdForm.value)) {
       updates[key] = null
     }
-    const response = await axios.put(`/api/v1/thresholds/${selectedMaintenanceId.value}`, updates, { headers: getAuthHeaders() })
+    const response = await api.put(`/thresholds/${selectedMaintenanceId.value}`, updates)
     thresholdData.value = response.data
     // 重新填充表單為預設值（不關閉 modal）
     const form = {}
@@ -492,6 +496,11 @@ const selectedIndicatorData = computed(() => {
 })
 
 const overallPassRate = computed(() => Math.floor(summary.value.overall.pass_rate))
+const { displayed: animatedOverallRate } = useAnimatedNumber(overallPassRate)
+const overallPassCount = computed(() => summary.value.overall.pass_count)
+const overallTotalCount = computed(() => summary.value.overall.total_count)
+const { displayed: animatedPassCount } = useAnimatedNumber(overallPassCount)
+const { displayed: animatedTotalCount } = useAnimatedNumber(overallTotalCount)
 
 // 整體狀態顏色（後端計算 status）
 const _overallStatusColors = { success: 'text-green-400', warning: 'text-yellow-400', error: 'text-red-400' }
@@ -525,6 +534,20 @@ const getIcon = (type) => {
   return icons[type] || '📊'
 }
 
+const getDescription = (type) => {
+  const descriptions = {
+    transceiver: '每個光模塊的 TX Power、RX Power、溫度、電壓皆須落在閾值範圍內：MIN ≤ 數值 ≤ MAX。四項全部合格才算通過，任一超標即失敗。📍 閾值可點擊本卡片標題旁的齒輪圖示自訂。',
+    version: '比對新設備的實際韌體版本是否符合預期版本清單（可設定多個）。actual_version ∈ {expected_versions} → 通過。📍 至「設定 → 版本期望」匯入或新增預期版本。',
+    uplink: '透過 CDP/LLDP 鄰居資訊，逐一比對每台設備的實際鄰居是否包含預期鄰居。expected_neighbor ∈ actual_neighbors → 通過。📍 至「設定 → Uplink 期望」匯入或新增預期鄰居。',
+    port_channel: '檢查四項條件：① Port-Channel 存在 ② 狀態為 UP ③ 所有預期成員埠皆存在 ④ 各成員埠狀態為 UP/Bundled。四項全過才算通過。📍 至「設定 → Port Channel 期望」匯入或新增。',
+    power: '檢查每台設備的所有 PSU 狀態是否為健康值（如 Normal / OK）。任一 PSU 異常 → 該設備失敗。通過率 = 全部 PSU 正常的設備數 ÷ 總設備數 × 100%。📍 自動採集，無需額外設定。',
+    fan: '檢查每台設備的所有風扇狀態是否為健康值（如 Normal / OK）。任一風扇異常 → 該設備失敗。通過率 = 全部風扇正常的設備數 ÷ 總設備數 × 100%。📍 自動採集，無需額外設定。',
+    error_count: '比較前後兩次採集的 CRC/FCS 錯誤計數差值：delta = 本次 − 上次。delta > 0 → 失敗（錯誤增長）；delta ≤ 0 → 通過。首次採集無歷史資料則自動通過。📍 自動採集，無需額外設定。',
+    ping: '對新設備管理 IP 發送 ICMP Ping。is_reachable = true → 通過；false → 失敗。通過率 = 可達設備數 ÷ 總新設備數 × 100%。📍 設備清單於「設備管理 → 設備清單」設定。',
+  }
+  return descriptions[type] || ''
+}
+
 // 指標狀態 → 視覺映射（status 由後端計算）
 const _cardBgColors = {
   'system-error': 'bg-purple-900/30', 'no-data': 'bg-slate-700/50',
@@ -549,19 +572,23 @@ const getColumnTitle = (type) => {
     transceiver: '接口',
     version: '設備',
     uplink: '鄰居',
-    temperature: '感測器',
+    port_channel: 'Port-Channel',
+    power: 'PSU',
     fan: 'Fan ID',
+    error_count: '接口',
+    ping: '管理 IP',
   }
   return titles[type] || '項目'
 }
 
-const getInterfaceName = (failure) => {
-  if (selectedIndicator.value === 'transceiver') {
-    return failure.interface || '-'
-  } else if (selectedIndicator.value === 'uplink') {
-    return failure.expected_neighbor || '-'
-  }
-  return failure.device || '-'
+const getInterfaceName = (item) => {
+  if (!item) return '-'
+  if (selectedIndicator.value === 'transceiver') return item.interface || '-'
+  if (selectedIndicator.value === 'uplink') return item.expected_neighbor || '-'
+  if (selectedIndicator.value === 'port_channel') return item.interface || '-'
+  if (selectedIndicator.value === 'error_count') return item.interface || '-'
+  if (selectedIndicator.value === 'ping') return item.interface || '-'
+  return item.interface || item.device || '-'
 }
 
 // 獲取 Dashboard 摘要
@@ -570,9 +597,7 @@ const fetchSummary = async () => {
   
   loading.value = true
   try {
-    const response = await axios.get(`/api/v1/dashboard/maintenance/${selectedMaintenanceId.value}/summary`, {
-      headers: getAuthHeaders()
-    })
+    const response = await api.get(`/dashboard/maintenance/${selectedMaintenanceId.value}/summary`)
     summary.value = response.data
     
     // 默認選擇有系統異常或失敗的指標
@@ -596,9 +621,8 @@ const fetchIndicatorDetails = async (type) => {
   if (!selectedMaintenanceId.value) return
   
   try {
-    const response = await axios.get(
-      `/api/v1/dashboard/maintenance/${selectedMaintenanceId.value}/indicator/${type}/details`,
-      { headers: getAuthHeaders() }
+    const response = await api.get(
+      `/dashboard/maintenance/${selectedMaintenanceId.value}/indicator/${type}/details`
     )
     indicatorDetails.value = response.data
   } catch (error) {
@@ -644,14 +668,24 @@ const exportReport = async (type) => {
   if (!selectedMaintenanceId.value) return
 
   if (type === 'preview') {
-    // 開啟新視窗預覽
-    window.open(`/api/v1/reports/maintenance/${selectedMaintenanceId.value}/export?include_details=true`, '_blank')
+    // 透過 axios（含 auth）取得 HTML，再以 blob URL 開啟新視窗
+    try {
+      const response = await api.get(
+        `/reports/maintenance/${selectedMaintenanceId.value}/export?include_details=true`,
+        { responseType: 'blob' }
+      )
+      const blob = new Blob([response.data], { type: 'text/html;charset=utf-8' })
+      const blobUrl = URL.createObjectURL(blob)
+      window.open(blobUrl, '_blank')
+    } catch (error) {
+      console.error('Failed to preview report:', error)
+    }
   } else if (type === 'html') {
     // 下載 HTML
     try {
-      const response = await axios.get(
-        `/api/v1/reports/maintenance/${selectedMaintenanceId.value}/export?include_details=true`,
-        { responseType: 'blob', headers: getAuthHeaders() }
+      const response = await api.get(
+        `/reports/maintenance/${selectedMaintenanceId.value}/export?include_details=true`,
+        { responseType: 'blob' }
       )
       const blob = new Blob([response.data], { type: 'text/html;charset=utf-8' })
       const link = document.createElement('a')
@@ -673,16 +707,42 @@ const sortedIndicators = computed(() => {
   return Object.entries(summary.value.indicators)
 })
 
+// ── 自動刷新（每 30 秒） ──
+let pollTimer = null
+
+const startPolling = () => {
+  stopPolling()
+  if (!selectedMaintenanceId.value) return
+  pollTimer = setInterval(() => {
+    // 靜默刷新：不設 loading，避免閃爍
+    fetchSummary()
+  }, 30000)
+}
+
+const stopPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 // 監聽全局 maintenance ID 變化
 watch(selectedMaintenanceId, (newId) => {
+  stopPolling()
   if (newId) {
     fetchSummary()
+    startPolling()
   }
 })
 
 onMounted(() => {
   if (selectedMaintenanceId.value) {
     fetchSummary()
+    startPolling()
   }
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 </script>

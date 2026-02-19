@@ -29,6 +29,13 @@ services:
       DB_NAME: netora
       DB_USER: admin
       DB_PASSWORD: admin
+      # MinIO
+      MINIO__ENDPOINT: minio:9000
+      MINIO__ACCESS_KEY: minioadmin
+      MINIO__SECRET_KEY: minioadmin
+      MINIO__BUCKET: netora-uploads
+      MINIO__SECURE: "false"
+      MINIO__PUBLIC_URL: http://localhost:9000
       # 開發模式
       APP_DEBUG: "true"
       APP_ENV: development
@@ -55,6 +62,49 @@ services:
     networks:
       - dev_network
 
+  # Mock API Server（模擬 FNA/DNA API）
+  mock-api:
+    build:
+      context: ..
+      dockerfile: mock_server/Dockerfile
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: netora
+      DB_USER: admin
+      DB_PASSWORD: admin
+      MOCK_CONVERGE_TIME: ${MOCK_CONVERGE_TIME:-7200}
+    ports:
+      - "9999:9999"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - dev_network
+
+  # MinIO（S3-compatible 物件儲存，案件圖片上傳用）
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - dev_network
+
   # phpMyAdmin（選用）
   phpmyadmin:
     image: phpmyadmin:5.2
@@ -73,6 +123,7 @@ services:
 
 volumes:
   db-data:
+  minio-data:
   venv-volume:
   node-modules-volume:
 

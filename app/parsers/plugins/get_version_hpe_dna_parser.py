@@ -6,6 +6,18 @@ model, serial number, and uptime information.
 
 Real CLI command: display version
 Platforms: HPE Comware (5710, 5940, 5945, 5130, etc.)
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class VersionData(ParsedData):
+    version: str                             # firmware version string
+    model: str | None = None                 # device model number
+    serial_number: str | None = None         # serial number
+    uptime: str | None = None                # uptime string
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: display version
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 

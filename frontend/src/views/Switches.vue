@@ -1,311 +1,218 @@
 <template>
-  <div class="container mx-auto px-4 py-8">
-    <div class="flex justify-between items-center mb-6">
-      <h1 class="text-3xl font-bold">設備管理</h1>
+  <div class="px-3 py-3">
+    <div class="flex justify-between items-center mb-4">
+      <h1 class="text-xl font-bold text-white">設備管理</h1>
       <button
+        v-if="canWrite"
         @click="openAddModal"
-        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+        class="px-3 py-1.5 bg-cyan-600/90 hover:bg-cyan-500 text-white text-xs rounded-lg transition font-medium shadow-sm shadow-cyan-500/20"
       >
-        ➕ 新增設備
+        新增設備
       </button>
     </div>
 
     <!-- 載入中 -->
-    <div v-if="loading" class="flex justify-center items-center py-12">
-      <div class="text-gray-500">載入中...</div>
+    <div v-if="loading" class="rounded-lg border border-slate-700/30 p-10 text-center">
+      <div class="animate-pulse text-slate-500 text-sm">載入中...</div>
     </div>
 
     <!-- 無數據 -->
-    <div v-else-if="!switches || switches.length === 0" class="text-center py-12 text-gray-500">
-      暫無設備資料
+    <div v-else-if="!switches || switches.length === 0" class="rounded-lg border border-slate-700/30 p-12 text-center">
+      <p class="text-slate-500 text-sm">暫無設備資料</p>
     </div>
 
     <!-- 設備列表 -->
-    <div v-else class="bg-white rounded-lg shadow overflow-hidden">
-      <table class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50">
-          <tr>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              主機名稱
-            </th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              IP 位址
-            </th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              廠商
-            </th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              平台
-            </th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              站點
-            </th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              狀態
-            </th>
-            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-              操作
-            </th>
-          </tr>
-        </thead>
-        <tbody class="bg-white divide-y divide-gray-200">
-          <tr v-for="sw in switches" :key="sw.id" class="hover:bg-gray-50">
-            <td class="px-6 py-4 whitespace-nowrap">
-              <div class="text-sm font-medium text-gray-900">{{ sw.hostname }}</div>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-              <div class="text-sm text-gray-500">{{ sw.ip_address }}</div>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-              <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
-                {{ sw.vendor }}
-              </span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-              {{ sw.platform }}
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-              {{ sw.site || '-' }}
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-              <span
-                :class="sw.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'"
-                class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
-              >
-                {{ sw.is_active ? '啟用' : '停用' }}
-              </span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-              <button
-                @click="editSwitch(sw)"
-                class="text-indigo-600 hover:text-indigo-900 mr-3"
-              >
-                編輯
-              </button>
-              <button
-                @click="confirmDelete(sw)"
-                class="text-red-600 hover:text-red-900"
-              >
-                刪除
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- 新增/編輯 Modal -->
-    <div
-      v-if="showModal"
-      class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50"
-      @click.self="closeModal"
-    >
-      <div class="relative top-20 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-md bg-white">
-        <div class="flex justify-between items-center mb-4">
-          <h3 class="text-lg font-medium">{{ isEditMode ? '編輯設備' : '新增設備' }}</h3>
-          <button @click="closeModal" class="text-gray-400 hover:text-gray-600">
-            ✕
-          </button>
-        </div>
-
-        <form @submit.prevent="saveSwitch" class="space-y-4">
-          <div class="grid grid-cols-2 gap-4">
-            <!-- 主機名稱 -->
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">
-                主機名稱 <span class="text-red-500">*</span>
-              </label>
-              <input
-                v-model="formData.hostname"
-                type="text"
-                required
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="例如: core-switch-01"
-              />
-            </div>
-
-            <!-- IP 位址 -->
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">
-                IP 位址 <span class="text-red-500">*</span>
-              </label>
-              <input
-                v-model="formData.ip_address"
-                type="text"
-                required
-                pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="例如: 192.168.1.1"
-              />
-            </div>
-
-            <!-- 廠商 -->
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">
-                廠商 <span class="text-red-500">*</span>
-              </label>
-              <select
-                v-model="formData.vendor"
-                required
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">請選擇廠商</option>
-                <option value="cisco">Cisco</option>
-                <option value="aruba">Aruba</option>
-                <option value="hpe">HPE</option>
-                <option value="huawei">Huawei</option>
-                <option value="other">其他</option>
-              </select>
-            </div>
-
-            <!-- 平台 -->
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">
-                平台 <span class="text-red-500">*</span>
-              </label>
-              <select
-                v-model="formData.platform"
-                required
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">請選擇平台</option>
-                <option value="ios">IOS</option>
-                <option value="nxos">NX-OS</option>
-                <option value="aruba_os">ArubaOS</option>
-                <option value="aruba_cx">ArubaOS-CX</option>
-                <option value="comware">Comware</option>
-              </select>
-            </div>
-
-            <!-- 站點 -->
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">
-                站點 <span class="text-red-500">*</span>
-              </label>
-              <select
-                v-model="formData.site"
-                required
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">請選擇站點</option>
-                <option value="datacenter">資料中心</option>
-                <option value="office">辦公室</option>
-                <option value="branch">分支</option>
-              </select>
-            </div>
-
-            <!-- 型號 -->
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">
-                型號
-              </label>
-              <input
-                v-model="formData.model"
-                type="text"
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="例如: C9300-48P"
-              />
-            </div>
-          </div>
-
-          <!-- 位置 -->
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              位置
-            </label>
-            <input
-              v-model="formData.location"
-              type="text"
-              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="例如: 機房 A 櫃 5"
-            />
-          </div>
-
-          <!-- 備註 -->
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              備註
-            </label>
-            <textarea
-              v-model="formData.description"
-              rows="3"
-              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="備註說明"
-            ></textarea>
-          </div>
-
-          <!-- 啟用狀態 -->
-          <div class="flex items-center">
-            <input
-              v-model="formData.is_active"
-              type="checkbox"
-              id="is_active"
-              class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-            />
-            <label for="is_active" class="ml-2 block text-sm text-gray-900">
-              啟用
-            </label>
-          </div>
-
-          <!-- 按鈕 -->
-          <div class="flex justify-end space-x-3 pt-4 border-t">
-            <button
-              type="button"
-              @click="closeModal"
-              class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              class="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              {{ isEditMode ? '更新' : '新增' }}
-            </button>
-          </div>
-        </form>
+    <div v-else class="bg-slate-800/50 rounded-lg border border-slate-700/30 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="min-w-full">
+          <thead class="bg-slate-900/60 sticky top-0">
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">主機名稱</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">IP 位址</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">廠商</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">平台</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">站點</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">狀態</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-700/30">
+            <tr v-for="sw in switches" :key="sw.id" class="hover:bg-cyan-500/5 transition-colors">
+              <td class="px-4 py-3 whitespace-nowrap">
+                <div class="text-sm font-medium font-mono text-slate-100">{{ sw.hostname }}</div>
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap">
+                <div class="text-sm text-slate-400 font-mono">{{ sw.ip_address }}</div>
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap">
+                <span class="px-2 py-0.5 text-xs font-medium rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                  {{ sw.vendor }}
+                </span>
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-400">
+                {{ sw.platform }}
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-400">
+                {{ sw.site || '—' }}
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap">
+                <span
+                  :class="sw.is_active
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                    : 'bg-slate-700/30 text-slate-500 border-slate-700/40'"
+                  class="px-2 py-0.5 text-xs font-medium rounded border"
+                >
+                  {{ sw.is_active ? '啟用' : '停用' }}
+                </span>
+              </td>
+              <td v-if="canWrite" class="px-4 py-3 whitespace-nowrap text-right text-sm">
+                <button
+                  @click="editSwitch(sw)"
+                  class="text-cyan-400 hover:text-cyan-300 mr-3 transition"
+                >
+                  編輯
+                </button>
+                <button
+                  @click="confirmDelete(sw)"
+                  class="text-red-400 hover:text-red-300 transition"
+                >
+                  刪除
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
-    <!-- 刪除確認 Modal -->
-    <div
-      v-if="showDeleteConfirm"
-      class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50"
-      @click.self="cancelDelete"
-    >
-      <div class="relative top-1/3 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-        <div class="mt-3 text-center">
-          <h3 class="text-lg leading-6 font-medium text-gray-900 mb-2">確認刪除</h3>
-          <div class="mt-2 px-7 py-3">
-            <p class="text-sm text-gray-500">
-              確定要刪除設備 <strong>{{ deleteTarget?.hostname }}</strong> 嗎？此操作無法復原。
-            </p>
+    <!-- 新增/編輯 Modal -->
+    <teleport to="body">
+      <Transition name="modal">
+      <div
+        v-if="showModal"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center z-50 p-4 pt-20"
+        @click.self="closeModal"
+      >
+        <div class="modal-content bg-slate-800/95 backdrop-blur-xl rounded-2xl border border-slate-600/40 w-full max-w-2xl shadow-2xl shadow-black/30">
+          <div class="flex justify-between items-center px-5 py-4 border-b border-slate-700">
+            <h3 class="text-white font-semibold">{{ isEditMode ? '編輯設備' : '新增設備' }}</h3>
+            <button @click="closeModal" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
           </div>
-          <div class="flex justify-center space-x-3 mt-4">
-            <button
-              @click="cancelDelete"
-              class="px-4 py-2 bg-gray-200 text-gray-800 text-sm font-medium rounded-md hover:bg-gray-300"
-            >
+
+          <form @submit.prevent="saveSwitch" class="px-5 py-4 space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="form-label">主機名稱 <span class="text-red-400">*</span></label>
+                <input v-model="formData.hostname" type="text" required class="form-input" placeholder="core-switch-01" />
+              </div>
+              <div>
+                <label class="form-label">IP 位址 <span class="text-red-400">*</span></label>
+                <input v-model="formData.ip_address" type="text" required pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$" class="form-input" placeholder="192.168.1.1" />
+              </div>
+              <div>
+                <label class="form-label">廠商 <span class="text-red-400">*</span></label>
+                <select v-model="formData.vendor" required class="form-select">
+                  <option value="">請選擇廠商</option>
+                  <option value="cisco">Cisco</option>
+                  <option value="aruba">Aruba</option>
+                  <option value="hpe">HPE</option>
+                  <option value="huawei">Huawei</option>
+                  <option value="other">其他</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">平台 <span class="text-red-400">*</span></label>
+                <select v-model="formData.platform" required class="form-select">
+                  <option value="">請選擇平台</option>
+                  <option value="ios">IOS</option>
+                  <option value="nxos">NX-OS</option>
+                  <option value="aruba_os">ArubaOS</option>
+                  <option value="aruba_cx">ArubaOS-CX</option>
+                  <option value="comware">Comware</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">站點 <span class="text-red-400">*</span></label>
+                <select v-model="formData.site" required class="form-select">
+                  <option value="">請選擇站點</option>
+                  <option value="datacenter">資料中心</option>
+                  <option value="office">辦公室</option>
+                  <option value="branch">分支</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">型號</label>
+                <input v-model="formData.model" type="text" class="form-input" placeholder="C9300-48P" />
+              </div>
+            </div>
+
+            <div>
+              <label class="form-label">位置</label>
+              <input v-model="formData.location" type="text" class="form-input" placeholder="機房 A 櫃 5" />
+            </div>
+
+            <div>
+              <label class="form-label">備註</label>
+              <textarea v-model="formData.description" rows="3" class="form-input resize-none" placeholder="備註說明"></textarea>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <input v-model="formData.is_active" type="checkbox" id="is_active" class="rounded border-slate-500 bg-slate-900 text-cyan-500 focus:ring-cyan-500/50" />
+              <label for="is_active" class="text-sm text-slate-300">啟用</label>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-4 border-t border-slate-700">
+              <button type="button" @click="closeModal" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">
+                取消
+              </button>
+              <button type="submit" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition shadow-sm shadow-cyan-500/20">
+                {{ isEditMode ? '更新' : '新增' }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+      </Transition>
+    </teleport>
+
+    <!-- 刪除確認 Modal -->
+    <teleport to="body">
+      <Transition name="modal">
+      <div
+        v-if="showDeleteConfirm"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        @click.self="cancelDelete"
+      >
+        <div class="modal-content bg-slate-800/95 backdrop-blur-xl rounded-2xl border border-slate-600/40 w-full max-w-sm shadow-2xl shadow-black/30 p-6 text-center">
+          <h3 class="text-lg font-semibold text-white mb-2">確認刪除</h3>
+          <p class="text-sm text-slate-400 mb-5">
+            確定要刪除設備 <span class="text-red-300 font-medium">{{ deleteTarget?.hostname }}</span> 嗎？此操作無法復原。
+          </p>
+          <div class="flex justify-center gap-3">
+            <button @click="cancelDelete" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">
               取消
             </button>
-            <button
-              @click="deleteSwitch"
-              class="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700"
-            >
+            <button @click="deleteSwitch" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition">
               確認刪除
             </button>
           </div>
         </div>
       </div>
-    </div>
+      </Transition>
+    </teleport>
   </div>
 </template>
 
 <script>
-import { getAuthHeaders } from '@/utils/auth'
+import api from '@/utils/api'
+import { useToast } from '@/composables/useToast'
+import { canWrite } from '@/utils/auth'
 
 export default {
   name: 'Switches',
+  setup() {
+    return { ...useToast(), canWrite }
+  },
   data() {
     return {
       switches: [],
@@ -335,14 +242,11 @@ export default {
     async loadSwitches() {
       this.loading = true
       try {
-        const response = await fetch('/api/v1/switches', {
-          headers: getAuthHeaders()
-        })
-        const data = await response.json()
+        const { data } = await api.get('/switches')
         this.switches = data.data || []
       } catch (error) {
         console.error('載入設備列表失敗:', error)
-        alert('載入設備列表失敗')
+        this.showMessage('載入設備列表失敗', 'error')
       } finally {
         this.loading = false
       }
@@ -389,31 +293,21 @@ export default {
     async saveSwitch() {
       try {
         const url = this.isEditMode
-          ? `/api/v1/switches/${this.formData.id}`
-          : '/api/v1/switches'
-        
-        const method = this.isEditMode ? 'PUT' : 'POST'
-        
-        const response = await fetch(url, {
-          method,
-          headers: {
-            'Content-Type': 'application/json',
-            ...getAuthHeaders()
-          },
-          body: JSON.stringify(this.formData)
-        })
+          ? `/switches/${this.formData.id}`
+          : '/switches'
 
-        if (response.ok) {
-          alert(this.isEditMode ? '設備更新成功' : '設備新增成功')
-          this.closeModal()
-          this.loadSwitches()
+        if (this.isEditMode) {
+          await api.put(url, this.formData)
         } else {
-          const error = await response.json()
-          alert(`操作失敗: ${error.detail || '未知錯誤'}`)
+          await api.post(url, this.formData)
         }
+
+        this.showMessage(this.isEditMode ? '設備更新成功' : '設備新增成功', 'success')
+        this.closeModal()
+        this.loadSwitches()
       } catch (error) {
-        console.error('儲存設備失敗:', error)
-        alert('儲存設備失敗')
+        const detail = error.response?.data?.detail || '未知錯誤'
+        this.showMessage(`操作失敗: ${detail}`, 'error')
       }
     },
     confirmDelete(sw) {
@@ -426,22 +320,13 @@ export default {
     },
     async deleteSwitch() {
       try {
-        const response = await fetch(`/api/v1/switches/${this.deleteTarget.id}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        })
-
-        if (response.ok) {
-          alert('設備刪除成功')
-          this.cancelDelete()
-          this.loadSwitches()
-        } else {
-          const error = await response.json()
-          alert(`刪除失敗: ${error.detail || '未知錯誤'}`)
-        }
+        await api.delete(`/switches/${this.deleteTarget.id}`)
+        this.showMessage('設備刪除成功', 'success')
+        this.cancelDelete()
+        this.loadSwitches()
       } catch (error) {
-        console.error('刪除設備失敗:', error)
-        alert('刪除設備失敗')
+        const detail = error.response?.data?.detail || '未知錯誤'
+        this.showMessage(`刪除失敗: ${detail}`, 'error')
       }
     }
   }

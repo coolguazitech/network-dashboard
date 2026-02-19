@@ -31,7 +31,7 @@ class CreateUserRequest(BaseModel):
 
     username: str
     password: str
-    display_name: str | None = None
+    display_name: str
     email: str | None = None
     role: str = "guest"  # root, pm, guest
     maintenance_id: str | None = None  # PM/GUEST 必填
@@ -58,7 +58,7 @@ class UserListResponse(BaseModel):
 
     id: int
     username: str
-    display_name: str | None
+    display_name: str
     email: str | None
     role: str
     maintenance_id: str | None
@@ -77,6 +77,25 @@ class RoleItem(BaseModel):
 # ══════════════════════════════════════════════════════════════════
 # API Endpoints
 # ══════════════════════════════════════════════════════════════════
+
+
+@router.get("/display-names")
+async def list_user_display_names(
+    _: Annotated[dict[str, Any], Depends(get_current_user)],
+    session: AsyncSession = Depends(get_async_session),
+) -> list[str]:
+    """
+    回傳所有 active 使用者的 display_name（供指派 dropdown 用）。
+
+    任何已登入使用者皆可存取。
+    """
+    stmt = (
+        select(User.display_name)
+        .where(User.is_active == True)  # noqa: E712
+        .order_by(User.display_name)
+    )
+    result = await session.execute(stmt)
+    return [row[0] for row in result.fetchall()]
 
 
 @router.get("/roles/available")
@@ -182,6 +201,13 @@ async def create_user(
     """
     建立新使用者（僅 root 可用）。
     """
+    # 檢查顯示名稱
+    if not data.display_name or not data.display_name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="顯示名稱為必填欄位",
+        )
+
     # 檢查使用者名稱是否已存在
     stmt = select(User).where(User.username == data.username)
     result = await session.execute(stmt)
@@ -191,6 +217,17 @@ async def create_user(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"使用者名稱 '{data.username}' 已存在",
+        )
+
+    # 檢查顯示名稱是否已存在
+    stmt = select(User).where(User.display_name == data.display_name.strip())
+    result = await session.execute(stmt)
+    existing_display = result.scalar_one_or_none()
+
+    if existing_display:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"顯示名稱 '{data.display_name}' 已被使用",
         )
 
     # 驗證角色
@@ -323,7 +360,21 @@ async def update_user(
 
     # 更新欄位
     if data.display_name is not None:
-        user.display_name = data.display_name
+        name = data.display_name.strip()
+        if not name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="顯示名稱不可為空",
+            )
+        # 檢查顯示名稱是否已被其他使用者使用
+        stmt = select(User).where(User.display_name == name, User.id != user_id)
+        result = await session.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"顯示名稱 '{name}' 已被使用",
+            )
+        user.display_name = name
     if data.email is not None:
         user.email = data.email
     if data.is_active is not None:

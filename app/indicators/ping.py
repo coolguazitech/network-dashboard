@@ -86,14 +86,7 @@ class PingIndicator(BaseIndicator):
                 failures.append({
                     "device": hostname,
                     "interface": "Mgmt",
-                    "reason": "設備不在清單中",
-                    "data": None
-                })
-            elif device_status["is_reachable"] is None:
-                failures.append({
-                    "device": hostname,
-                    "interface": "Mgmt",
-                    "reason": "尚未測試可達性",
+                    "reason": "尚無採集數據",
                     "data": None
                 })
             elif not device_status["is_reachable"]:
@@ -102,7 +95,8 @@ class PingIndicator(BaseIndicator):
                     "interface": "Mgmt",
                     "reason": "Ping 不可達",
                     "data": {
-                        "is_reachable": device_status["is_reachable"],
+                        "is_reachable": False,
+                        "success_rate": device_status.get("success_rate"),
                         "last_check_at": str(device_status["last_check_at"]) if device_status["last_check_at"] else None,
                     }
                 })
@@ -115,6 +109,7 @@ class PingIndicator(BaseIndicator):
                         "reason": "Ping 可達",
                         "data": {
                             "is_reachable": True,
+                            "success_rate": device_status.get("success_rate"),
                             "last_check_at": str(device_status["last_check_at"]) if device_status["last_check_at"] else None,
                         }
                     })
@@ -138,9 +133,11 @@ class PingIndicator(BaseIndicator):
         session: AsyncSession,
         maintenance_id: str,
     ) -> list[dict]:
-        """獲取該歲修的所有新設備清單。"""
+        """獲取該歲修的所有新設備清單（排除無 hostname/IP 的設備）。"""
         stmt = select(MaintenanceDeviceList).where(
-            MaintenanceDeviceList.maintenance_id == maintenance_id
+            MaintenanceDeviceList.maintenance_id == maintenance_id,
+            MaintenanceDeviceList.new_hostname != None,  # noqa: E711
+            MaintenanceDeviceList.new_ip_address != None,  # noqa: E711
         )
         result = await session.execute(stmt)
         devices = result.scalars().all()
@@ -158,24 +155,27 @@ class PingIndicator(BaseIndicator):
         maintenance_id: str,
     ) -> dict[str, dict]:
         """
-        獲取設備可達性數據。
+        從 PingRecord 採集紀錄讀取可達性數據。
 
-        直接從 MaintenanceDeviceList 讀取 is_reachable 欄位，
-        確保與設備清單顯示的可達性狀態一致。
+        使用 PingRecordRepo.get_latest_per_device() 取得每台設備最新的
+        ping 結果，與其他指標的資料流一致。
         """
-        stmt = select(MaintenanceDeviceList).where(
-            MaintenanceDeviceList.maintenance_id == maintenance_id
-        )
-        result = await session.execute(stmt)
-        devices = result.scalars().all()
+        repo = PingRecordRepo(session)
+        records = await repo.get_latest_per_device(maintenance_id)
 
-        # 返回 hostname -> 可達性資訊的映射
+        # 每台設備可能有多筆 record（多個 target），取最佳結果
         collected: dict[str, dict] = {}
-        for device in devices:
-            collected[device.new_hostname] = {
-                "is_reachable": device.is_reachable,
-                "last_check_at": device.last_check_at,
-            }
+        for record in records:
+            hostname = record.switch_hostname
+            existing = collected.get(hostname)
+            if existing is None or (
+                record.is_reachable and not existing["is_reachable"]
+            ):
+                collected[hostname] = {
+                    "is_reachable": record.is_reachable,
+                    "success_rate": record.success_rate,
+                    "last_check_at": record.collected_at,
+                }
 
         return collected
 

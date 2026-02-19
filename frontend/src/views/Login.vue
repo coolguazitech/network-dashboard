@@ -57,12 +57,14 @@
         <!-- 登入表單 -->
         <form v-if="activeTab === 'login'" @submit.prevent="handleLogin">
           <!-- 錯誤訊息 -->
-          <div v-if="errorMsg" class="mb-4 p-3 bg-red-900/30 border border-red-700/50 rounded text-red-300 text-sm">
+          <Transition name="slide-down">
+          <div v-if="errorMsg" key="login-error" class="shake mb-4 p-3 bg-red-900/30 border border-red-700/50 rounded text-red-300 text-sm">
             {{ errorMsg }}
           </div>
+          </Transition>
 
           <!-- 帳號 -->
-          <div class="mb-4">
+          <div class="mb-4 field-stagger" style="animation-delay: 0ms">
             <label class="block text-sm text-slate-400 mb-1.5">帳號</label>
             <input
               v-model="username"
@@ -75,7 +77,7 @@
           </div>
 
           <!-- 密碼 -->
-          <div class="mb-6">
+          <div class="mb-6 field-stagger" style="animation-delay: 80ms">
             <label class="block text-sm text-slate-400 mb-1.5">密碼</label>
             <div class="relative">
               <input
@@ -107,7 +109,8 @@
           <!-- 登入按鈕 -->
           <button
             type="submit"
-            class="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition flex items-center justify-center gap-2"
+            class="field-stagger w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition flex items-center justify-center gap-2"
+            style="animation-delay: 160ms"
             :disabled="loading || !username || !password"
           >
             <svg v-if="loading" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -121,17 +124,21 @@
         <!-- 註冊表單 -->
         <form v-else @submit.prevent="handleRegister">
           <!-- 成功訊息 -->
-          <div v-if="successMsg" class="mb-4 p-3 bg-green-900/30 border border-green-700/50 rounded text-green-300 text-sm">
+          <Transition name="slide-down">
+          <div v-if="successMsg" key="reg-success" class="mb-4 p-3 bg-green-900/30 border border-green-700/50 rounded text-green-300 text-sm">
             {{ successMsg }}
           </div>
+          </Transition>
 
           <!-- 錯誤訊息 -->
-          <div v-if="errorMsg" class="mb-4 p-3 bg-red-900/30 border border-red-700/50 rounded text-red-300 text-sm">
+          <Transition name="slide-down">
+          <div v-if="errorMsg" key="reg-error" class="shake mb-4 p-3 bg-red-900/30 border border-red-700/50 rounded text-red-300 text-sm">
             {{ errorMsg }}
           </div>
+          </Transition>
 
           <!-- 歲修 ID 選擇 -->
-          <div class="mb-4">
+          <div class="mb-4 field-stagger" style="animation-delay: 0ms">
             <label class="block text-sm text-slate-400 mb-1.5">選擇歲修</label>
             <select
               v-model="regMaintenanceId"
@@ -146,7 +153,7 @@
           </div>
 
           <!-- 帳號 -->
-          <div class="mb-4">
+          <div class="mb-4 field-stagger" style="animation-delay: 80ms">
             <label class="block text-sm text-slate-400 mb-1.5">帳號</label>
             <input
               v-model="regUsername"
@@ -159,19 +166,33 @@
           </div>
 
           <!-- 顯示名稱 -->
-          <div class="mb-4">
-            <label class="block text-sm text-slate-400 mb-1.5">顯示名稱 <span class="text-slate-500">(選填)</span></label>
+          <div class="mb-4 field-stagger" style="animation-delay: 160ms">
+            <div class="flex items-center gap-1.5 mb-1.5">
+              <label class="text-sm text-slate-400">顯示名稱 <span class="text-red-400">*</span></label>
+              <div class="relative group/dn">
+                <svg class="w-3.5 h-3.5 text-slate-500 group-hover/dn:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div class="absolute left-0 bottom-full mb-2 w-64 px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-xs text-amber-900 leading-relaxed opacity-0 invisible group-hover/dn:opacity-100 group-hover/dn:visible transition-all duration-200 z-50 pointer-events-none"
+                  style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
+                >
+                  此名稱將作為您在系統中的識別名稱，用於案件指派與操作記錄。名稱不可與其他使用者重複。
+                  <div class="absolute left-3 top-full w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-transparent border-t-amber-300"></div>
+                  <div class="absolute left-3 top-full -mt-px w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-transparent border-t-amber-50"></div>
+                </div>
+              </div>
+            </div>
             <input
               v-model="regDisplayName"
               type="text"
               class="w-full px-4 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition"
-              placeholder="您的名稱"
+              placeholder="您的名稱（不可與他人重複）"
               :disabled="loading"
             />
           </div>
 
           <!-- 密碼 -->
-          <div class="mb-4">
+          <div class="mb-4 field-stagger" style="animation-delay: 240ms">
             <label class="block text-sm text-slate-400 mb-1.5">密碼</label>
             <div class="relative">
               <input
@@ -200,7 +221,7 @@
           </div>
 
           <!-- 確認密碼 -->
-          <div class="mb-6">
+          <div class="mb-6 field-stagger" style="animation-delay: 320ms">
             <label class="block text-sm text-slate-400 mb-1.5">確認密碼</label>
             <div class="relative">
               <input
@@ -231,7 +252,8 @@
           <!-- 註冊按鈕 -->
           <button
             type="submit"
-            class="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition flex items-center justify-center gap-2"
+            class="field-stagger w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition flex items-center justify-center gap-2"
+            style="animation-delay: 400ms"
             :disabled="loading || !canRegister"
           >
             <svg v-if="loading" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -294,6 +316,7 @@ const successMsg = ref('')
 const canRegister = computed(() => {
   return regMaintenanceId.value &&
     regUsername.value &&
+    regDisplayName.value.trim() &&
     regPassword.value &&
     regPassword.value === regPasswordConfirm.value
 })
@@ -349,7 +372,7 @@ const handleRegister = async () => {
       username: regUsername.value,
       password: regPassword.value,
       maintenance_id: regMaintenanceId.value,
-      display_name: regDisplayName.value || null,
+      display_name: regDisplayName.value.trim(),
     })
 
     successMsg.value = '註冊成功！請聯繫管理員啟用您的帳號。'

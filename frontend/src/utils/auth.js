@@ -23,7 +23,7 @@ export const currentUser = computed(() => user.value)
 /**
  * 是否為 root 使用者
  */
-export const isRoot = computed(() => user.value?.role === 'root')
+export const isRoot = computed(() => user.value?.role?.toUpperCase() === 'ROOT')
 
 /**
  * 當前使用者角色
@@ -34,8 +34,8 @@ export const userRole = computed(() => user.value?.role || null)
  * 是否有寫入權限（root 和 pm 有，guest 沒有）
  */
 export const canWrite = computed(() => {
-  const role = user.value?.role
-  return role === 'root' || role === 'pm'
+  const role = user.value?.role?.toUpperCase()
+  return role === 'ROOT' || role === 'PM'
 })
 
 /**
@@ -45,10 +45,11 @@ export const canWrite = computed(() => {
  */
 export function hasPermission(permission) {
   if (!user.value) return false
+  const role = user.value.role?.toUpperCase()
   // root 擁有所有權限
-  if (user.value.role === 'root') return true
+  if (role === 'ROOT') return true
   // pm 有寫入權限
-  if (user.value.role === 'pm') return true
+  if (role === 'PM') return true
   // guest 沒有權限
   return false
 }

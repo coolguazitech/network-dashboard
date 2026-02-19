@@ -3,6 +3,16 @@ Parser for 'get_static_acl_hpe_fna' API.
 
 Parses HPE Comware `display current-configuration` output for interface ACL
 bindings (packet-filter rules).  Also supports a CSV fallback format.
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class AclData(ParsedData):
+    interface_name: str                      # e.g. "GigabitEthernet1/0/1"
+    acl_number: str | None = None            # ACL number/name, None if no ACL bound
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: display current-configuration | include interface|filter|#
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 

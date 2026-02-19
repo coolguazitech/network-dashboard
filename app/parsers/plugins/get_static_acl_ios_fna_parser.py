@@ -3,6 +3,16 @@ Parser for 'get_static_acl_ios_fna' API.
 
 Parses Cisco IOS ``show running-config`` output for interface ACL bindings
 (ip access-group rules).  Also supports a CSV fallback format.
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class AclData(ParsedData):
+    interface_name: str                      # e.g. "GigabitEthernet1/0/1"
+    acl_number: str | None = None            # ACL number/name, None if no ACL bound
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: show running-config | include interface|access-group|!
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 

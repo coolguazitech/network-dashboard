@@ -52,8 +52,6 @@ endpoints:
   get_error_count:      ""                        # TODO: e.g. /switch/network/get_error_count/{ip}
   get_static_acl:       ""                        # TODO: e.g. /switch/network/get_static_acl/{ip}
   get_dynamic_acl:      ""                        # TODO: e.g. /switch/network/get_dynamic_acl/{ip}
-  get_arp_table:        ""                        # TODO: e.g. /switch/network/get_arp_table/{ip}
-
   # DNA（每個 device_type 的最後一段指令不同，用字典格式分開填）
   get_mac_table:                                  # TODO: 填入每個 device_type 的 endpoint
     hpe:  ""                                      # e.g. /api/v1/hpe/mac-table/display_mac_table
@@ -128,11 +126,6 @@ apis:
     source: FNA
     parser_command: "get_dynamic_acl_{device_type}_fna"
     description: "Dynamic ACL 綁定"
-
-  - name: get_arp_table
-    source: FNA
-    parser_command: "get_arp_table_{device_type}_fna"
-    description: "ARP 表"
 
   # ── DNA APIs（需要 device_type）──
   - name: get_mac_table

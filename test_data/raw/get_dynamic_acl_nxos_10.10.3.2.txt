@@ -1,0 +1,2 @@
+Interface         MAC Address        ACL         Status
+Eth1/1            aabb.ccdd.0003     102         Authorized

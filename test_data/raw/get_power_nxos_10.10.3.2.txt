@@ -1,0 +1,7 @@
+Power Supply:
+Voltage: 12 Volts
+Power                              Actual        Total
+Supply    Model                    Output     Capacity    Status
+-------  -------------------  -----------  -----------  ----------
+1        NXA-PAC-1100W-PE          186 W      1100 W     Ok
+2        NXA-PAC-1100W-PE            0 W      1100 W     Absent

@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_async_session
-from app.api.endpoints.auth import get_current_user
+from app.api.endpoints.auth import get_current_user, require_write
 from app.services.system_log import write_log
 from app.services.threshold_service import (
     load_thresholds,
@@ -38,7 +38,6 @@ class ThresholdUpdateRequest(BaseModel):
     transceiver_temperature_max: float | None = None
     transceiver_voltage_min: float | None = None
     transceiver_voltage_max: float | None = None
-    error_count_same_device_max: int | None = None
 
 
 @router.get("/{maintenance_id}")
@@ -59,7 +58,7 @@ async def get_thresholds(
 async def put_thresholds(
     maintenance_id: str,
     body: ThresholdUpdateRequest,
-    _: Annotated[dict[str, Any], Depends(get_current_user)],
+    _: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
@@ -110,7 +109,7 @@ async def put_thresholds(
 @router.post("/{maintenance_id}/reset")
 async def post_reset_thresholds(
     maintenance_id: str,
-    _: Annotated[dict[str, Any], Depends(get_current_user)],
+    _: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """清除指定歲修的所有覆寫，恢復 .env 預設值。"""

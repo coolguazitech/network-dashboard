@@ -142,12 +142,13 @@
     </div>
 
     <!-- 新增/編輯使用者 Modal -->
+    <Transition name="modal">
     <div
       v-if="showUserModal"
-      class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       @click.self="showUserModal = false"
     >
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-2xl w-full max-w-md p-5">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-md p-5">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-bold text-white">{{ editingUser ? '編輯使用者' : '新增使用者' }}</h3>
           <button @click="showUserModal = false" class="text-slate-400 hover:text-slate-200">
@@ -186,7 +187,21 @@
 
           <!-- 顯示名稱 -->
           <div class="mb-4">
-            <label class="block text-sm text-slate-400 mb-1">顯示名稱</label>
+            <div class="flex items-center gap-1.5 mb-1">
+              <label class="text-sm text-slate-400">顯示名稱 <span class="text-red-400">*</span></label>
+              <div class="relative group/dn">
+                <svg class="w-3.5 h-3.5 text-slate-500 group-hover/dn:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div class="absolute left-0 bottom-full mb-2 w-64 px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-xs text-amber-900 leading-relaxed opacity-0 invisible group-hover/dn:opacity-100 group-hover/dn:visible transition-all duration-200 z-50 pointer-events-none"
+                  style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
+                >
+                  此名稱將作為使用者在系統中的識別名稱，用於案件指派與操作記錄。名稱不可與其他使用者重複。
+                  <div class="absolute left-3 top-full w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-transparent border-t-amber-300"></div>
+                  <div class="absolute left-3 top-full -mt-px w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-transparent border-t-amber-50"></div>
+                </div>
+              </div>
+            </div>
             <input
               v-model="userForm.display_name"
               type="text"
@@ -273,14 +288,16 @@
         </form>
       </div>
     </div>
+    </Transition>
 
     <!-- 重設密碼 Modal -->
+    <Transition name="modal">
     <div
       v-if="showResetPasswordModal"
-      class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       @click.self="showResetPasswordModal = false"
     >
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-2xl w-full max-w-sm p-5">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-sm p-5">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-bold text-white">重設密碼 - {{ resetPasswordTarget?.username }}</h3>
           <button @click="showResetPasswordModal = false" class="text-slate-400 hover:text-slate-200">
@@ -318,13 +335,15 @@
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 刪除確認 Modal -->
+    <Transition name="modal">
     <div
       v-if="showDeleteModal"
-      class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
     >
-      <div class="bg-slate-800 border border-red-700 rounded-lg shadow-2xl w-full max-w-sm p-5">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-red-700/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-sm p-5">
         <h3 class="text-lg font-bold text-red-400 mb-4">確認刪除</h3>
         <p class="text-slate-300 mb-4">
           確定要刪除使用者「<span class="text-red-300 font-medium">{{ deleteTarget?.username }}</span>」嗎？
@@ -347,12 +366,12 @@
         </div>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { getAuthHeaders } from '@/utils/auth'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
@@ -435,12 +454,8 @@ const getRoleBadgeClass = (role) => {
 const loadUsers = async () => {
   loading.value = true
   try {
-    const res = await fetch('/api/v1/users?include_inactive=true', {
-      headers: getAuthHeaders(),
-    })
-    if (res.ok) {
-      users.value = await res.json()
-    }
+    const { data } = await api.get('/users', { params: { include_inactive: true } })
+    users.value = data
   } catch (e) {
     console.error('載入使用者失敗:', e)
   } finally {
@@ -459,12 +474,8 @@ const loadMaintenances = async () => {
 
 const loadAvailableRoles = async () => {
   try {
-    const res = await fetch('/api/v1/users/roles/available', {
-      headers: getAuthHeaders(),
-    })
-    if (res.ok) {
-      availableRoles.value = await res.json()
-    }
+    const { data } = await api.get('/users/roles/available')
+    availableRoles.value = data
   } catch (e) {
     console.error('載入角色列表失敗:', e)
   }
@@ -512,44 +523,23 @@ const saveUser = async () => {
       if (editingUser.value.role !== 'root') {
         payload.is_active = userForm.value.is_active
       }
-      const res = await fetch(`/api/v1/users/${editingUser.value.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        alert(`更新失敗: ${err.detail || '未知錯誤'}`)
-        return
-      }
+      await api.put(`/users/${editingUser.value.id}`, payload)
     } else {
       // 新增
-      const res = await fetch('/api/v1/users', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify({
-          username: userForm.value.username,
-          password: userForm.value.password,
-          display_name: userForm.value.display_name || null,
-          email: userForm.value.email || null,
-          role: userForm.value.role,
-          maintenance_id: userForm.value.role === 'root' ? null : userForm.value.maintenance_id,
-        }),
+      await api.post('/users', {
+        username: userForm.value.username,
+        password: userForm.value.password,
+        display_name: userForm.value.display_name || null,
+        email: userForm.value.email || null,
+        role: userForm.value.role,
+        maintenance_id: userForm.value.role === 'root' ? null : userForm.value.maintenance_id,
       })
-      if (!res.ok) {
-        const err = await res.json()
-        alert(`新增失敗: ${err.detail || '未知錯誤'}`)
-        return
-      }
     }
     showUserModal.value = false
     await loadUsers()
+  } catch (e) {
+    const action = editingUser.value ? '更新' : '新增'
+    alert(`${action}失敗: ${e.response?.data?.detail || '未知錯誤'}`)
   } finally {
     saving.value = false
   }
@@ -558,16 +548,10 @@ const saveUser = async () => {
 const activateUser = async (user) => {
   saving.value = true
   try {
-    const res = await fetch(`/api/v1/users/${user.id}/activate`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-    })
-    if (!res.ok) {
-      const err = await res.json()
-      alert(`啟用失敗: ${err.detail || '未知錯誤'}`)
-      return
-    }
+    await api.post(`/users/${user.id}/activate`)
     await loadUsers()
+  } catch (e) {
+    alert(`啟用失敗: ${e.response?.data?.detail || '未知錯誤'}`)
   } finally {
     saving.value = false
   }
@@ -583,21 +567,13 @@ const resetPassword = async () => {
   if (!resetPasswordTarget.value || !newPassword.value) return
   saving.value = true
   try {
-    const res = await fetch(`/api/v1/users/${resetPasswordTarget.value.id}/reset-password`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeaders(),
-      },
-      body: JSON.stringify({ new_password: newPassword.value }),
+    await api.post(`/users/${resetPasswordTarget.value.id}/reset-password`, {
+      new_password: newPassword.value,
     })
-    if (!res.ok) {
-      const err = await res.json()
-      alert(`重設失敗: ${err.detail || '未知錯誤'}`)
-      return
-    }
     showResetPasswordModal.value = false
     alert('密碼已重設')
+  } catch (e) {
+    alert(`重設失敗: ${e.response?.data?.detail || '未知錯誤'}`)
   } finally {
     saving.value = false
   }
@@ -612,17 +588,11 @@ const deleteUser = async () => {
   if (!deleteTarget.value) return
   saving.value = true
   try {
-    const res = await fetch(`/api/v1/users/${deleteTarget.value.id}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    })
-    if (!res.ok) {
-      const err = await res.json()
-      alert(`刪除失敗: ${err.detail || '未知錯誤'}`)
-      return
-    }
+    await api.delete(`/users/${deleteTarget.value.id}`)
     showDeleteModal.value = false
     await loadUsers()
+  } catch (e) {
+    alert(`刪除失敗: ${e.response?.data?.detail || '未知錯誤'}`)
   } finally {
     saving.value = false
   }

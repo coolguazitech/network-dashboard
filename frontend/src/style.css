@@ -2,85 +2,540 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 自定義樣式 */
-body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+/* ═══════════════════════════════════════════════════════════
+   NETORA — Futuristic Dark Theme v2
+   漸層 / 光暈 / 微動畫 / 玻璃擬態
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── CSS 變數 ─────────────────────────────────────── */
+:root {
+  --glow-cyan: rgba(0, 210, 255, 0.15);
+  --glow-purple: rgba(139, 92, 246, 0.12);
+  --glow-mix: rgba(56, 189, 248, 0.08);
+  --gradient-main: linear-gradient(135deg, rgba(0, 210, 255, 0.07) 0%, rgba(139, 92, 246, 0.05) 100%);
+  --gradient-border: linear-gradient(135deg, rgba(0, 210, 255, 0.3), rgba(139, 92, 246, 0.2));
 }
 
-/* 卡片樣式 */
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  @apply bg-slate-950 text-slate-200;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 210, 255, 0.03) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 40% at 80% 100%, rgba(139, 92, 246, 0.02) 0%, transparent 50%);
+}
+
+/* ── 入場動畫 ─────────────────────────────────────── */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes count-up {
+  from { opacity: 0; transform: scale(0.8); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out both;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out both;
+}
+
+/* ── 卡片（玻璃擬態） ─────────────────────────────── */
 .card {
-  @apply bg-white rounded-lg shadow p-6;
+  @apply relative bg-slate-800/60 backdrop-blur-md rounded-xl p-5 overflow-hidden;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(0, 210, 255, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.card::before {
+  content: '';
+  @apply absolute inset-0 pointer-events-none;
+  background: var(--gradient-main);
+}
+
+.card:hover {
+  border-color: rgba(0, 210, 255, 0.15);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.25),
+    0 0 20px rgba(0, 210, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .card-title {
-  @apply text-lg font-semibold text-gray-900 mb-4;
+  @apply relative text-lg font-semibold text-white mb-4;
 }
 
-/* 狀態標籤 */
+/* ── 狀態標籤 ──────────────────────────────────────── */
 .badge {
-  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+         transition-all duration-200;
 }
 
 .badge-success {
-  @apply bg-green-100 text-green-800;
+  @apply bg-emerald-500/15 text-emerald-300 border border-emerald-500/30;
+  text-shadow: 0 0 12px rgba(52, 211, 153, 0.3);
 }
 
 .badge-warning {
-  @apply bg-yellow-100 text-yellow-800;
+  @apply bg-amber-500/15 text-amber-300 border border-amber-500/30;
+  text-shadow: 0 0 12px rgba(251, 191, 36, 0.3);
 }
 
 .badge-danger {
-  @apply bg-red-100 text-red-800;
+  @apply bg-red-500/15 text-red-300 border border-red-500/30;
+  text-shadow: 0 0 12px rgba(248, 113, 113, 0.3);
 }
 
-/* 表格樣式 */
+/* ── 表格 ──────────────────────────────────────────── */
 .data-table {
-  @apply min-w-full divide-y divide-gray-200;
+  @apply min-w-full divide-y divide-slate-700/40;
 }
 
 .data-table th {
-  @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50;
+  @apply px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.8) 0%, rgba(15, 23, 42, 0.6) 100%);
 }
 
 .data-table td {
-  @apply px-6 py-4 whitespace-nowrap text-sm text-gray-900;
+  @apply px-4 py-3 whitespace-nowrap text-sm text-slate-200;
+}
+
+.data-table tbody tr {
+  @apply border-b border-slate-700/25 transition-all duration-200;
 }
 
 .data-table tbody tr:hover {
-  @apply bg-gray-50;
+  @apply bg-cyan-500/5;
+  box-shadow: inset 3px 0 0 rgba(0, 210, 255, 0.4);
 }
 
-/* 按鈕樣式 */
+/* ── 按鈕 ──────────────────────────────────────────── */
 .btn {
-  @apply inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2;
+  @apply inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium
+         rounded-lg transition-all duration-200
+         focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900;
 }
 
 .btn-primary {
-  @apply text-white bg-blue-600 hover:bg-blue-700 focus:ring-blue-500;
+  @apply text-white border-cyan-500/30;
+  background: linear-gradient(135deg, #0891b2 0%, #06b6d4 50%, #0e7490 100%);
+  box-shadow: 0 2px 12px rgba(0, 210, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, #06b6d4 0%, #22d3ee 50%, #0891b2 100%);
+  box-shadow: 0 4px 20px rgba(0, 210, 255, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 8px rgba(0, 210, 255, 0.2);
 }
 
 .btn-secondary {
-  @apply text-gray-700 bg-white border-gray-300 hover:bg-gray-50 focus:ring-blue-500;
+  @apply text-slate-300 bg-slate-700/60 border-slate-600/50
+         hover:bg-slate-600/60 hover:text-white
+         focus:ring-cyan-500;
 }
 
-/* 統計卡片 */
+.btn-secondary:hover {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+}
+
+/* ── 統計卡片 ──────────────────────────────────────── */
 .stat-card {
-  @apply bg-white overflow-hidden shadow rounded-lg;
+  @apply relative backdrop-blur-md overflow-hidden rounded-xl;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+}
+
+.stat-card::before {
+  content: '';
+  @apply absolute inset-0 pointer-events-none;
+  background: var(--gradient-main);
+}
+
+.stat-card:hover {
+  border-color: rgba(0, 210, 255, 0.2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), 0 0 20px var(--glow-mix);
+  transform: translateY(-2px);
 }
 
 .stat-card-body {
-  @apply px-4 py-5 sm:p-6;
+  @apply relative px-4 py-5 sm:p-6;
 }
 
 .stat-value {
-  @apply mt-1 text-3xl font-semibold text-gray-900;
+  @apply mt-1 text-3xl font-bold text-white tabular-nums;
+  animation: count-up 0.5s ease-out;
 }
 
 .stat-label {
-  @apply text-sm font-medium text-gray-500 truncate;
+  @apply text-sm font-medium text-slate-400 truncate;
 }
 
-/* 圖表容器 */
+/* ── 圖表容器 ──────────────────────────────────────── */
 .chart-container {
   @apply w-full h-80;
+}
+
+/* ── Neon 光暈效果 ─────────────────────────────────── */
+.neon-border {
+  border: 1px solid rgba(0, 210, 255, 0.25);
+  box-shadow:
+    0 0 12px rgba(0, 210, 255, 0.1),
+    0 0 40px rgba(0, 210, 255, 0.03),
+    inset 0 0 12px rgba(0, 210, 255, 0.03);
+}
+
+.neon-text {
+  text-shadow: 0 0 10px rgba(0, 210, 255, 0.5), 0 0 30px rgba(0, 210, 255, 0.15);
+}
+
+/* ── 全息卡片 ──────────────────────────────────────── */
+.holo-card {
+  @apply relative bg-slate-800/50 backdrop-blur-md rounded-xl overflow-hidden;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.holo-card::before {
+  content: '';
+  @apply absolute inset-0 pointer-events-none;
+  background: linear-gradient(
+    135deg,
+    rgba(0, 210, 255, 0.06) 0%,
+    transparent 35%,
+    transparent 65%,
+    rgba(139, 92, 246, 0.05) 100%
+  );
+}
+
+/* ── 掃描線動畫 ─────────────────────────────────────── */
+@keyframes scan-line {
+  0% { transform: translateY(-100%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+.scan-effect {
+  @apply relative overflow-hidden;
+}
+
+.scan-effect::after {
+  content: '';
+  @apply absolute inset-x-0 h-px pointer-events-none;
+  background: linear-gradient(90deg, transparent, rgba(0, 210, 255, 0.4), transparent);
+  animation: scan-line 3s ease-in-out infinite;
+}
+
+/* ── 脈動邊框 ──────────────────────────────────────── */
+@keyframes pulse-border {
+  0%, 100% { border-color: rgba(0, 210, 255, 0.15); box-shadow: 0 0 8px rgba(0, 210, 255, 0.05); }
+  50% { border-color: rgba(0, 210, 255, 0.4); box-shadow: 0 0 16px rgba(0, 210, 255, 0.1); }
+}
+
+.pulse-border {
+  animation: pulse-border 2.5s ease-in-out infinite;
+}
+
+/* ── 表單控件 ──────────────────────────────────────── */
+.form-input {
+  @apply w-full px-3 py-2 bg-slate-900/70 rounded-lg
+         text-sm text-slate-200 placeholder-slate-500
+         focus:outline-none transition-all duration-200;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+.form-input:focus {
+  border-color: rgba(0, 210, 255, 0.4);
+  box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.08), 0 0 12px rgba(0, 210, 255, 0.06);
+}
+
+.form-select {
+  @apply w-full px-3 py-2 bg-slate-900/70 rounded-lg
+         text-sm text-slate-200
+         focus:outline-none transition-all duration-200;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+.form-select:focus {
+  border-color: rgba(0, 210, 255, 0.4);
+  box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.08), 0 0 12px rgba(0, 210, 255, 0.06);
+}
+
+.form-label {
+  @apply block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5;
+}
+
+/* ── 漸層邊框裝飾 ──────────────────────────────────── */
+.gradient-border-l {
+  position: relative;
+}
+
+.gradient-border-l::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #06b6d4, #8b5cf6);
+}
+
+/* ── 載入骨架 ──────────────────────────────────────── */
+.skeleton {
+  @apply rounded-lg;
+  background: linear-gradient(
+    90deg,
+    rgba(51, 65, 85, 0.3) 25%,
+    rgba(71, 85, 105, 0.4) 50%,
+    rgba(51, 65, 85, 0.3) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ── 光暈按鈕 ──────────────────────────────────────── */
+.glow-btn {
+  @apply relative overflow-hidden;
+  transition: all 0.3s ease;
+}
+
+.glow-btn:hover {
+  box-shadow: 0 0 20px rgba(0, 210, 255, 0.15);
+}
+
+.glow-btn::after {
+  content: '';
+  @apply absolute inset-0 pointer-events-none rounded-lg;
+  background: linear-gradient(135deg, rgba(0, 210, 255, 0.1) 0%, transparent 50%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.glow-btn:hover::after {
+  opacity: 1;
+}
+
+/* ── 滾動條 ──────────────────────────────────────── */
+::-webkit-scrollbar {
+  @apply w-1.5;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply rounded-full;
+  background: linear-gradient(180deg, rgba(100, 116, 139, 0.4), rgba(71, 85, 105, 0.3));
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(100, 116, 139, 0.6), rgba(71, 85, 105, 0.5));
+}
+
+/* ── 選取高亮 ──────────────────────────────────────── */
+::selection {
+  @apply bg-cyan-500/30 text-white;
+}
+
+/* ── 通用互動效果 ──────────────────────────────────── */
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.hover-glow {
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.hover-glow:hover {
+  box-shadow: 0 0 20px var(--glow-mix);
+  border-color: rgba(0, 210, 255, 0.2);
+}
+
+/* ── Modal 過渡動畫 ─────────────────────────────────── */
+.modal-enter-active {
+  transition: opacity 0.25s ease-out;
+}
+.modal-enter-active .modal-content {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease-out;
+}
+.modal-leave-active {
+  transition: opacity 0.2s ease-in;
+}
+.modal-leave-active .modal-content {
+  transition: transform 0.2s ease-in, opacity 0.2s ease-in;
+}
+
+.modal-enter-from {
+  opacity: 0;
+}
+.modal-enter-from .modal-content {
+  opacity: 0;
+  transform: scale(0.9) translateY(10px);
+}
+.modal-leave-to {
+  opacity: 0;
+}
+.modal-leave-to .modal-content {
+  opacity: 0;
+  transform: scale(0.95) translateY(5px);
+}
+
+/* ── 交錯入場動畫 ─────────────────────────────────── */
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.card-stagger {
+  animation: card-enter 0.4s ease-out backwards;
+}
+
+/* ── 進度條展開動畫 ─────────────────────────────────── */
+@keyframes bar-grow {
+  from { width: 0%; }
+}
+
+.bar-animate {
+  animation: bar-grow 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── 表格行交錯入場 ─────────────────────────────────── */
+@keyframes row-enter {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.row-stagger {
+  animation: row-enter 0.3s ease-out both;
+}
+
+/* ── 下拉選單動畫 ─────────────────────────────────── */
+.dropdown-enter-active {
+  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+}
+.dropdown-leave-active {
+  transition: opacity 0.1s ease-in, transform 0.1s ease-in;
+}
+.dropdown-enter-from,
+.dropdown-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.95);
+}
+
+/* ── 頁面路由切換動畫 ─────────────────────────────────── */
+.page-enter-active {
+  transition: opacity 0.25s ease-out, transform 0.25s ease-out;
+}
+.page-leave-active {
+  transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* ── 錯誤訊息搖晃動畫 ─────────────────────────────────── */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-6px); }
+  30% { transform: translateX(5px); }
+  45% { transform: translateX(-4px); }
+  60% { transform: translateX(3px); }
+  75% { transform: translateX(-2px); }
+}
+
+.shake {
+  animation: shake 0.4s ease-out;
+}
+
+/* ── Login 表單欄位交錯入場 ─────────────────────────────── */
+@keyframes field-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.field-stagger {
+  animation: field-enter 0.35s ease-out backwards;
+}
+
+/* ── 待送達脈衝動畫 ─────────────────────────────────── */
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.pulse-pending {
+  animation: pulse-ring 1.5s ease-out infinite;
+}
+
+/* ── 時間線點彈入動畫 ─────────────────────────────────── */
+@keyframes dot-pop {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.dot-stagger {
+  animation: dot-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+}
+
+/* ── 成功訊息滑入動畫 ─────────────────────────────────── */
+.slide-down-enter-active {
+  transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+}
+.slide-down-leave-active {
+  transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+}
+.slide-down-enter-from {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+.slide-down-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* ── Ping 燈號光暈 ─────────────────────────────────── */
+.ping-glow-green {
+  box-shadow: 0 0 4px 1px rgba(0, 230, 118, 0.6), 0 0 8px 2px rgba(0, 230, 118, 0.3);
+}
+.ping-dot-green {
+  background-color: #00e676;
+}
+.ping-glow-red {
+  box-shadow: 0 0 4px 1px rgba(255, 23, 68, 0.6), 0 0 8px 2px rgba(255, 23, 68, 0.3);
+}
+.ping-dot-red {
+  background-color: #ff1744;
 }

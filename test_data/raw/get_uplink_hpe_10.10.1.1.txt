@@ -1,0 +1,20 @@
+LLDP neighbor-information of port 25[GigabitEthernet1/0/25]:
+  Neighbor index                   : 1
+  Update time                      : 0 days, 0 hours, 1 minutes, 30 seconds
+  Chassis type                     : MAC address
+  Chassis ID                       : 000c-29aa-bb01
+  Port ID type                     : Interface name
+  Port ID                          : HundredGigE1/0/1
+  Port description                 : uplink
+  System name                      : CORE-SW-01
+  System description               : HPE Comware Platform Software,
+  Software Version 7.1.070, Release 6635P07
+  System capabilities supported    : Bridge, Router
+  System capabilities enabled      : Bridge, Router
+
+LLDP neighbor-information of port 26[GigabitEthernet1/0/26]:
+  Neighbor index                   : 1
+  Chassis ID                       : 000c-29aa-bb02
+  Port ID                          : HundredGigE1/0/2
+  System name                      : CORE-SW-02
+  System description               : HPE Comware Platform Software

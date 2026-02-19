@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import LinkStatus
-from app.db.models import PortChannelExpectation, PortChannelRecord
+from app.db.models import PortChannelRecord, PortChannelExpectation
 from app.indicators.base import (
     BaseIndicator,
     DisplayConfig,
@@ -172,7 +172,7 @@ class PortChannelIndicator(BaseIndicator):
         if actual is None:
             return self._failure(hostname, pc_name, "Port-Channel 不存在")
 
-        if actual.status.lower() != LinkStatus.UP.value:
+        if not actual.status or actual.status.lower() != LinkStatus.UP.value:
             return self._failure(
                 hostname, pc_name,
                 f"Port-Channel 狀態異常: {actual.status}",
@@ -229,9 +229,9 @@ class PortChannelIndicator(BaseIndicator):
         if actual.member_status is None:
             return []
         return [
-            f"{m}({status})"
+            f"{m}({status or 'unknown'})"
             for m, status in actual.member_status.items()
-            if status.lower() != LinkStatus.UP.value
+            if not status or status.lower() != LinkStatus.UP.value
         ]
 
     @staticmethod
@@ -327,7 +327,7 @@ class PortChannelIndicator(BaseIndicator):
             if ts not in ts_groups:
                 ts_groups[ts] = {"up": 0, "total": 0}
             ts_groups[ts]["total"] += 1
-            if record.status.lower() == LinkStatus.UP.value:
+            if record.status and record.status.lower() == LinkStatus.UP.value:
                 ts_groups[ts]["up"] += 1
 
         return [

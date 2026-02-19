@@ -5,6 +5,7 @@ Authentication Service.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -17,7 +18,9 @@ from app.core.enums import UserRole
 from app.core.timezone import now_utc
 from app.db.base import get_session_context
 from app.db.models import User
+from app.services.system_log import write_log
 
+logger = logging.getLogger(__name__)
 
 # JWT 設定（從 settings 讀取）
 JWT_ALGORITHM = "HS256"
@@ -94,13 +97,31 @@ class AuthService:
             user = result.scalar_one_or_none()
 
             if not user:
+                logger.warning("登入失敗: 帳號不存在 username=%s", username)
+                await write_log(
+                    level="WARNING", source="auth",
+                    summary=f"登入失敗: 帳號不存在 ({username})",
+                    module="auth",
+                )
                 return None, None, "帳號或密碼錯誤"
 
             if not AuthService.verify_password(password, user.password_hash):
+                logger.warning("登入失敗: 密碼錯誤 username=%s", username)
+                await write_log(
+                    level="WARNING", source="auth",
+                    summary=f"登入失敗: 密碼錯誤 ({username})",
+                    module="auth",
+                )
                 return None, None, "帳號或密碼錯誤"
 
             # 檢查帳號是否啟用
             if not user.is_active:
+                logger.warning("登入失敗: 帳號未啟用 username=%s", username)
+                await write_log(
+                    level="WARNING", source="auth",
+                    summary=f"登入失敗: 帳號未啟用 ({username})",
+                    module="auth",
+                )
                 return None, None, "帳號尚未啟用，請聯繫管理員"
 
             # 更新最後登入時間
@@ -109,6 +130,16 @@ class AuthService:
 
             # 建立 token
             token = AuthService.create_token(user)
+
+            logger.info(
+                "登入成功: username=%s role=%s",
+                username, user.role.value,
+            )
+            await write_log(
+                level="INFO", source="auth",
+                summary=f"使用者登入: {user.display_name or username} ({user.role.value})",
+                module="auth",
+            )
 
             return user, token, None
 
@@ -156,10 +187,17 @@ class AuthService:
                 return False
 
             if not AuthService.verify_password(old_password, user.password_hash):
+                logger.warning("變更密碼失敗: 舊密碼錯誤 user_id=%d", user_id)
                 return False
 
             user.password_hash = AuthService.hash_password(new_password)
             await session.commit()
+            logger.info("密碼已變更 user_id=%d username=%s", user_id, user.username)
+            await write_log(
+                level="INFO", source="auth",
+                summary=f"密碼已變更: {user.display_name or user.username}",
+                module="auth",
+            )
             return True
 
     @staticmethod
@@ -179,9 +217,11 @@ class AuthService:
             existing = result.scalar_one_or_none()
 
             if existing:
+                logger.info("Root 帳號已存在，跳過建立")
                 return existing
 
             # 建立 root
+            logger.info("建立預設 Root 帳號 username=%s", username)
             root = User(
                 username=username,
                 password_hash=AuthService.hash_password(password),
@@ -193,6 +233,11 @@ class AuthService:
             session.add(root)
             await session.commit()
             await session.refresh(root)
+            await write_log(
+                level="INFO", source="system",
+                summary="Root 帳號已建立",
+                module="auth",
+            )
             return root
 
     @staticmethod
@@ -216,7 +261,15 @@ class AuthService:
             existing = result.scalar_one_or_none()
 
             if existing:
+                logger.warning("Guest 註冊失敗: 使用者名稱已存在 username=%s", username)
                 return None, "使用者名稱已存在"
+
+            # 檢查顯示名稱是否重複
+            effective_display_name = (display_name or "").strip() or username
+            stmt = select(User).where(User.display_name == effective_display_name)
+            result = await session.execute(stmt)
+            if result.scalar_one_or_none():
+                return None, f"顯示名稱「{effective_display_name}」已被使用"
 
             # 檢查歲修 ID 是否存在
             from app.db.models import MaintenanceConfig
@@ -233,7 +286,7 @@ class AuthService:
             guest = User(
                 username=username,
                 password_hash=AuthService.hash_password(password),
-                display_name=display_name or username,
+                display_name=effective_display_name,
                 email=email,
                 role=UserRole.GUEST,
                 maintenance_id=maintenance_id,
@@ -242,4 +295,14 @@ class AuthService:
             session.add(guest)
             await session.commit()
             await session.refresh(guest)
+            logger.info(
+                "Guest 註冊成功: username=%s maintenance_id=%s",
+                username, maintenance_id,
+            )
+            await write_log(
+                level="INFO", source="auth",
+                summary=f"Guest 註冊: {effective_display_name} ({maintenance_id})",
+                module="auth",
+                maintenance_id=maintenance_id,
+            )
             return guest, None

@@ -6,6 +6,22 @@ power supply status, capacity, and actual output wattage.
 
 Real CLI command: show environment power
 Platforms: Nexus 9000, 7000, 5000 series
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class PowerData(ParsedData):
+    ps_id: str                               # e.g. "PS1", "Power Supply 1"
+    status: str                              # auto-normalized → OperationalStatus
+    input_status: str | None = None          # optional
+    output_status: str | None = None         # optional
+    capacity_watts: float | None = None      # optional, >= 0
+    actual_output_watts: float | None = None # optional, >= 0
+
+Valid status values: ok, good, normal, online, active, fail, absent, unknown
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: show environment power
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 

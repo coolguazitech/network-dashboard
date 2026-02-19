@@ -1,0 +1,6 @@
+LLDP neighbor-information of port 25[GigabitEthernet1/0/25]:
+  Neighbor index                   : 1
+  Chassis ID                       : 000c-29aa-cc01
+  Port ID                          : HundredGigE2/0/1
+  System name                      : DIST-SW-01
+  System description               : HPE Comware Platform Software

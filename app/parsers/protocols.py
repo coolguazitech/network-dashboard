@@ -31,8 +31,7 @@ ParsedData 子類別一覽：
     PortChannelData      - Port-Channel/LAG 資訊（成員、狀態、協議）
     PowerData            - 電源供應器狀態
     MacTableData         - MAC 位址表
-    ArpData              - ARP 表（IP ↔ MAC）
-    AclData              - ACL 編號
+AclData              - ACL 編號
     PingResultData       - 單一 IP Ping 結果
 """
 from __future__ import annotations
@@ -131,19 +130,29 @@ class TransceiverChannelData(BaseModel):
 
 
 class TransceiverData(ParsedData):
-    """光模組診斷 — 支援 SFP (1 channel) 和 QSFP (4 channels)。"""
+    """光模組診斷 — 扁平結構，每個介面/通道一筆。
+
+    對應 production transceiver_records 表結構。
+    多通道 QSFP 模組由 parser 拆成多筆 TransceiverData。
+    """
 
     interface_name: str
+    tx_power: float | None = Field(None, description="發射功率 (dBm)")
+    rx_power: float | None = Field(None, description="接收功率 (dBm)")
     temperature: float | None = Field(None, ge=-10.0, le=100.0, description="模組溫度 (°C)")
     voltage: float | None = Field(None, ge=0.0, le=10.0, description="模組電壓 (V)")
-    channels: list[TransceiverChannelData] = Field(description="各通道診斷資料")
 
 
 class InterfaceErrorData(ParsedData):
-    """介面 CRC 錯誤計數 — parser 負責從原始輸出中僅提取 CRC errors。"""
+    """介面錯誤計數 — 對應 production interface_error_records 表結構。"""
 
     interface_name: str
-    crc_errors: int = Field(0, ge=0, description="純 CRC 錯誤數（不含 giants/runts 等）")
+    crc_errors: int = Field(0, ge=0)
+    input_errors: int = Field(0, ge=0)
+    output_errors: int = Field(0, ge=0)
+    collisions: int = Field(0, ge=0)
+    giants: int = Field(0, ge=0)
+    runts: int = Field(0, ge=0)
 
 
 class FanStatusData(ParsedData):
@@ -251,22 +260,6 @@ class MacTableData(ParsedData):
         return _normalize_mac(v)
 
 
-class ArpData(ParsedData):
-    """Fetcher get_arp_table 的解析結果。"""
-
-    ip_address: str
-    mac_address: str
-
-    @field_validator("ip_address", mode="before")
-    @classmethod
-    def validate_ip(cls, v: str) -> str:
-        return _validate_ipv4(v)
-
-    @field_validator("mac_address", mode="before")
-    @classmethod
-    def normalize_mac(cls, v: str) -> str:
-        return _normalize_mac(v)
-
 
 class InterfaceStatusData(ParsedData):
     """Fetcher get_interface_status 的解析結果。"""
@@ -304,12 +297,14 @@ class AclData(ParsedData):
 class PingResultData(ParsedData):
     """單一 IP 的 Ping 結果。parse() 回傳 list[PingResultData] 代表多個 IP。"""
 
-    ip_address: str
+    target: str
     is_reachable: bool
+    success_rate: float = 0.0
+    avg_rtt_ms: float | None = None
 
-    @field_validator("ip_address", mode="before")
+    @field_validator("target", mode="before")
     @classmethod
-    def validate_ip(cls, v: str) -> str:
+    def validate_target(cls, v: str) -> str:
         return _validate_ipv4(v)
 
 

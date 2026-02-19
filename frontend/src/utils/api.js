@@ -42,6 +42,28 @@ api.interceptors.response.use(
 export default api
 
 /**
+ * 透過 axios（含 auth token）下載檔案並觸發瀏覽器存檔。
+ * 取代 window.open() 以避免認證繞過。
+ *
+ * @param {string} path - API 路徑 (相對於 /api/v1)
+ * @param {string} filename - 下載的檔名
+ * @param {string} [mimeType='text/csv;charset=utf-8;'] - MIME type
+ */
+export async function downloadFile(path, filename, mimeType = 'text/csv;charset=utf-8;') {
+  const response = await api.get(path, { responseType: 'blob' })
+  const blob = new Blob([response.data], { type: mimeType })
+  const link = document.createElement('a')
+  const url = URL.createObjectURL(blob)
+  link.setAttribute('href', url)
+  link.setAttribute('download', filename)
+  link.style.visibility = 'hidden'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+/**
  * API 錯誤類別
  */
 export const ErrorType = {

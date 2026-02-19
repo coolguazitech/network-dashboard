@@ -14,7 +14,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_async_session
-from app.api.endpoints.auth import require_root, get_current_user, check_maintenance_access
+from app.api.endpoints.auth import require_root, require_write, get_current_user, check_maintenance_access
 from app.core.enums import UserRole
 from typing import Annotated
 from sqlalchemy import text
@@ -27,21 +27,23 @@ from app.db.models import (
     # Expectations
     UplinkExpectation,
     VersionExpectation,
-    ArpSource,
     PortChannelExpectation,
     # Collection
     CollectionBatch,
     CollectionError,
     IndicatorResult,
-    # Typed Records
+    # Typed Records (named after production DB tables)
     TransceiverRecord,
-    VersionRecord,
-    FanRecord,
-    PowerRecord,
     PortChannelRecord,
-    PingRecord,
     NeighborRecord,
     InterfaceErrorRecord,
+    InterfaceStatusRecord,
+    StaticAclRecord,
+    DynamicAclRecord,
+    MacTableRecord,
+    FanRecord,
+    PowerRecord,
+    VersionRecord,
     # Client
     ClientRecord,
     ClientComparison,
@@ -54,6 +56,9 @@ from app.db.models import (
     # Contacts (通訊錄)
     Contact,
     ContactCategory,
+    # Cases (案件)
+    Case,
+    CaseNote,
     # Meals (餐點)
     MealZone,
 )
@@ -74,6 +79,9 @@ class MaintenanceResponse(BaseModel):
     name: str | None
     is_active: bool
     created_at: datetime
+    active_seconds: float = 0.0
+    max_seconds: float = 0.0
+    remaining_seconds: float = 0.0
 
 
 class CheckpointCreate(BaseModel):
@@ -149,15 +157,30 @@ async def list_maintenances(
     result = await session.execute(stmt)
     configs = result.scalars().all()
 
-    return [
-        {
+    from app.services.maintenance_time import _compute
+    from app.core.config import settings
+
+    max_seconds = settings.max_collection_days * 86400
+
+    items = []
+    for c in configs:
+        active = _compute(
+            is_active=c.is_active,
+            accumulated=c.active_seconds_accumulated,
+            last_activated_at=c.last_activated_at,
+        )
+        remaining = max(0.0, max_seconds - active)
+        items.append({
             "id": c.maintenance_id,
             "name": c.name,
             "is_active": c.is_active,
             "created_at": c.created_at,
-        }
-        for c in configs
-    ]
+            "active_seconds": round(active, 1),
+            "max_seconds": float(max_seconds),
+            "remaining_seconds": round(remaining, 1),
+        })
+
+    return items
 
 
 @router.post("", response_model=MaintenanceResponse)
@@ -178,10 +201,13 @@ async def create_maintenance(
     if existing:
         raise HTTPException(status_code=400, detail="歲修 ID 已存在")
     
+    from datetime import datetime, timezone
+
     config = MaintenanceConfig(
         maintenance_id=maintenance.id,
         name=maintenance.name,
-        is_active=True,
+        is_active=False,
+        last_activated_at=None,
     )
 
     session.add(config)
@@ -197,11 +223,17 @@ async def create_maintenance(
         maintenance_id=maintenance.id,
     )
 
+    from app.core.config import settings as _settings
+    _max = _settings.max_collection_days * 86400
+
     return {
         "id": config.maintenance_id,
         "name": config.name,
         "is_active": config.is_active,
         "created_at": config.created_at,
+        "active_seconds": 0.0,
+        "max_seconds": float(_max),
+        "remaining_seconds": float(_max),
     }
 
 
@@ -212,6 +244,8 @@ async def toggle_maintenance_active(
     _: None = Depends(require_root),
 ) -> dict:
     """切換歲修的採集狀態（暫停/恢復）。僅限 ROOT 使用者。"""
+    from datetime import datetime, timezone
+
     stmt = select(MaintenanceConfig).where(
         MaintenanceConfig.maintenance_id == maintenance_id
     )
@@ -221,7 +255,26 @@ async def toggle_maintenance_active(
     if not config:
         raise HTTPException(status_code=404, detail="歲修不存在")
 
-    config.is_active = not config.is_active
+    now = datetime.now(timezone.utc)
+
+    if config.is_active:
+        # 暫停：累加本段活躍時間，清除 last_activated_at
+        if config.last_activated_at:
+            # DB 可能回傳 naive datetime，統一轉為 aware
+            last = config.last_activated_at
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            elapsed = (now - last).total_seconds()
+            config.active_seconds_accumulated = (
+                (config.active_seconds_accumulated or 0) + int(elapsed)
+            )
+        config.last_activated_at = None
+        config.is_active = False
+    else:
+        # 恢復：記錄啟用時間
+        config.last_activated_at = now
+        config.is_active = True
+
     await session.commit()
     await session.refresh(config)
 
@@ -234,11 +287,23 @@ async def toggle_maintenance_active(
         summary=f"歲修 {maintenance_id} {action}",
     )
 
+    from app.services.maintenance_time import _compute
+    from app.core.config import settings as _settings
+    _max = _settings.max_collection_days * 86400
+    active = _compute(
+        is_active=config.is_active,
+        accumulated=config.active_seconds_accumulated,
+        last_activated_at=config.last_activated_at,
+    )
+
     return {
         "id": config.maintenance_id,
         "name": config.name,
         "is_active": config.is_active,
         "created_at": config.created_at,
+        "active_seconds": round(active, 1),
+        "max_seconds": float(_max),
+        "remaining_seconds": round(max(0.0, _max - active), 1),
     }
 
 
@@ -264,13 +329,16 @@ async def delete_maintenance(
     # === 1. 刪除 Typed Records（採集記錄，先刪子表）===
     typed_records = [
         (TransceiverRecord, "transceiver_records"),
-        (VersionRecord, "version_records"),
-        (FanRecord, "fan_records"),
-        (PowerRecord, "power_records"),
         (PortChannelRecord, "port_channel_records"),
-        (PingRecord, "ping_records"),
         (NeighborRecord, "neighbor_records"),
         (InterfaceErrorRecord, "interface_error_records"),
+        (StaticAclRecord, "static_acl_records"),
+        (DynamicAclRecord, "dynamic_acl_records"),
+        (MacTableRecord, "mac_table_records"),
+        (FanRecord, "fan_records"),
+        (PowerRecord, "power_records"),
+        (VersionRecord, "version_records"),
+        (InterfaceStatusRecord, "interface_status_records"),
     ]
     for model, name in typed_records:
         result = await session.execute(
@@ -279,30 +347,39 @@ async def delete_maintenance(
         deleted_counts[name] = result.rowcount
 
     # === 1.5 刪除可能存在的舊表（使用 raw SQL，忽略不存在的表）===
-    raw_sql_tables = [
+    # 嚴格允許清單 — 只有這些表名可以出現在 SQL 中
+    _LEGACY_TABLE_ALLOWLIST = frozenset({
         "collection_records",
         "device_mappings",
         "interface_mappings",
         "uplink_records",
-    ]
-    for table in raw_sql_tables:
+    })
+    for table in _LEGACY_TABLE_ALLOWLIST:
         try:
-            # 先檢查表是否存在
             check_result = await session.execute(
                 text("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = :tbl"),
                 {"tbl": table}
             )
             if check_result.scalar() > 0:
+                # table 來自上方 frozenset 常量，安全
                 result = await session.execute(
-                    text(f"DELETE FROM {table} WHERE maintenance_id = :mid"),
+                    text(f"DELETE FROM `{table}` WHERE maintenance_id = :mid"),
                     {"mid": maintenance_id}
                 )
                 deleted_counts[table] = result.rowcount
             else:
                 deleted_counts[table] = 0
         except Exception:
-            # 忽略任何錯誤
             deleted_counts[table] = 0
+
+    # === 1.7 刪除 LatestCollectionBatch ===
+    from app.db.models import LatestCollectionBatch
+    result = await session.execute(
+        delete(LatestCollectionBatch).where(
+            LatestCollectionBatch.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["latest_collection_batches"] = result.rowcount
 
     # === 1.8 刪除 CollectionError ===
     result = await session.execute(
@@ -324,7 +401,6 @@ async def delete_maintenance(
     expectations = [
         (UplinkExpectation, "uplink_expectations"),
         (VersionExpectation, "version_expectations"),
-        (ArpSource, "arp_sources"),
         (PortChannelExpectation, "port_channel_expectations"),
     ]
     for model, name in expectations:
@@ -333,7 +409,25 @@ async def delete_maintenance(
         )
         deleted_counts[name] = result.rowcount
 
-    # === 4. 刪除 Client 相關 ===
+    # === 4. 刪除案件相關（先刪 case_notes，再刪 cases）===
+    case_ids_stmt = select(Case.id).where(Case.maintenance_id == maintenance_id)
+    case_ids_result = await session.execute(case_ids_stmt)
+    case_ids = [row[0] for row in case_ids_result.fetchall()]
+
+    if case_ids:
+        result = await session.execute(
+            delete(CaseNote).where(CaseNote.case_id.in_(case_ids))
+        )
+        deleted_counts["case_notes"] = result.rowcount
+    else:
+        deleted_counts["case_notes"] = 0
+
+    result = await session.execute(
+        delete(Case).where(Case.maintenance_id == maintenance_id)
+    )
+    deleted_counts["cases"] = result.rowcount
+
+    # === 5. 刪除 Client 相關 ===
     result = await session.execute(
         delete(ClientRecord).where(
             ClientRecord.maintenance_id == maintenance_id
@@ -456,7 +550,7 @@ async def delete_maintenance(
     result = await session.execute(
         delete(User).where(
             User.maintenance_id == maintenance_id,
-            User.role != UserRole.ROOT.value,
+            User.role != UserRole.ROOT,
         )
     )
     deleted_counts["users_deleted"] = result.rowcount
@@ -465,10 +559,6 @@ async def delete_maintenance(
     await session.delete(config)
 
     await session.commit()
-
-    # === 11. 清除 MockTimeTracker 快取（避免重建歲修時用到舊的起始時間）===
-    from app.fetchers.convergence import MockTimeTracker
-    MockTimeTracker.clear_maintenance_cache(maintenance_id)
 
     from app.services.system_log import write_log
     total_deleted = sum(deleted_counts.values())
@@ -491,6 +581,7 @@ async def delete_maintenance(
 @router.post("/checkpoints", response_model=CheckpointResponse)
 async def create_checkpoint(
     checkpoint: CheckpointCreate,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """創建新的 checkpoint。"""
@@ -540,6 +631,7 @@ async def get_checkpoints(
 @router.delete("/checkpoints/{checkpoint_id}")
 async def delete_checkpoint(
     checkpoint_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """刪除 checkpoint。"""
@@ -594,11 +686,11 @@ async def get_reference_clients(
 async def create_reference_client(
     maintenance_id: str,
     client: ReferenceClientCreate,
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """新增不斷電機台到指定歲修。"""
-    check_maintenance_access(user, maintenance_id)
+    check_maintenance_access(_user, maintenance_id)
 
     # 檢查是否已存在相同 MAC
     existing_stmt = select(ReferenceClient).where(
@@ -639,11 +731,11 @@ async def create_reference_client(
 async def delete_reference_client(
     maintenance_id: str,
     client_id: int,
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """刪除指定歲修的不斷電機台。"""
-    check_maintenance_access(user, maintenance_id)
+    check_maintenance_access(_user, maintenance_id)
 
     stmt = select(ReferenceClient).where(
         ReferenceClient.maintenance_id == maintenance_id,
@@ -688,11 +780,11 @@ async def get_maintenance_config(
 async def update_maintenance_config(
     maintenance_id: str,
     config_update: MaintenanceConfigUpdate,
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """更新歲修配置。"""
-    check_maintenance_access(user, maintenance_id)
+    check_maintenance_access(_user, maintenance_id)
     
     stmt = select(MaintenanceConfig).where(
         MaintenanceConfig.maintenance_id == maintenance_id
@@ -719,21 +811,19 @@ async def update_maintenance_config(
 @router.post("/{maintenance_id}/reset-convergence")
 async def reset_convergence_timer(
     maintenance_id: str,
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """
     重置歲修的收斂計時器。
 
-    將 created_at 設為現在時間，並清除 MockTimeTracker 快取。
-    用於測試收斂過程。
+    將 active_seconds_accumulated 歸零，並重設 last_activated_at。
+    Mock API Server 會根據累計活躍時間計算收斂進度。
     """
     from datetime import datetime, timezone
-    from app.fetchers.convergence import MockTimeTracker
 
-    check_maintenance_access(user, maintenance_id)
+    check_maintenance_access(_user, maintenance_id)
 
-    # 更新資料庫中的 created_at
     now_utc = datetime.now(timezone.utc)
     stmt = select(MaintenanceConfig).where(
         MaintenanceConfig.maintenance_id == maintenance_id
@@ -744,23 +834,17 @@ async def reset_convergence_timer(
     if not config:
         raise HTTPException(status_code=404, detail="找不到歲修配置")
 
-    config.created_at = now_utc
+    # 歸零累計活躍時間
+    config.active_seconds_accumulated = 0
+    if config.is_active:
+        config.last_activated_at = now_utc
     await session.commit()
-
-    # 清除 MockTimeTracker 快取
-    MockTimeTracker.clear_maintenance_cache(maintenance_id)
 
     return {
         "success": True,
         "message": "收斂計時器已重置",
         "maintenance_id": maintenance_id,
-        "new_created_at": now_utc.isoformat(),
-        "converge_schedule": {
-            "switch_point_seconds": 150,
-            "full_converge_seconds": 300,
-            "switch_point_description": "2.5 分鐘後 NEW 設備開始可達",
-            "full_converge_description": "5 分鐘後完全收斂",
-        }
+        "active_seconds_accumulated": 0,
     }
 
 
@@ -779,9 +863,10 @@ async def _generate_checkpoint_summary(
     # 這裡應該查詢該時間點附近的各項指標數據
     # 並生成統計摘要
     
+    from datetime import datetime, timezone
     return {
         "total_switches": 0,
         "total_clients": 0,
         "indicators": {},
-        "generated_at": now_utc().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }

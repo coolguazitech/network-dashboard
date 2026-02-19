@@ -1,0 +1,8 @@
+Cisco IOS Software, C3750E Software (C3750E-UNIVERSALK9-M), Version 15.2(4)E10
+Technical Support: http://www.cisco.com/techsupport
+Copyright (c) 1986-2020 by Cisco Systems, Inc.
+
+SW-ACCESS-02 uptime is 15 weeks, 1 day, 8 hours, 30 minutes
+
+Model number          : WS-C3750X-24PF-L
+System serial number  : FDO5678B9DE

@@ -6,6 +6,18 @@ model, serial number, and uptime information.
 
 Real CLI command: show version
 Platforms: Catalyst 2960, 3560, 3750, 3850, 9200, 9300, 9500
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class VersionData(ParsedData):
+    version: str                             # firmware version string
+    model: str | None = None                 # device model number
+    serial_number: str | None = None         # serial number
+    uptime: str | None = None                # uptime string
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: show version
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 

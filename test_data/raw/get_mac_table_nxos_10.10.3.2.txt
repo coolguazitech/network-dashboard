@@ -1,0 +1,7 @@
+Legend:
+        * - primary entry, G - Gateway MAC, (R) - Routed MAC
+
+   VLAN     MAC Address      Type      age     Secure   NTFY   Ports
+---------+-----------------+--------+---------+------+----+------------------
+*   10     aabb.ccdd.0001   dynamic  0         F      F    Eth1/1
+*   20     aabb.ccdd.0002   dynamic  0         F      F    Eth1/2

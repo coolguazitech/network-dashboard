@@ -6,13 +6,14 @@ Client comparison endpoints.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
+from app.api.endpoints.auth import get_current_user, require_write
 from app.core.config import settings
 from app.db.base import get_async_session
 from app.db.models import SeverityOverride
@@ -62,6 +63,7 @@ comparison_service = ClientComparisonService()
 @router.get("/checkpoints/{maintenance_id}")
 async def get_checkpoints(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     max_days: int = Query(
         default=7,
         ge=1,
@@ -139,6 +141,7 @@ async def get_checkpoints(
 @router.get("/checkpoints/{maintenance_id}/summaries")
 async def get_checkpoint_summaries(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     max_days: int = Query(
         default=7,
         ge=1,
@@ -356,6 +359,7 @@ async def get_checkpoint_summaries(
 @router.get("/diff/{maintenance_id}")
 async def get_diff(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     checkpoint: str = Query(..., description="Checkpoint 時間（ISO 格式）作為 Before"),
     severity_filter: str | None = Query(None, description="篩選嚴重度: critical/warning/has_issues"),
     category_id: int | None = Query(None, description="篩選分類 ID（-1=全部, None=未分類）"),
@@ -574,6 +578,7 @@ async def get_diff(
 @router.get("/summary/{maintenance_id}")
 async def get_comparison_summary(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
@@ -602,6 +607,7 @@ async def get_comparison_summary(
 @router.get("/list/{maintenance_id}")
 async def list_comparisons(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     before_time: str | None = Query(None, description="BEFORE 時間點（ISO 格式）"),
     mac_address: str | None = Query(None, description="按 MAC 地址篩選（已廢棄，請使用 search_text）"),
     search_text: str | None = Query(None, description="搜尋 MAC 地址或 IP 地址"),
@@ -849,6 +855,7 @@ async def list_comparisons(
 async def get_comparison_detail(
     maintenance_id: str,
     mac_address: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
@@ -915,6 +922,7 @@ async def get_comparison_detail(
 @router.get("/overrides/{maintenance_id}")
 async def list_severity_overrides(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """列出所有嚴重程度覆蓋記錄。"""
@@ -948,6 +956,7 @@ async def list_severity_overrides(
 @router.post("/overrides/{maintenance_id}")
 async def create_or_update_severity_override(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: SeverityOverrideCreate,
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
@@ -1016,6 +1025,7 @@ async def create_or_update_severity_override(
 async def delete_severity_override(
     maintenance_id: str,
     mac_address: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """刪除嚴重程度覆蓋（恢復自動判斷）。"""
@@ -1049,6 +1059,7 @@ async def delete_severity_override(
 @router.delete("/overrides/{maintenance_id}")
 async def clear_all_severity_overrides(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """清除所有嚴重程度覆蓋（恢復全部自動判斷）。"""

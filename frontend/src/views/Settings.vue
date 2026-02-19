@@ -33,11 +33,11 @@
             <button @click="downloadUplinkTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
               📄 下載範本
             </button>
-            <label class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importUplinkList" />
             </label>
-            <button @click="openAddUplink" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="openAddUplink" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
               ➕ 新增期望
             </button>
           </div>
@@ -63,7 +63,7 @@
           </div>
 
           <!-- 批量操作 -->
-          <div v-if="selectedUplinks.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
+          <div v-if="selectedUplinks.length > 0 && userCanWrite" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
             <span class="text-sm text-cyan-300">已選 {{ selectedUplinks.length }} 筆</span>
             <button @click="batchDeleteUplinks" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
               🗑️ 批量刪除
@@ -89,7 +89,7 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-700">
-                <tr v-for="uplink in uplinkExpectations" :key="uplink.id" class="hover:bg-slate-700/50 transition" :class="{ 'bg-cyan-900/20': selectedUplinks.includes(uplink.id) }">
+                <tr v-for="(uplink, ui) in uplinkExpectations" :key="uplink.id" class="hover:bg-slate-700/50 transition row-stagger" :class="{ 'bg-cyan-900/20': selectedUplinks.includes(uplink.id) }" :style="{ animationDelay: ui * 30 + 'ms' }">
                   <td class="px-2 py-2 text-center">
                     <input type="checkbox" :value="uplink.id" v-model="selectedUplinks" class="rounded border-slate-500" />
                   </td>
@@ -98,7 +98,7 @@
                   <td class="px-3 py-2 font-mono text-cyan-300 text-xs">{{ uplink.expected_neighbor }}</td>
                   <td class="px-3 py-2 font-mono text-slate-300 text-xs">{{ uplink.expected_interface || '-' }}</td>
                   <td class="px-3 py-2 text-slate-400 text-xs">{{ uplink.description || '-' }}</td>
-                  <td class="px-3 py-2 text-xs whitespace-nowrap">
+                  <td v-if="userCanWrite" class="px-3 py-2 text-xs whitespace-nowrap">
                     <button @click="editUplink(uplink)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
                     <button @click="deleteUplink(uplink)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
@@ -124,11 +124,11 @@
             <button @click="downloadVersionTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
               📄 下載範本
             </button>
-            <label class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importVersionList" />
             </label>
-            <button @click="openAddVersion" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="openAddVersion" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
               ➕ 新增期望
             </button>
           </div>
@@ -154,7 +154,7 @@
           </div>
 
           <!-- 批量操作 -->
-          <div v-if="selectedVersions.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
+          <div v-if="selectedVersions.length > 0 && userCanWrite" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
             <span class="text-sm text-cyan-300">已選 {{ selectedVersions.length }} 筆</span>
             <button @click="batchDeleteVersions" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
               🗑️ 批量刪除
@@ -178,7 +178,7 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-700">
-                <tr v-for="ver in versionExpectations" :key="ver.id" class="hover:bg-slate-700/50 transition" :class="{ 'bg-cyan-900/20': selectedVersions.includes(ver.id) }">
+                <tr v-for="(ver, vi) in versionExpectations" :key="ver.id" class="hover:bg-slate-700/50 transition row-stagger" :class="{ 'bg-cyan-900/20': selectedVersions.includes(ver.id) }" :style="{ animationDelay: vi * 30 + 'ms' }">
                   <td class="px-2 py-2 text-center">
                     <input type="checkbox" :value="ver.id" v-model="selectedVersions" class="rounded border-slate-500" />
                   </td>
@@ -189,7 +189,7 @@
                     </span>
                   </td>
                   <td class="px-3 py-2 text-slate-400 text-xs">{{ ver.description || '-' }}</td>
-                  <td class="px-3 py-2 text-xs whitespace-nowrap">
+                  <td v-if="userCanWrite" class="px-3 py-2 text-xs whitespace-nowrap">
                     <button @click="editVersion(ver)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
                     <button @click="deleteVersion(ver)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
@@ -215,11 +215,11 @@
             <button @click="downloadPortChannelTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
               📄 下載範本
             </button>
-            <label class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importPortChannelList" />
             </label>
-            <button @click="openAddPortChannel" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="openAddPortChannel" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
               ➕ 新增期望
             </button>
           </div>
@@ -245,7 +245,7 @@
           </div>
 
           <!-- 批量操作 -->
-          <div v-if="selectedPortChannels.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
+          <div v-if="selectedPortChannels.length > 0 && userCanWrite" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
             <span class="text-sm text-cyan-300">已選 {{ selectedPortChannels.length }} 筆</span>
             <button @click="batchDeletePortChannels" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
               🗑️ 批量刪除
@@ -270,7 +270,7 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-700">
-                <tr v-for="pc in portChannelExpectations" :key="pc.id" class="hover:bg-slate-700/50 transition" :class="{ 'bg-cyan-900/20': selectedPortChannels.includes(pc.id) }">
+                <tr v-for="(pc, pi) in portChannelExpectations" :key="pc.id" class="hover:bg-slate-700/50 transition row-stagger" :class="{ 'bg-cyan-900/20': selectedPortChannels.includes(pc.id) }" :style="{ animationDelay: pi * 30 + 'ms' }">
                   <td class="px-2 py-2 text-center">
                     <input type="checkbox" :value="pc.id" v-model="selectedPortChannels" class="rounded border-slate-500" />
                   </td>
@@ -282,7 +282,7 @@
                     </span>
                   </td>
                   <td class="px-3 py-2 text-slate-400 text-xs">{{ pc.description || '-' }}</td>
-                  <td class="px-3 py-2 text-xs whitespace-nowrap">
+                  <td v-if="userCanWrite" class="px-3 py-2 text-xs whitespace-nowrap">
                     <button @click="editPortChannel(pc)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
                     <button @click="deletePortChannel(pc)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
@@ -302,8 +302,9 @@
     </div>
 
     <!-- 新增/編輯 Uplink 期望 Modal -->
-    <div v-if="showAddUplinkModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="closeUplinkModal">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[500px]">
+    <Transition name="modal">
+    <div v-if="showAddUplinkModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closeUplinkModal">
+      <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[500px] modal-content">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingUplink ? '編輯 Uplink 期望' : '新增 Uplink 期望' }}</h3>
         <p class="text-xs text-yellow-400 mb-4">注意：本地設備與鄰居設備都必須來自設備清單中的「新設備」</p>
         <div class="space-y-4">
@@ -336,10 +337,12 @@
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 新增/編輯版本期望 Modal -->
-    <div v-if="showAddVersionModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="closeVersionModal">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[500px]">
+    <Transition name="modal">
+    <div v-if="showAddVersionModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closeVersionModal">
+      <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[500px] modal-content">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingVersion ? '編輯版本期望' : '新增版本期望' }}</h3>
         <p class="text-xs text-yellow-400 mb-4">注意：設備 Hostname 必須來自設備清單中的「新設備」</p>
         <div class="space-y-4">
@@ -365,10 +368,12 @@
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 新增/編輯 Port Channel 期望 Modal -->
-    <div v-if="showAddPortChannelModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="closePortChannelModal">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[500px]">
+    <Transition name="modal">
+    <div v-if="showAddPortChannelModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closePortChannelModal">
+      <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[500px] modal-content">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingPortChannel ? '編輯 Port Channel 期望' : '新增 Port Channel 期望' }}</h3>
         <p class="text-xs text-yellow-400 mb-4">注意：設備 Hostname 必須來自設備清單中的「新設備」</p>
         <div class="space-y-4">
@@ -398,65 +403,31 @@
         </div>
       </div>
     </div>
-
-    <!-- 通用訊息 Modal -->
-    <div v-if="messageModal.show" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60]" @click.self="closeMessageModal">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-96">
-        <div class="flex items-start gap-3">
-          <span v-if="messageModal.type === 'success'" class="text-2xl text-green-400">✓</span>
-          <span v-else-if="messageModal.type === 'error'" class="text-2xl text-red-400">✕</span>
-          <span v-else class="text-2xl text-blue-400">ℹ</span>
-          <div class="flex-1">
-            <h3 class="text-lg font-semibold text-white mb-2">{{ messageModal.title || '提示' }}</h3>
-            <p class="text-slate-300 whitespace-pre-line">{{ messageModal.message }}</p>
-          </div>
-        </div>
-        <div class="flex justify-end mt-6">
-          <button @click="closeMessageModal" class="px-4 py-2 bg-slate-600 text-white rounded hover:bg-slate-500">
-            確定
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 通用確認 Modal -->
-    <div v-if="confirmModal.show" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60]">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-96">
-        <div class="flex items-start gap-3">
-          <span class="text-2xl text-amber-400">⚠</span>
-          <div class="flex-1">
-            <h3 class="text-lg font-semibold text-white mb-2">{{ confirmModal.title || '確認' }}</h3>
-            <p class="text-slate-300 whitespace-pre-line">{{ confirmModal.message }}</p>
-          </div>
-        </div>
-        <div class="flex justify-end gap-2 mt-6">
-          <button @click="confirmModal.show = false; confirmModal.resolve && confirmModal.resolve(false)" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">
-            取消
-          </button>
-          <button @click="handleConfirm" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500">
-            確定
-          </button>
-        </div>
-      </div>
-    </div>
+    </Transition>
 
     <!-- Loading -->
-    <div v-if="loading" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg p-6">
+    <Transition name="modal">
+    <div v-if="loading" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 modal-content">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-400 mx-auto mb-2"></div>
         <p class="text-slate-300">載入中...</p>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 
 <script>
-import { apiFetch, formatErrorMessage, ErrorType } from '../utils/api.js';
-import { getAuthHeaders } from '@/utils/auth';
+import api, { downloadFile } from '@/utils/api';
+import { useToast } from '@/composables/useToast';
+import { canWrite } from '@/utils/auth';
 
 export default {
   name: 'Settings',
   inject: ['maintenanceId', 'refreshMaintenanceList'],
+  setup() {
+    return useToast();
+  },
   data() {
     return {
       loading: false,
@@ -472,8 +443,6 @@ export default {
       
       // 數據
       maintenanceList: [],
-      devices: [],
-      deviceMappings: [],
       uplinkExpectations: [],
       versionExpectations: [],
       portChannelExpectations: [],
@@ -522,27 +491,14 @@ export default {
       newPortChannel: { hostname: '', port_channel: '', member_interfaces: '', description: '' },
       editingPortChannel: null,
       
-      // 通用訊息 Modal
-      messageModal: {
-        show: false,
-        type: 'info',  // info, success, error
-        title: '',
-        message: '',
-      },
-      
-      // 通用確認 Modal
-      confirmModal: {
-        show: false,
-        title: '',
-        message: '',
-        resolve: null,
-        onConfirm: null,
-      },
     };
   },
   computed: {
     selectedMaintenanceId() {
       return this.maintenanceId;
+    },
+    userCanWrite() {
+      return canWrite.value;
     },
   },
   watch: {
@@ -611,12 +567,8 @@ export default {
     // 歲修管理
     async loadMaintenanceList() {
       try {
-        const res = await fetch('/api/v1/maintenance', {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          this.maintenanceList = await res.json();
-        }
+        const { data } = await api.get('/maintenance');
+        this.maintenanceList = data;
       } catch (e) {
         console.error('載入歲修列表失敗:', e);
       }
@@ -641,27 +593,16 @@ export default {
       }
 
       try {
-        const res = await fetch('/api/v1/maintenance', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ id: idValue, name: nameValue }),
-        });
-        
-        if (res.ok) {
-          this.showAddMaintenanceModal = false;
-          this.newMaintenance = { id: '', name: '' };
-          await this.loadMaintenanceList();
-          // 刷新頂部的歲修選擇器
-          if (this.refreshMaintenanceList) {
-            this.refreshMaintenanceList();
-          }
-        } else {
-          const err = await res.json();
-          this.showMessage(`建立失敗: ${err.detail || '未知錯誤'}`, 'error');
+        await api.post('/maintenance', { id: idValue, name: nameValue });
+        this.showAddMaintenanceModal = false;
+        this.newMaintenance = { id: '', name: '' };
+        await this.loadMaintenanceList();
+        if (this.refreshMaintenanceList) {
+          this.refreshMaintenanceList();
         }
       } catch (e) {
         console.error('建立歲修失敗:', e);
-        this.showMessage('建立失敗，請稍後再試', 'error');
+        this.showMessage(`建立失敗: ${e.response?.data?.detail || '請稍後再試'}`, 'error');
       }
     },
     
@@ -684,27 +625,17 @@ export default {
       }
       
       try {
-        const res = await fetch(`/api/v1/maintenance/${encodeURIComponent(this.deleteTarget.id)}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        });
-        
-        if (res.ok) {
-          this.showDeleteMaintenanceModal = false;
-          this.deleteTarget = null;
-          this.deleteConfirmInput = '';
-          await this.loadMaintenanceList();
-          // 刷新頂部的歲修選擇器
-          if (this.refreshMaintenanceList) {
-            this.refreshMaintenanceList();
-          }
-        } else {
-          const err = await res.json();
-          this.showMessage(`刪除失敗: ${err.detail || '未知錯誤'}`, 'error');
+        await api.delete(`/maintenance/${encodeURIComponent(this.deleteTarget.id)}`);
+        this.showDeleteMaintenanceModal = false;
+        this.deleteTarget = null;
+        this.deleteConfirmInput = '';
+        await this.loadMaintenanceList();
+        if (this.refreshMaintenanceList) {
+          this.refreshMaintenanceList();
         }
       } catch (e) {
         console.error('刪除歲修失敗:', e);
-        this.showMessage('刪除失敗，請稍後再試', 'error');
+        this.showMessage(`刪除失敗: ${e.response?.data?.detail || '請稍後再試'}`, 'error');
       }
     },
     
@@ -724,36 +655,11 @@ export default {
       }
     },
     
-    async loadDevices() {
-      this.loading = true;
-      try {
-        const res = await fetch('/api/v1/switches', {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          this.devices = await res.json();
-        }
-      } catch (e) {
-        console.error('載入設備失敗:', e);
-      } finally {
-        this.loading = false;
-      }
-    },
-    
     async loadMaintenanceData() {
       if (!this.selectedMaintenanceId) return;
 
       this.loading = true;
       try {
-        // 載入設備對應
-        const mappingRes = await fetch(`/api/v1/device-mappings/${this.selectedMaintenanceId}`, {
-          headers: getAuthHeaders()
-        });
-        if (mappingRes.ok) {
-          const data = await mappingRes.json();
-          this.deviceMappings = data.mappings || [];
-        }
-
         // 載入 Uplink 期望
         await this.loadUplinkList();
 
@@ -766,37 +672,6 @@ export default {
         console.error('載入歲修數據失敗:', e);
       } finally {
         this.loading = false;
-      }
-    },
-    
-    // 設備操作
-    editDevice(device) {
-      this.showMessage(`編輯設備功能尚未實作: ${device.hostname}`, 'info');
-    },
-    async deleteDevice(device) {
-      const confirmed = await this.showConfirm(`確定要刪除設備 ${device.hostname}？`, '刪除確認');
-      if (!confirmed) return;
-      // TODO: 呼叫刪除 API
-    },
-    
-    // 設備對應操作
-    editMapping(mapping) {
-      this.showMessage(`編輯對應功能尚未實作: ${mapping.old_hostname} → ${mapping.new_hostname}`, 'info');
-    },
-    async deleteMapping(mapping) {
-      const confirmed = await this.showConfirm(`確定要刪除對應 ${mapping.old_hostname} → ${mapping.new_hostname}？`, '刪除確認');
-      if (!confirmed) return;
-      try {
-        const res = await fetch(`/api/v1/device-mappings/${this.selectedMaintenanceId}/${mapping.id}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          await this.loadMaintenanceData();
-        }
-      } catch (e) {
-        console.error('刪除對應失敗:', e);
-        this.showMessage('刪除失敗', 'error');
       }
     },
     
@@ -814,19 +689,13 @@ export default {
         let url = `/api/v1/expectations/uplink/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url, {
-          headers: getAuthHeaders()
+        const { data } = await api.get(url.replace('/api/v1', ''));
+        this.uplinkExpectations = data.items || [];
+        this.$nextTick(() => {
+          if (this.$refs.uplinkScrollContainer) {
+            this.$refs.uplinkScrollContainer.scrollTop = scrollTop;
+          }
         });
-        if (res.ok) {
-          const data = await res.json();
-          this.uplinkExpectations = data.items || [];
-          // 恢復捲動位置
-          this.$nextTick(() => {
-            if (this.$refs.uplinkScrollContainer) {
-              this.$refs.uplinkScrollContainer.scrollTop = scrollTop;
-            }
-          });
-        }
       } catch (e) {
         console.error('載入 Uplink 期望失敗:', e);
       }
@@ -864,22 +733,12 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
       formData.append('file', file);
 
       try {
-        const res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/import-csv`, {
-          method: 'POST',
-          body: formData,
-          headers: getAuthHeaders()
-        });
-        const data = await res.json();
-
-        if (res.ok) {
-          await this.loadUplinkList();
-          this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
-        } else {
-          this.showMessage(data.detail || '匯入失敗', 'error');
-        }
+        const { data } = await api.post(`/expectations/uplink/${this.selectedMaintenanceId}/import-csv`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        await this.loadUplinkList();
+        this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
       } catch (e) {
         console.error('Uplink 匯入失敗:', e);
-        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+        this.showMessage(e.response?.data?.detail || '匯入失敗，請檢查網路連線', 'error');
       } finally {
         this.uplinkLoading = false;
       }
@@ -937,38 +796,18 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
       };
 
       try {
-        let res;
-        
         if (this.editingUplink && this.newUplink.id) {
-          res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/${this.newUplink.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify(payload),
-          });
+          await api.put(`/expectations/uplink/${this.selectedMaintenanceId}/${this.newUplink.id}`, payload);
         } else {
-          res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify(payload),
-          });
+          await api.post(`/expectations/uplink/${this.selectedMaintenanceId}`, payload);
         }
-        
-        if (res.ok) {
-          const msg = this.editingUplink ? 'Uplink 期望更新成功' : 'Uplink 期望新增成功';
-          this.closeUplinkModal();
-          await this.loadUplinkList();
-          this.showMessage(msg, 'success');
-        } else {
-          try {
-            const err = await res.json();
-            this.showMessage(err.detail || `錯誤 ${res.status}: ${res.statusText}`, 'error');
-          } catch {
-            this.showMessage(`錯誤 ${res.status}: ${res.statusText}`, 'error');
-          }
-        }
+        const msg = this.editingUplink ? 'Uplink 期望更新成功' : 'Uplink 期望新增成功';
+        this.closeUplinkModal();
+        await this.loadUplinkList();
+        this.showMessage(msg, 'success');
       } catch (e) {
         console.error('儲存 Uplink 期望失敗:', e);
-        this.showMessage(`儲存失敗: ${e.message || '網路錯誤'}`, 'error');
+        this.showMessage(e.response?.data?.detail || `儲存失敗: ${e.message || '網路錯誤'}`, 'error');
       }
     },
     
@@ -977,14 +816,9 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
       if (!confirmed) return;
 
       try {
-        const res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/${uplink.id}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          await this.loadUplinkList();
-          this.showMessage('刪除成功', 'success');
-        }
+        await api.delete(`/expectations/uplink/${this.selectedMaintenanceId}/${uplink.id}`);
+        await this.loadUplinkList();
+        this.showMessage('刪除成功', 'success');
       } catch (e) {
         console.error('刪除 Uplink 期望失敗:', e);
         this.showMessage('刪除失敗', 'error');
@@ -1014,33 +848,25 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
       if (!confirmed) return;
 
       try {
-        const res = await fetch(`/api/v1/expectations/uplink/${this.selectedMaintenanceId}/batch-delete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ item_ids: this.selectedUplinks }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          this.showMessage(`成功刪除 ${data.deleted_count} 筆 Uplink 期望`, 'success');
-          this.clearUplinkSelection();
-          await this.loadUplinkList();
-        } else {
-          this.showMessage('批量刪除失敗', 'error');
-        }
+        const { data } = await api.post(`/expectations/uplink/${this.selectedMaintenanceId}/batch-delete`, { item_ids: this.selectedUplinks });
+        this.showMessage(`成功刪除 ${data.deleted_count} 筆 Uplink 期望`, 'success');
+        this.clearUplinkSelection();
+        await this.loadUplinkList();
       } catch (e) {
         console.error('批量刪除 Uplink 失敗:', e);
         this.showMessage('批量刪除失敗', 'error');
       }
     },
 
-    exportUplinkCsv() {
+    async exportUplinkCsv() {
       const params = new URLSearchParams();
       if (this.uplinkSearch) {
         params.append('search', this.uplinkSearch);
       }
-      const url = `/api/v1/expectations/uplink/${this.selectedMaintenanceId}/export-csv?${params}`;
-      window.open(url, '_blank');
+      await downloadFile(
+        `/expectations/uplink/${this.selectedMaintenanceId}/export-csv?${params}`,
+        `uplink_expectations_${this.selectedMaintenanceId}.csv`,
+      );
     },
 
     // ========== 版本期望操作 ==========
@@ -1057,19 +883,13 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
         let url = `/api/v1/expectations/version/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url, {
-          headers: getAuthHeaders()
+        const { data } = await api.get(url.replace('/api/v1', ''));
+        this.versionExpectations = data.items || [];
+        this.$nextTick(() => {
+          if (this.$refs.versionScrollContainer) {
+            this.$refs.versionScrollContainer.scrollTop = scrollTop;
+          }
         });
-        if (res.ok) {
-          const data = await res.json();
-          this.versionExpectations = data.items || [];
-          // 恢復捲動位置
-          this.$nextTick(() => {
-            if (this.$refs.versionScrollContainer) {
-              this.$refs.versionScrollContainer.scrollTop = scrollTop;
-            }
-          });
-        }
       } catch (e) {
         console.error('載入版本期望失敗:', e);
       }
@@ -1106,22 +926,12 @@ CORE-SW-01,9.4(1),NX-OS版本`;
       formData.append('file', file);
 
       try {
-        const res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}/import-csv`, {
-          method: 'POST',
-          body: formData,
-          headers: getAuthHeaders()
-        });
-        const data = await res.json();
-
-        if (res.ok) {
-          await this.loadVersionList();
-          this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
-        } else {
-          this.showMessage(data.detail || '匯入失敗', 'error');
-        }
+        const { data } = await api.post(`/expectations/version/${this.selectedMaintenanceId}/import-csv`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        await this.loadVersionList();
+        this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
       } catch (e) {
         console.error('版本期望匯入失敗:', e);
-        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+        this.showMessage(e.response?.data?.detail || '匯入失敗，請檢查網路連線', 'error');
       } finally {
         this.versionLoading = false;
       }
@@ -1163,31 +973,17 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         };
         
         if (this.editingVersion && this.newVersion.id) {
-          res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}/${this.newVersion.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify(payload),
-          });
+          await api.put(`/expectations/version/${this.selectedMaintenanceId}/${this.newVersion.id}`, payload);
         } else {
-          res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify(payload),
-          });
+          await api.post(`/expectations/version/${this.selectedMaintenanceId}`, payload);
         }
-        
-        if (res.ok) {
-          const msg = this.editingVersion ? '版本期望更新成功' : '版本期望新增成功';
-          this.closeVersionModal();
-          await this.loadVersionList();
-          this.showMessage(msg, 'success');
-        } else {
-          const err = await res.json();
-          this.showMessage(err.detail || (this.editingVersion ? '更新失敗' : '新增失敗'), 'error');
-        }
+        const msg = this.editingVersion ? '版本期望更新成功' : '版本期望新增成功';
+        this.closeVersionModal();
+        await this.loadVersionList();
+        this.showMessage(msg, 'success');
       } catch (e) {
         console.error('儲存版本期望失敗:', e);
-        this.showMessage('儲存失敗', 'error');
+        this.showMessage(e.response?.data?.detail || '儲存失敗', 'error');
       }
     },
     
@@ -1196,14 +992,9 @@ CORE-SW-01,9.4(1),NX-OS版本`;
       if (!confirmed) return;
 
       try {
-        const res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}/${ver.id}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          await this.loadVersionList();
-          this.showMessage('刪除成功', 'success');
-        }
+        await api.delete(`/expectations/version/${this.selectedMaintenanceId}/${ver.id}`);
+        await this.loadVersionList();
+        this.showMessage('刪除成功', 'success');
       } catch (e) {
         console.error('刪除版本期望失敗:', e);
         this.showMessage('刪除失敗', 'error');
@@ -1233,33 +1024,25 @@ CORE-SW-01,9.4(1),NX-OS版本`;
       if (!confirmed) return;
 
       try {
-        const res = await fetch(`/api/v1/expectations/version/${this.selectedMaintenanceId}/batch-delete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ item_ids: this.selectedVersions }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          this.showMessage(`成功刪除 ${data.deleted_count} 筆版本期望`, 'success');
-          this.clearVersionSelection();
-          await this.loadVersionList();
-        } else {
-          this.showMessage('批量刪除失敗', 'error');
-        }
+        const { data } = await api.post(`/expectations/version/${this.selectedMaintenanceId}/batch-delete`, { item_ids: this.selectedVersions });
+        this.showMessage(`成功刪除 ${data.deleted_count} 筆版本期望`, 'success');
+        this.clearVersionSelection();
+        await this.loadVersionList();
       } catch (e) {
         console.error('批量刪除版本期望失敗:', e);
         this.showMessage('批量刪除失敗', 'error');
       }
     },
 
-    exportVersionCsv() {
+    async exportVersionCsv() {
       const params = new URLSearchParams();
       if (this.versionSearch) {
         params.append('search', this.versionSearch);
       }
-      const url = `/api/v1/expectations/version/${this.selectedMaintenanceId}/export-csv?${params}`;
-      window.open(url, '_blank');
+      await downloadFile(
+        `/expectations/version/${this.selectedMaintenanceId}/export-csv?${params}`,
+        `version_expectations_${this.selectedMaintenanceId}.csv`,
+      );
     },
 
     // ========== Port Channel 期望操作 ==========
@@ -1276,19 +1059,13 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         let url = `/api/v1/expectations/port-channel/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url, {
-          headers: getAuthHeaders()
+        const { data } = await api.get(url.replace('/api/v1', ''));
+        this.portChannelExpectations = data.items || [];
+        this.$nextTick(() => {
+          if (this.$refs.portChannelScrollContainer) {
+            this.$refs.portChannelScrollContainer.scrollTop = scrollTop;
+          }
         });
-        if (res.ok) {
-          const data = await res.json();
-          this.portChannelExpectations = data.items || [];
-          // 恢復捲動位置
-          this.$nextTick(() => {
-            if (this.$refs.portChannelScrollContainer) {
-              this.$refs.portChannelScrollContainer.scrollTop = scrollTop;
-            }
-          });
-        }
       } catch (e) {
         console.error('載入 Port Channel 期望失敗:', e);
       }
@@ -1325,22 +1102,12 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
       formData.append('file', file);
 
       try {
-        const res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/import-csv`, {
-          method: 'POST',
-          body: formData,
-          headers: getAuthHeaders()
-        });
-        const data = await res.json();
-
-        if (res.ok) {
-          await this.loadPortChannelList();
-          this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
-        } else {
-          this.showMessage(data.detail || '匯入失敗', 'error');
-        }
+        const { data } = await api.post(`/expectations/port-channel/${this.selectedMaintenanceId}/import-csv`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        await this.loadPortChannelList();
+        this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
       } catch (e) {
         console.error('Port-Channel 匯入失敗:', e);
-        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+        this.showMessage(e.response?.data?.detail || '匯入失敗，請檢查網路連線', 'error');
       } finally {
         this.portChannelLoading = false;
       }
@@ -1384,31 +1151,17 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
         };
         
         if (this.editingPortChannel && this.newPortChannel.id) {
-          res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/${this.newPortChannel.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify(payload),
-          });
+          await api.put(`/expectations/port-channel/${this.selectedMaintenanceId}/${this.newPortChannel.id}`, payload);
         } else {
-          res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify(payload),
-          });
+          await api.post(`/expectations/port-channel/${this.selectedMaintenanceId}`, payload);
         }
-        
-        if (res.ok) {
-          const msg = this.editingPortChannel ? 'Port Channel 期望更新成功' : 'Port Channel 期望新增成功';
-          this.closePortChannelModal();
-          await this.loadPortChannelList();
-          this.showMessage(msg, 'success');
-        } else {
-          const err = await res.json();
-          this.showMessage(err.detail || (this.editingPortChannel ? '更新失敗' : '新增失敗'), 'error');
-        }
+        const msg = this.editingPortChannel ? 'Port Channel 期望更新成功' : 'Port Channel 期望新增成功';
+        this.closePortChannelModal();
+        await this.loadPortChannelList();
+        this.showMessage(msg, 'success');
       } catch (e) {
         console.error('儲存 Port Channel 期望失敗:', e);
-        this.showMessage('儲存失敗', 'error');
+        this.showMessage(e.response?.data?.detail || '儲存失敗', 'error');
       }
     },
     
@@ -1417,14 +1170,9 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
       if (!confirmed) return;
 
       try {
-        const res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/${pc.id}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          await this.loadPortChannelList();
-          this.showMessage('刪除成功', 'success');
-        }
+        await api.delete(`/expectations/port-channel/${this.selectedMaintenanceId}/${pc.id}`);
+        await this.loadPortChannelList();
+        this.showMessage('刪除成功', 'success');
       } catch (e) {
         console.error('刪除 Port Channel 期望失敗:', e);
         this.showMessage('刪除失敗', 'error');
@@ -1454,69 +1202,25 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
       if (!confirmed) return;
 
       try {
-        const res = await fetch(`/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/batch-delete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ item_ids: this.selectedPortChannels }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          this.showMessage(`成功刪除 ${data.deleted_count} 筆 Port Channel 期望`, 'success');
-          this.clearPortChannelSelection();
-          await this.loadPortChannelList();
-        } else {
-          this.showMessage('批量刪除失敗', 'error');
-        }
+        const { data } = await api.post(`/expectations/port-channel/${this.selectedMaintenanceId}/batch-delete`, { item_ids: this.selectedPortChannels });
+        this.showMessage(`成功刪除 ${data.deleted_count} 筆 Port Channel 期望`, 'success');
+        this.clearPortChannelSelection();
+        await this.loadPortChannelList();
       } catch (e) {
         console.error('批量刪除 Port Channel 失敗:', e);
         this.showMessage('批量刪除失敗', 'error');
       }
     },
 
-    exportPortChannelCsv() {
+    async exportPortChannelCsv() {
       const params = new URLSearchParams();
       if (this.portChannelSearch) {
         params.append('search', this.portChannelSearch);
       }
-      const url = `/api/v1/expectations/port-channel/${this.selectedMaintenanceId}/export-csv?${params}`;
-      window.open(url, '_blank');
-    },
-
-    // ========== 通用 Modal 方法 ==========
-    showMessage(message, type = 'info', title = '') {
-      this.messageModal = {
-        show: true,
-        type,
-        title: title || (type === 'success' ? '成功' : type === 'error' ? '錯誤' : '提示'),
-        message,
-      };
-    },
-    
-    closeMessageModal() {
-      this.messageModal.show = false;
-    },
-    
-    showConfirm(message, title = '確認') {
-      return new Promise((resolve) => {
-        this.confirmModal = {
-          show: true,
-          title,
-          message,
-          resolve,
-          onConfirm: null,
-        };
-      });
-    },
-    
-    handleConfirm() {
-      if (this.confirmModal.resolve) {
-        this.confirmModal.resolve(true);
-      }
-      if (this.confirmModal.onConfirm) {
-        this.confirmModal.onConfirm();
-      }
-      this.confirmModal.show = false;
+      await downloadFile(
+        `/expectations/port-channel/${this.selectedMaintenanceId}/export-csv?${params}`,
+        `port_channel_expectations_${this.selectedMaintenanceId}.csv`,
+      );
     },
 
     // ========== Uplink 期望操作 ==========

@@ -1,0 +1,5 @@
+FAN 1 is OK
+FAN 2 is OK
+FAN PS-1 is OK
+FAN PS-2 is OK
+SYSTEM FAN is OK

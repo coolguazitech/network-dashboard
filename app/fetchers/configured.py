@@ -22,6 +22,7 @@ HTTP 行為：
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 
@@ -31,6 +32,14 @@ from app.core.config import settings
 from app.fetchers.base import BaseFetcher, FetchContext, FetchResult
 
 logger = logging.getLogger(__name__)
+
+# 暫態錯誤：值得重試的例外類型
+_TRANSIENT_ERRORS = (
+    httpx.ConnectError,
+    httpx.TimeoutException,
+    ConnectionError,
+    OSError,
+)
 
 _PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
@@ -88,6 +97,7 @@ class ConfiguredFetcher(BaseFetcher):
                 if ctx.tenant_group is not None
                 else "default"
             ),
+            "maintenance_id": ctx.maintenance_id or "",
             **ctx.params,  # 允許動態覆蓋或添加額外變數
         }
         # ctx.params 中的同名 key 會覆蓋上面的預設值
@@ -104,39 +114,58 @@ class ConfiguredFetcher(BaseFetcher):
             k: v for k, v in all_vars.items() if k not in placeholders
         }
 
-        # ── GET request ──
+        # ── GET request (with retry for transient errors) ──
         timeout = source_config.timeout
+        max_retries = 2
+        last_error: Exception | None = None
 
-        try:
-            client = ctx.http or httpx.AsyncClient(timeout=timeout)
-            own_client = ctx.http is None
-
+        for attempt in range(max_retries + 1):
             try:
-                resp = await client.get(url, params=query_params, timeout=timeout)
-                resp.raise_for_status()
-                return FetchResult(raw_output=resp.text)
-            finally:
-                if own_client:
-                    await client.aclose()
+                client = ctx.http or httpx.AsyncClient(timeout=timeout)
+                own_client = ctx.http is None
 
-        except httpx.HTTPStatusError as e:
-            return FetchResult(
-                raw_output="",
-                success=False,
-                error=f"HTTP {e.response.status_code}: {e.response.text[:200]}",
-            )
-        except httpx.TimeoutException:
-            return FetchResult(
-                raw_output="",
-                success=False,
-                error=f"Timeout after {timeout}s for {ctx.switch_ip} ({self.fetch_type})",
-            )
-        except Exception as e:
-            return FetchResult(
-                raw_output="",
-                success=False,
-                error=f"{type(e).__name__}: {e}",
-            )
+                try:
+                    resp = await client.get(url, params=query_params, timeout=timeout)
+                    resp.raise_for_status()
+                    return FetchResult(raw_output=resp.text)
+                finally:
+                    if own_client:
+                        await client.aclose()
+
+            except httpx.HTTPStatusError as e:
+                # 伺服器明確回應錯誤 → 不重試
+                return FetchResult(
+                    raw_output="",
+                    success=False,
+                    error=f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+                )
+            except _TRANSIENT_ERRORS as e:
+                last_error = e
+                if attempt < max_retries:
+                    wait = (attempt + 1) * 1.0  # 1s, 2s
+                    logger.warning(
+                        "Transient error fetching %s from %s (attempt %d/%d, "
+                        "retry in %.0fs): %s",
+                        self.fetch_type, ctx.switch_ip,
+                        attempt + 1, max_retries + 1, wait, e,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                # 重試用盡
+                break
+            except Exception as e:
+                return FetchResult(
+                    raw_output="",
+                    success=False,
+                    error=f"{type(e).__name__}: {e}",
+                )
+
+        # 重試全部失敗 → 回傳最後的錯誤
+        return FetchResult(
+            raw_output="",
+            success=False,
+            error=f"Failed after {max_retries + 1} attempts: {last_error}",
+        )
 
     def __repr__(self) -> str:
         return (

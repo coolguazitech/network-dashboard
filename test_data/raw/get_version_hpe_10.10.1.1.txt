@@ -1,0 +1,12 @@
+HPE Comware Platform Software
+Comware Software, Version 7.1.070, Release 6635P07
+Copyright (c) 2010-2024 Hewlett Packard Enterprise Development LP
+HPE FF 5710 48SFP+ 6QS 2SL Switch
+Uptime is 0 weeks, 1 day, 3 hours, 22 minutes
+ CPU     #0 99% idle
+Serial Number : CN12345678
+
+Slot 1:
+Uptime is 0 weeks, 1 day, 3 hours, 22 minutes
+HPE FF 5710 48SFP+ 6QS 2SL Switch  with 1 Processor
+4096M    bytes SDRAM

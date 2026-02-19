@@ -21,7 +21,9 @@ router = APIRouter()  # 不要在這裡設置 prefix
 
 
 @router.get("/config/frontend")
-async def get_frontend_config() -> dict[str, Any]:
+async def get_frontend_config(
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> dict[str, Any]:
     """
     獲取前端配置參數。
 
@@ -30,14 +32,11 @@ async def get_frontend_config() -> dict[str, Any]:
             - polling_interval_seconds: 前端 polling 間隔（秒）
             - checkpoint_interval_minutes: Checkpoint 快照週期（分鐘）
             - collection_interval_seconds: 後端資料採集間隔（秒）
-            - mock_converge_time_seconds: Mock 收斂時間 T（秒）
     """
     return {
         "polling_interval_seconds": settings.frontend_polling_interval_seconds,
         "checkpoint_interval_minutes": settings.checkpoint_interval_minutes,
         "collection_interval_seconds": settings.collection_interval_seconds,
-        "mock_converge_time_seconds": settings.mock_ping_converge_time,
-        "use_mock_api": settings.use_mock_api,
     }
 
 

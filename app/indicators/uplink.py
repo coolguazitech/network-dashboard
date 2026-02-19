@@ -2,7 +2,7 @@
 Uplink indicator evaluator.
 
 驗證 NEW phase 的 uplink 拓樸是否符合預期。
-Uses typed NeighborRecord table instead of CollectionRecord JSON blobs.
+Uses typed UplinkRecord table via NeighborRecordRepo.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import NeighborRecord, UplinkExpectation
+from app.db.models import UplinkExpectation, NeighborRecord
 from app.repositories.typed_records import NeighborRecordRepo
 from app.indicators.base import (
     BaseIndicator,

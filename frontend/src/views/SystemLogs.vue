@@ -5,6 +5,7 @@
       <h1 class="text-xl font-bold text-white">系統日誌</h1>
       <div class="flex gap-2">
         <button
+          v-if="canWrite"
           @click="showCleanupModal = true"
           class="px-3 py-1.5 text-sm bg-red-600/20 text-red-400 border border-red-600/30 rounded hover:bg-red-600/30 transition"
         >
@@ -21,38 +22,50 @@
 
     <!-- 統計卡片 -->
     <div class="grid grid-cols-4 gap-3">
-      <div
+      <button
         @click="filterByLevel('ERROR')"
-        class="bg-slate-800 border rounded-lg p-3 text-center cursor-pointer transition hover:bg-slate-700/60"
-        :class="filters.level === 'ERROR' ? 'border-red-500 ring-1 ring-red-500/40' : 'border-red-500/20'"
+        class="card-stagger bg-slate-800/70 backdrop-blur-sm border rounded-xl p-3 text-center cursor-pointer transition-all duration-300 hover:-translate-y-0.5"
+        style="animation-delay: 0ms"
+        :class="filters.level === 'ERROR'
+          ? 'border-red-500/60 ring-1 ring-red-500/30 shadow-lg shadow-red-500/10'
+          : 'border-red-500/15 hover:border-red-500/30 hover:shadow-lg hover:shadow-red-500/5'"
       >
-        <div class="text-2xl font-bold text-red-400">{{ stats.error }}</div>
+        <div class="text-2xl font-bold tabular-nums text-red-400" style="text-shadow: 0 0 20px rgba(248,113,113,0.3)">{{ animError }}</div>
         <div class="text-xs text-slate-400 mt-1">ERROR</div>
-      </div>
-      <div
+      </button>
+      <button
         @click="filterByLevel('WARNING')"
-        class="bg-slate-800 border rounded-lg p-3 text-center cursor-pointer transition hover:bg-slate-700/60"
-        :class="filters.level === 'WARNING' ? 'border-yellow-500 ring-1 ring-yellow-500/40' : 'border-yellow-500/20'"
+        class="card-stagger bg-slate-800/70 backdrop-blur-sm border rounded-xl p-3 text-center cursor-pointer transition-all duration-300 hover:-translate-y-0.5"
+        style="animation-delay: 80ms"
+        :class="filters.level === 'WARNING'
+          ? 'border-yellow-500/60 ring-1 ring-yellow-500/30 shadow-lg shadow-yellow-500/10'
+          : 'border-yellow-500/15 hover:border-yellow-500/30 hover:shadow-lg hover:shadow-yellow-500/5'"
       >
-        <div class="text-2xl font-bold text-yellow-400">{{ stats.warning }}</div>
+        <div class="text-2xl font-bold tabular-nums text-yellow-400" style="text-shadow: 0 0 20px rgba(250,204,21,0.3)">{{ animWarning }}</div>
         <div class="text-xs text-slate-400 mt-1">WARNING</div>
-      </div>
-      <div
+      </button>
+      <button
         @click="filterByLevel('INFO')"
-        class="bg-slate-800 border rounded-lg p-3 text-center cursor-pointer transition hover:bg-slate-700/60"
-        :class="filters.level === 'INFO' ? 'border-blue-500 ring-1 ring-blue-500/40' : 'border-blue-500/20'"
+        class="card-stagger bg-slate-800/70 backdrop-blur-sm border rounded-xl p-3 text-center cursor-pointer transition-all duration-300 hover:-translate-y-0.5"
+        style="animation-delay: 160ms"
+        :class="filters.level === 'INFO'
+          ? 'border-blue-500/60 ring-1 ring-blue-500/30 shadow-lg shadow-blue-500/10'
+          : 'border-blue-500/15 hover:border-blue-500/30 hover:shadow-lg hover:shadow-blue-500/5'"
       >
-        <div class="text-2xl font-bold text-blue-400">{{ stats.info }}</div>
+        <div class="text-2xl font-bold tabular-nums text-blue-400" style="text-shadow: 0 0 20px rgba(96,165,250,0.3)">{{ animInfo }}</div>
         <div class="text-xs text-slate-400 mt-1">INFO</div>
-      </div>
-      <div
+      </button>
+      <button
         @click="filterByLevel('')"
-        class="bg-slate-800 border rounded-lg p-3 text-center cursor-pointer transition hover:bg-slate-700/60"
-        :class="filters.level === '' ? 'border-slate-400 ring-1 ring-slate-400/40' : 'border-slate-600/30'"
+        class="card-stagger bg-slate-800/70 backdrop-blur-sm border rounded-xl p-3 text-center cursor-pointer transition-all duration-300 hover:-translate-y-0.5"
+        style="animation-delay: 240ms"
+        :class="filters.level === ''
+          ? 'border-slate-400/60 ring-1 ring-slate-400/30 shadow-lg shadow-slate-400/10'
+          : 'border-slate-600/20 hover:border-slate-500/30 hover:shadow-lg hover:shadow-slate-400/5'"
       >
-        <div class="text-2xl font-bold text-slate-300">{{ stats.total }}</div>
+        <div class="text-2xl font-bold tabular-nums text-slate-300">{{ animTotal }}</div>
         <div class="text-xs text-slate-400 mt-1">全部</div>
-      </div>
+      </button>
     </div>
 
     <!-- 過濾條件 -->
@@ -242,12 +255,13 @@
     </div>
 
     <!-- 清理確認 Modal -->
+    <Transition name="modal">
     <div
       v-if="showCleanupModal"
-      class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       @click.self="showCleanupModal = false"
     >
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-2xl w-full max-w-sm p-5">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-sm p-5">
         <h3 class="text-lg font-bold text-white mb-4">清理舊日誌</h3>
         <div class="mb-4">
           <label class="block text-sm text-slate-400 mb-1">保留最近幾天的日誌？（0 = 全部刪除）</label>
@@ -275,14 +289,17 @@
         </div>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, toRef } from 'vue'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
-import { getAuthHeaders } from '@/utils/auth'
+import api from '@/utils/api'
+import { canWrite } from '@/utils/auth'
+import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 
 dayjs.extend(utc)
 
@@ -294,6 +311,10 @@ const pageSize = 50
 const totalPages = ref(0)
 const expandedIds = ref(new Set())
 const stats = reactive({ error: 0, warning: 0, info: 0, total: 0 })
+const { displayed: animError } = useAnimatedNumber(toRef(stats, 'error'))
+const { displayed: animWarning } = useAnimatedNumber(toRef(stats, 'warning'))
+const { displayed: animInfo } = useAnimatedNumber(toRef(stats, 'info'))
+const { displayed: animTotal } = useAnimatedNumber(toRef(stats, 'total'))
 const showCleanupModal = ref(false)
 const cleanupDays = ref(30)
 const maintenanceList = ref([])
@@ -360,15 +381,10 @@ async function loadLogs() {
     if (filters.search) params.set('search', filters.search)
     if (filters.maintenance_id) params.set('maintenance_id', filters.maintenance_id)
 
-    const res = await fetch(`/api/v1/system-logs?${params}`, {
-      headers: getAuthHeaders(),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      logs.value = data.items
-      total.value = data.total
-      totalPages.value = data.total_pages
-    }
+    const { data } = await api.get(`/system-logs?${params}`)
+    logs.value = data.items
+    total.value = data.total
+    totalPages.value = data.total_pages
   } catch (e) {
     console.error('載入日誌失敗:', e)
   } finally {
@@ -379,16 +395,11 @@ async function loadLogs() {
 
 async function loadStats() {
   try {
-    const res = await fetch('/api/v1/system-logs/stats', {
-      headers: getAuthHeaders(),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      stats.error = data.error
-      stats.warning = data.warning
-      stats.info = data.info
-      stats.total = data.total
-    }
+    const { data } = await api.get('/system-logs/stats')
+    stats.error = data.error
+    stats.warning = data.warning
+    stats.info = data.info
+    stats.total = data.total
   } catch (e) {
     console.error('載入統計失敗:', e)
   }
@@ -417,16 +428,10 @@ function resetFilters() {
 
 async function doCleanup() {
   try {
-    const res = await fetch(`/api/v1/system-logs/cleanup?retain_days=${cleanupDays.value}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      showCleanupModal.value = false
-      alert(`已清理 ${data.deleted_count} 筆舊日誌`)
-      loadLogs()
-    }
+    const { data } = await api.delete(`/system-logs/cleanup?retain_days=${cleanupDays.value}`)
+    showCleanupModal.value = false
+    alert(`已清理 ${data.deleted_count} 筆舊日誌`)
+    loadLogs()
   } catch (e) {
     console.error('清理日誌失敗:', e)
   }
@@ -434,12 +439,8 @@ async function doCleanup() {
 
 async function loadMaintenanceList() {
   try {
-    const res = await fetch('/api/v1/maintenance', {
-      headers: getAuthHeaders(),
-    })
-    if (res.ok) {
-      maintenanceList.value = await res.json()
-    }
+    const { data } = await api.get('/maintenance')
+    maintenanceList.value = data
   } catch (e) {
     console.error('載入歲修列表失敗:', e)
   }

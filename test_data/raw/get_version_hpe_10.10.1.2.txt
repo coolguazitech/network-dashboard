@@ -1,0 +1,6 @@
+HPE Comware Platform Software
+Comware Software, Version 7.1.070, Release 6635P07
+Copyright (c) 2010-2024 Hewlett Packard Enterprise Development LP
+HPE FF 5710 24SFP+ 6QS 2SL Switch
+Uptime is 2 weeks, 3 days, 12 hours, 45 minutes
+Serial Number : CN98765432

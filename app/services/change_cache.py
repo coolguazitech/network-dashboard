@@ -88,19 +88,32 @@ class ClientChangeCache:
 
     def __init__(self) -> None:
         self._store: dict[str, str] = {}
+        self._pending: dict[str, str] = {}
 
     def has_changed(
         self,
         maintenance_id: str,
         records: list[Any],
     ) -> bool:
-        """比對 hash，回傳 True 表示資料有變化（或首次見到）。"""
+        """比對 hash，回傳 True 表示資料有變化（或首次見到）。
+
+        注意：此方法只做檢查，不更新快取。
+        DB 寫入成功後必須呼叫 ``accept()`` 才會真正更新快取，
+        避免 DB 失敗時快取已更新導致資料永久跳過。
+        """
         new_hash = compute_client_hash(records)
         old_hash = self._store.get(maintenance_id)
         if old_hash == new_hash:
             return False
-        self._store[maintenance_id] = new_hash
+        self._pending[maintenance_id] = new_hash
         return True
+
+    def accept(self, maintenance_id: str) -> None:
+        """DB 寫入成功後呼叫，將 pending hash 正式寫入快取。"""
+        pending = self._pending.pop(maintenance_id, None)
+        if pending is not None:
+            self._store[maintenance_id] = pending
 
     def clear(self) -> None:
         self._store.clear()
+        self._pending.clear()

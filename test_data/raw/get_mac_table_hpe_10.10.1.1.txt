@@ -1,0 +1,4 @@
+MAC ADDR          VLAN ID  STATE          PORT INDEX               AGING TIME(s)
+000c-29aa-bb01    100      Learned        GigabitEthernet1/0/1     AGING
+000c-29aa-bb02    200      Learned        GigabitEthernet1/0/2     AGING
+000c-29aa-bb03    10       Security       GigabitEthernet1/0/3     NOAGED

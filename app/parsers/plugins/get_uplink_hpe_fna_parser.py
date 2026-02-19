@@ -3,6 +3,18 @@ Parser for 'get_uplink_hpe_fna' API.
 
 Parses HPE Comware `display lldp neighbor-information` output to extract
 LLDP neighbor details (remote hostname, interface, platform).
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class NeighborData(ParsedData):
+    local_interface: str                     # local port, e.g. "GigabitEthernet0/1"
+    remote_hostname: str                     # neighbor device name
+    remote_interface: str                    # neighbor port
+    remote_platform: str | None = None       # optional platform description
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: display lldp neighbor-information list
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 
@@ -17,8 +29,14 @@ class GetUplinkHpeFnaParser(BaseParser[NeighborData]):
     """
     Parser for HPE Comware ``display lldp neighbor-information`` output.
 
-    Real CLI output (ref: NTC-templates
-    ``hp_comware_display_lldp_neighbor-information_verbose.raw``)::
+    The real ``display lldp neighbor-information list`` returns a tabular summary::
+
+        System Name  Local Interface         Chassis ID          Port ID
+        CORE-SW-01   GigabitEthernet1/0/25   000c-29aa-bb01      HGE1/0/1
+        CORE-SW-02   GigabitEthernet1/0/26   000c-29aa-bb02      HGE1/0/2
+
+    The FNA API may return the verbose format instead
+    (ref: NTC-templates ``hp_comware_display_lldp_neighbor-information_verbose.raw``)::
 
         LLDP neighbor-information of port 25[GigabitEthernet1/0/25]:
           Neighbor index                   : 1
@@ -43,9 +61,11 @@ class GetUplinkHpeFnaParser(BaseParser[NeighborData]):
           System description               : HPE Comware Platform Software
 
     Notes:
+        - This parser handles the **verbose** (key-value block) format.
         - Blocks split by ``LLDP neighbor-information of port N[IntfName]:``.
         - Local interface extracted from ``[IntfName]`` in header.
         - Required: System name, Port ID. System description is optional.
+        - If FNA returns the list (tabular) format, parser may need adjustment.
     """
 
     device_type = DeviceType.HPE
@@ -53,7 +73,7 @@ class GetUplinkHpeFnaParser(BaseParser[NeighborData]):
 
     # Match block header to extract local interface name from brackets
     BLOCK_HEADER_PATTERN = re.compile(
-        r'LLDP neighbor-information of port\s+\d+\s+\[(?P<local_intf>[^\]]+)\]',
+        r'LLDP neighbor-information of port\s+\d+\s*\[(?P<local_intf>[^\]]+)\]',
         re.IGNORECASE,
     )
 

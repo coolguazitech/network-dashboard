@@ -6,12 +6,13 @@ Sanity Check 報告匯出功能的 API 端點。
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.endpoints.auth import get_current_user
 from app.db.base import get_async_session
 from app.services.indicator_service import IndicatorService
 from app.services.report_service import ReportService
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/reports", tags=["Reports"])
 @router.get("/maintenance/{maintenance_id}/preview")
 async def preview_report(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
@@ -61,6 +63,7 @@ async def preview_report(
 @router.get("/maintenance/{maintenance_id}/export", response_class=HTMLResponse)
 async def export_report_html(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     include_details: bool = True,
     session: AsyncSession = Depends(get_async_session),
 ) -> HTMLResponse:

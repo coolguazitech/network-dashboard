@@ -76,7 +76,7 @@ docker-compose up -d
 uvicorn app.main:app --reload --port 8000
 ```
 
-開發模式下 `USE_MOCK_API=true`（預設），MockFetcher 在記憶體產生資料，不需外部 API。
+開發模式下透過 `docker-compose.dev.yaml` 啟動獨立的 Mock API Server，自動產生具有時間收斂行為的模擬資料，不需外部 API。
 
 前端已預編譯至 `static/`，FastAPI 直接 serve；若需開發前端：
 
@@ -101,7 +101,7 @@ scheduler.yaml 定義 fetcher name + source + interval
 
 關鍵設計：
 - **採集與評估分離** — Fetcher/Parser 寫 DB，Indicator 從 DB 讀取評估，互不阻塞
-- **一行切換 Mock / Real** — `USE_MOCK_API` 切換，Service 層零改動
+- **Mock 解耦** — Mock API Server 獨立容器，主應用零 mock 程式碼
 - **智慧快取** — SHA-256 hash 偵測資料變化，不變不寫 DB
 - **Per-maintenance 閾值** — 每場歲修獨立閾值設定
 
@@ -138,8 +138,7 @@ app/
 ├── fetchers/
 │   ├── base.py                    # BaseFetcher, FetchContext, FetchResult
 │   ├── registry.py                # FetcherRegistry + setup_fetchers()
-│   ├── configured.py              # ConfiguredFetcher (通用 HTTP GET)
-│   └── mock.py                    # MockFetcher 實作 (開發測試用)
+│   └── configured.py              # ConfiguredFetcher (通用 HTTP GET)
 ├── indicators/                    # 8 種指標評估器 (BaseIndicator)
 ├── parsers/
 │   ├── protocols.py               # BaseParser, ParsedData 型別
@@ -160,8 +159,10 @@ config/
 ├── scheduler.yaml                 # 排程設定 (fetcher name, source, interval)
 └── client_comparison.yaml         # Client 比對設定
 
+mock_server/                       # 獨立 Mock API Server (Docker 容器)
+
 frontend/                          # Vue 3 + Vite + Tailwind + ECharts
-docker-compose.yml                 # 開發用 (MariaDB + phpMyAdmin)
+docker-compose.dev.yaml            # 開發用 (app + db + mock-api + phpMyAdmin)
 docker-compose.production.yml      # 生產部署 (app + db + phpMyAdmin)
 ```
 
@@ -176,7 +177,6 @@ docker-compose.production.yml      # 生產部署 (app + db + phpMyAdmin)
 | `DB_HOST` | `localhost` | MariaDB 位址 |
 | `DB_PORT` | `3306` | MariaDB 埠號 |
 | `DB_NAME` | `netora` | 資料庫名稱 |
-| `USE_MOCK_API` | `true` | `true` = MockFetcher；`false` = 打真實 API |
 | `JWT_SECRET` | — | JWT 簽名金鑰（生產環境必改） |
 | `FETCHER_SOURCE__FNA__BASE_URL` | `http://localhost:8001` | FNA API 位址 |
 | `FETCHER_SOURCE__DNA__BASE_URL` | `http://localhost:8001` | DNA API 位址 |

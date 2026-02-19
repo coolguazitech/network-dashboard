@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
+from app.api.endpoints.auth import get_current_user, require_write
 from app.db.base import get_session_context
 from app.db.models import Contact, ContactCategory
 
@@ -106,7 +107,10 @@ class ContactResponse(BaseModel):
 
 
 @router.get("/categories/{maintenance_id}", response_model=list[ContactCategoryResponse])
-async def list_contact_categories(maintenance_id: str) -> list[dict[str, Any]]:
+async def list_contact_categories(
+    maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> list[dict[str, Any]]:
     """獲取該歲修的所有通訊錄分類。"""
     async with get_session_context() as session:
         stmt = (
@@ -140,7 +144,10 @@ async def list_contact_categories(maintenance_id: str) -> list[dict[str, Any]]:
 
 
 @router.post("/categories", response_model=ContactCategoryResponse)
-async def create_contact_category(data: ContactCategoryCreate) -> dict[str, Any]:
+async def create_contact_category(
+    _user: Annotated[dict[str, Any], Depends(require_write())],
+    data: ContactCategoryCreate,
+) -> dict[str, Any]:
     """創建通訊錄分類。"""
     async with get_session_context() as session:
         # 檢查名稱重複
@@ -191,6 +198,7 @@ async def create_contact_category(data: ContactCategoryCreate) -> dict[str, Any]
 @router.put("/categories/{category_id}", response_model=ContactCategoryResponse)
 async def update_contact_category(
     category_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: ContactCategoryUpdate,
 ) -> dict[str, Any]:
     """更新通訊錄分類。"""
@@ -241,7 +249,10 @@ async def update_contact_category(
 
 
 @router.delete("/categories/{category_id}")
-async def delete_contact_category(category_id: int) -> dict[str, str]:
+async def delete_contact_category(
+    category_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
+) -> dict[str, str]:
     """刪除通訊錄分類（硬刪除），並將該分類下的聯絡人移至未分類。"""
     async with get_session_context() as session:
         stmt = select(ContactCategory).where(ContactCategory.id == category_id)
@@ -275,6 +286,7 @@ async def delete_contact_category(category_id: int) -> dict[str, str]:
 @router.get("/{maintenance_id}", response_model=list[ContactResponse])
 async def list_contacts(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
     category_id: int | None = None,
     search: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -332,6 +344,7 @@ async def list_contacts(
 @router.post("/{maintenance_id}", response_model=ContactResponse)
 async def create_contact(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: ContactCreate,
 ) -> dict[str, Any]:
     """新增聯絡人。"""
@@ -388,6 +401,7 @@ async def create_contact(
 async def update_contact(
     maintenance_id: str,
     contact_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     data: ContactUpdate,
 ) -> dict[str, Any]:
     """更新聯絡人。"""
@@ -448,7 +462,11 @@ async def update_contact(
 
 
 @router.delete("/{maintenance_id}/{contact_id}")
-async def delete_contact(maintenance_id: str, contact_id: int) -> dict[str, str]:
+async def delete_contact(
+    maintenance_id: str,
+    contact_id: int,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
+) -> dict[str, str]:
     """刪除聯絡人。"""
     async with get_session_context() as session:
         stmt = select(Contact).where(
@@ -470,6 +488,7 @@ async def delete_contact(maintenance_id: str, contact_id: int) -> dict[str, str]
 @router.post("/{maintenance_id}/import-csv")
 async def import_contacts_csv(
     maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     """

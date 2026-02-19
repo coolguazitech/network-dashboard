@@ -1,4 +1,20 @@
-"""Parser for 'get_error_count_hpe_fna' API."""
+"""
+Parser for 'get_error_count_hpe_fna' API.
+
+Parses HPE Comware ``display counters inbound interface`` and
+``display counters outbound interface`` output to extract per-interface
+error counters.
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class InterfaceErrorData(ParsedData):
+    interface_name: str                      # e.g. "Gi1/0/1", "GE1/0/1"
+    crc_errors: int = 0                      # CRC error count only, >= 0
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: display counters inbound interface / display counters outbound interface
+=== End Real CLI Command ===
+"""
 from __future__ import annotations
 
 import re
@@ -12,9 +28,22 @@ class GetErrorCountHpeFnaParser(BaseParser[InterfaceErrorData]):
     """
     Parser for HPE Comware error counter output.
 
-    Handles two formats:
+    Handles three formats:
 
-    Format A — ``display interface`` per-interface blocks
+    Format A — ``display counters inbound interface`` (real CLI)::
+
+        Interface             Total(pkts)  Broadcast   Multicast  Err(pkts)
+        GE1/0/1                    123456       1234         567          0
+        GE1/0/2                     98765        876         432          5
+        XGE1/0/25                  654321       5432        1234          0
+
+    ``display counters outbound interface``::
+
+        Interface             Total(pkts)  Broadcast   Multicast  Err(pkts)
+        GE1/0/1                    234567       2345         678          0
+        GE1/0/2                    187654       1876         543          1
+
+    Format B — ``display interface`` per-interface blocks
     (ref: NTC-templates ``hp_comware_display_interface.raw``)::
 
         GigabitEthernet1/0/1
@@ -22,20 +51,18 @@ class GetErrorCountHpeFnaParser(BaseParser[InterfaceErrorData]):
         ...
         Input:  0 input errors, 0 runts, 0 giants, 0 throttles
                 0 CRC, 0 frame, 0 overruns, 0 aborts
-                0 ignored, 0 parity errors
         ...
         Output: 0 output errors, 0 underruns, 0 buffer failures
-                0 aborts, 0 deferred, 0 collisions, 0 late collisions
 
-    Format B — simplified FNA tabular format::
+    Format C — simplified FNA tabular format::
 
         Interface            Input(errs)       Output(errs)
         GE1/0/1                        0                  0
         GE1/0/2                        5                  1
 
     Parsing rules:
-    - Format A: ``crc_errors`` = input_errors + output_errors per interface.
-    - Format B: ``crc_errors`` = Input(errs) + Output(errs).
+    - Format A/C: ``crc_errors`` = sum of all error columns.
+    - Format B: ``crc_errors`` = input_errors + output_errors per interface.
     """
 
     device_type = DeviceType.HPE

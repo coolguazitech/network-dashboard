@@ -1,0 +1,5 @@
+Slot 1:
+FanID    Status      Direction
+1        Normal      Back-to-front
+2        Normal      Back-to-front
+3        Absent      Back-to-front

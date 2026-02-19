@@ -307,7 +307,7 @@ async def list_maintenances_public(
     公開端點：取得可供註冊的歲修列表。
 
     此端點不需要認證，用於訪客註冊時選擇歲修。
-    只回傳啟用中的歲修的基本資訊（id 和 name）。
+    回傳所有歲修的基本資訊（id 和 name），不限定 is_active。
     """
     stmt = select(MaintenanceConfig).order_by(MaintenanceConfig.created_at.desc())
     result = await session.execute(stmt)
@@ -319,5 +319,4 @@ async def list_maintenances_public(
             "name": c.name or c.maintenance_id,
         }
         for c in configs
-        if c.is_active
     ]

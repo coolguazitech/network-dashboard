@@ -1,0 +1,38 @@
+Ethernet1/1
+    transceiver is present
+    type is 10Gbase-SR
+    name is CISCO-AVAGO
+    part number is SFBR-7702SDZ-CS5
+    revision is G2.5
+    serial number is AVD2048E1A6
+    nominal bitrate is 10300 MBit/sec
+    cisco id is --
+    cisco extended id number is 4
+
+    SFP Detail Diagnostics Information (internal calibration)
+    ------------------------------------------------------------
+                           High Alarm  High Warn  Low Warn   Low Alarm
+           Measurement     Threshold   Threshold  Threshold  Threshold
+    ----------  ----------  ----------  ----------  ----------
+        Temperature  34.41 C      75.00 C     70.00 C    0.00 C     -5.00 C
+        Voltage      3.22 V       3.63 V      3.46 V     2.97 V     3.13 V
+        Current      9.89 mA      70.00 mA    68.00 mA   1.00 mA    2.00 mA
+        Tx Power    -1.29 dBm     3.49 dBm    0.49 dBm  -12.19 dBm -8.19 dBm
+        Rx Power    -9.26 dBm     3.49 dBm    0.49 dBm  -18.38 dBm -14.40 dBm
+        Transmit Fault Count = 0
+
+Ethernet1/2
+    transceiver is present
+    type is 10Gbase-SR
+
+    SFP Detail Diagnostics Information (internal calibration)
+    ------------------------------------------------------------
+                           High Alarm  High Warn  Low Warn   Low Alarm
+           Measurement     Threshold   Threshold  Threshold  Threshold
+    ----------  ----------  ----------  ----------  ----------
+        Temperature  33.50 C      75.00 C     70.00 C    0.00 C     -5.00 C
+        Voltage      3.25 V       3.63 V      3.46 V     2.97 V     3.13 V
+        Current      9.50 mA      70.00 mA    68.00 mA   1.00 mA    2.00 mA
+        Tx Power    -1.50 dBm     3.49 dBm    0.49 dBm  -12.19 dBm -8.19 dBm
+        Rx Power    -8.80 dBm     3.49 dBm    0.49 dBm  -18.38 dBm -14.40 dBm
+        Transmit Fault Count = 0

@@ -30,9 +30,6 @@
         <div class="flex justify-between items-center">
           <h3 class="text-white font-semibold">Client 清單</h3>
           <div class="flex gap-2">
-            <button v-if="userCanWrite" @click="showCategoryModal = true" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-sm rounded transition">
-              🏷️ 管理分類
-            </button>
             <button @click="downloadMacTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
               📄 下載範本
             </button>
@@ -51,81 +48,34 @@
         </div>
 
         <div v-else>
-          <!-- 統計卡片 -->
-          <div class="grid grid-cols-7 gap-2 mb-4">
-            <div class="bg-slate-900/60 rounded p-2 text-center">
-              <div class="text-xl font-bold text-slate-200">{{ macListStats.total }}</div>
-              <div class="text-xs text-slate-400">總數</div>
-            </div>
-            <div class="bg-slate-900/60 rounded p-2 text-center">
-              <div class="text-xl font-bold text-green-400">{{ macListStats.detected || 0 }}</div>
-              <div class="text-xs text-slate-400">已偵測</div>
-            </div>
-            <div class="bg-slate-900/60 rounded p-2 text-center">
-              <div class="text-xl font-bold text-red-400">{{ macListStats.mismatch || 0 }}</div>
-              <div class="text-xs text-slate-400">不匹配</div>
-            </div>
-            <div class="bg-slate-900/60 rounded p-2 text-center">
-              <div class="text-xl font-bold text-slate-500">{{ macListStats.not_detected || 0 }}</div>
-              <div class="text-xs text-slate-400">未偵測</div>
-            </div>
-            <div class="bg-slate-900/60 rounded p-2 text-center">
-              <div class="text-xl font-bold text-slate-600">{{ macListStats.not_checked || 0 }}</div>
-              <div class="text-xs text-slate-400">未檢查</div>
-            </div>
-            <div class="bg-slate-900/60 rounded p-2 text-center">
-              <div class="text-xl font-bold text-cyan-400">{{ macListStats.categorized }}</div>
-              <div class="text-xs text-slate-400">已分類</div>
-            </div>
-            <div class="bg-slate-900/60 rounded p-2 text-center">
-              <div class="text-xl font-bold text-amber-400">{{ macListStats.uncategorized }}</div>
-              <div class="text-xs text-slate-400">未分類</div>
-            </div>
+          <!-- 統計 -->
+          <div class="mb-4">
+            <span class="text-sm text-slate-400">共 <span class="text-slate-200 font-bold">{{ macListStats.total }}</span> 筆</span>
           </div>
 
-          <!-- 搜尋框 -->
-          <div class="mb-3">
+          <!-- 搜尋和匯出 -->
+          <div class="flex gap-3 mb-3">
             <input
               v-model="macSearch"
               type="text"
               placeholder="搜尋 MAC、IP 或備註..."
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
+              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
               @input="debouncedLoadMacList"
             />
+            <button @click="exportMacCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition">
+              📤 匯出 CSV
+            </button>
           </div>
 
-          <!-- 篩選器和批量操作 -->
-          <div class="flex justify-between items-center mb-3">
-            <div class="flex gap-3">
-              <select v-model="macFilterStatus" @change="loadMacList" class="px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
-                <option value="all">全部狀態</option>
-                <option value="detected">🟢 已偵測</option>
-                <option value="mismatch">🔴 不匹配</option>
-                <option value="not_detected">⚪ 未偵測</option>
-                <option value="not_checked">⚙️ 未檢查</option>
-              </select>
-              <select v-model="macFilterCategory" @change="loadMacList" class="px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
-                <option value="all">全部分類</option>
-                <option value="uncategorized">未分類</option>
-                <option v-for="cat in categories" :key="cat.id" :value="String(cat.id)">{{ cat.name }}</option>
-              </select>
-              <button @click="exportMacCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition">
-                📤 匯出 CSV
-              </button>
-            </div>
-            <!-- 批量操作 -->
-            <div v-if="selectedMacs.length > 0" class="flex items-center gap-2">
-              <span class="text-sm text-slate-400">已選 {{ selectedMacs.length }} 筆</span>
-              <button @click="openBatchCategory" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-sm rounded transition">
-                📁 批量分類
-              </button>
-              <button v-if="userCanWrite" @click="batchDeleteMacs" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
-                🗑️ 批量刪除
-              </button>
-              <button @click="clearSelection" class="px-2 py-1.5 text-slate-400 hover:text-white text-sm">
-                ✕ 清除
-              </button>
-            </div>
+          <!-- 批量操作 -->
+          <div v-if="selectedMacs.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
+            <span class="text-sm text-cyan-300">已選 {{ selectedMacs.length }} 筆</span>
+            <button v-if="userCanWrite" @click="batchDeleteMacs" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
+              🗑️ 批量刪除
+            </button>
+            <button @click="clearSelection" class="px-2 py-1.5 text-slate-400 hover:text-white text-sm">
+              ✕ 清除
+            </button>
           </div>
 
           <!-- Client 列表 -->
@@ -139,41 +89,38 @@
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">MAC 地址</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">IP 地址</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">Tenant</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">偵測狀態</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">分類</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">備註</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">預設負責人</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-700">
-                <tr v-for="mac in macList" :key="mac.id" class="hover:bg-slate-700/50 transition" :class="{ 'bg-cyan-900/20': selectedMacs.includes(mac.id) }">
+                <tr v-for="(mac, index) in macList" :key="mac.id" class="hover:bg-slate-700/50 transition row-stagger" :class="{ 'bg-cyan-900/20': selectedMacs.includes(mac.id) }" :style="{ animationDelay: index * 30 + 'ms' }">
                   <td class="px-2 py-2 text-center">
                     <input type="checkbox" :value="mac.id" v-model="selectedMacs" class="rounded border-slate-500" />
                   </td>
                   <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ mac.mac_address }}</td>
-                  <td class="px-3 py-2 font-mono text-slate-300 text-xs">{{ mac.ip_address }}</td>
+                  <td class="px-3 py-2 font-mono text-slate-300 text-xs">
+                    <span
+                      class="inline-block w-2 h-2 rounded-full mr-3 align-middle"
+                      :class="mac.last_ping_reachable === true
+                        ? 'ping-dot-green ping-glow-green'
+                        : mac.last_ping_reachable === false
+                          ? 'ping-dot-red ping-glow-red animate-pulse'
+                          : 'bg-slate-600'"
+                    ></span>{{ mac.ip_address }}</td>
                   <td class="px-3 py-2">
                     <span class="px-1.5 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs">{{ mac.tenant_group || 'F18' }}</span>
                   </td>
-                  <td class="px-3 py-2">
-                    <span v-if="mac.detection_status === 'detected'" class="text-green-400 text-xs">🟢 已偵測</span>
-                    <span v-else-if="mac.detection_status === 'mismatch'" class="text-red-400 text-xs">🔴 不匹配</span>
-                    <span v-else-if="mac.detection_status === 'not_detected'" class="text-slate-400 text-xs">⚪ 未偵測</span>
-                    <span v-else class="text-slate-500 text-xs">⚙️ 未檢查</span>
-                  </td>
-                  <td class="px-3 py-2">
-                    <span v-if="mac.category_name" class="px-2 py-0.5 bg-cyan-600/30 text-cyan-300 rounded text-xs">{{ mac.category_name }}</span>
-                    <span v-else class="text-slate-500 text-xs">-</span>
-                  </td>
                   <td class="px-3 py-2 text-slate-400 text-xs">{{ mac.description || '-' }}</td>
+                  <td class="px-3 py-2 text-slate-300 text-xs">{{ mac.default_assignee || '-' }}</td>
                   <td class="px-3 py-2 text-xs whitespace-nowrap">
                     <button v-if="userCanWrite" @click="editClient(mac)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
-                    <button v-if="userCanWrite" @click="openSetCategory(mac)" class="text-slate-400 hover:text-slate-300 mr-2">分類</button>
                     <button v-if="userCanWrite" @click="deleteMac(mac)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
                 </tr>
                 <tr v-if="macList.length === 0">
-                  <td colspan="8" class="px-4 py-8 text-center text-slate-500">
+                  <td colspan="7" class="px-4 py-8 text-center text-slate-500">
                     尚無 Client 資料，請匯入 CSV 或手動新增
                   </td>
                 </tr>
@@ -183,7 +130,7 @@
 
           <!-- 提示 -->
           <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：mac_address,ip_address,tenant_group,description,category（tenant_group: F18/F6/AP/F14/F12，description 和 category 選填，多分類用分號分隔如 "EQP;AMHS"）
+            💡 CSV 格式：mac_address,ip_address,tenant_group,description,default_assignee（未指定負責人則預設為系統管理員）
           </p>
         </div>
       </div>
@@ -212,28 +159,28 @@
 
         <div v-else>
           <!-- 統計卡片 -->
-          <div class="grid grid-cols-5 gap-3 mb-4">
-            <div class="bg-slate-900/60 rounded p-3 text-center">
-              <div class="text-2xl font-bold text-slate-200">{{ deviceStats.total }}</div>
-              <div class="text-xs text-slate-400">總對應數</div>
+          <div class="grid grid-cols-3 gap-3 mb-4">
+            <div class="bg-slate-900/60 rounded p-3 text-center card-stagger" style="animation-delay: 0ms">
+              <div class="text-2xl font-bold text-slate-200">{{ deviceStats.total || 0 }}</div>
+              <div class="text-xs text-slate-400">全部設備</div>
             </div>
-            <div class="bg-slate-900/60 rounded p-3 text-center">
-              <div class="text-2xl font-bold text-cyan-400">{{ deviceStats.replaced || 0 }}</div>
-              <div class="text-xs text-slate-400">更換設備</div>
-            </div>
-            <div class="bg-slate-900/60 rounded p-3 text-center">
-              <div class="text-2xl font-bold text-amber-400">{{ deviceStats.same_device || 0 }}</div>
-              <div class="text-xs text-slate-400">不更換</div>
-            </div>
-            <div class="bg-slate-900/60 rounded p-3 text-center">
-              <div class="text-2xl font-bold text-green-400">{{ deviceStats.reachable || 0 }}</div>
-              <div class="text-xs text-slate-400">可達</div>
-            </div>
-            <div class="bg-slate-900/60 rounded p-3 text-center">
-              <div class="text-2xl font-bold" :class="deviceStats.reachable_rate >= 80 ? 'text-green-400' : deviceStats.reachable_rate >= 50 ? 'text-amber-400' : 'text-red-400'">
-                {{ deviceStats.reachable_rate }}%
+            <div class="bg-slate-900/60 rounded p-3 text-center card-stagger" style="animation-delay: 80ms">
+              <div class="text-2xl font-bold text-amber-400">{{ deviceStats.old_count || 0 }}</div>
+              <div class="text-xs text-slate-400 mb-1">舊設備</div>
+              <div class="flex justify-center gap-3 text-xs">
+                <span class="text-green-400">可達 {{ deviceStats.old_reachable || 0 }}</span>
+                <span class="text-red-300">不可達 {{ deviceStats.old_unreachable || 0 }}</span>
+                <span v-if="deviceStats.old_unchecked" class="text-slate-500">未檢測 {{ deviceStats.old_unchecked }}</span>
               </div>
-              <div class="text-xs text-slate-400">可達率</div>
+            </div>
+            <div class="bg-slate-900/60 rounded p-3 text-center card-stagger" style="animation-delay: 160ms">
+              <div class="text-2xl font-bold text-cyan-400">{{ deviceStats.new_count || 0 }}</div>
+              <div class="text-xs text-slate-400 mb-1">新設備</div>
+              <div class="flex justify-center gap-3 text-xs">
+                <span class="text-green-400">可達 {{ deviceStats.new_reachable || 0 }}</span>
+                <span class="text-red-300">不可達 {{ deviceStats.new_unreachable || 0 }}</span>
+                <span v-if="deviceStats.new_unchecked" class="text-slate-500">未檢測 {{ deviceStats.new_unchecked }}</span>
+              </div>
             </div>
           </div>
 
@@ -246,15 +193,6 @@
               class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
               @input="debouncedLoadDeviceList"
             />
-            <select v-model="deviceFilterReachable" @change="loadDeviceList" class="px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
-              <option value="">全部狀態</option>
-              <option value="old_true">🟢 舊設備可達</option>
-              <option value="old_false">🔴 舊設備不可達</option>
-              <option value="new_true">🟢 新設備可達</option>
-              <option value="new_false">🔴 新設備不可達</option>
-              <option value="any_true">✓ 任一可達</option>
-              <option value="any_false">✗ 任一不可達</option>
-            </select>
             <button @click="exportDeviceCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition">
               📤 匯出 CSV
             </button>
@@ -282,9 +220,6 @@
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="3">舊設備</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="3">新設備</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">Tenant</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">同埠</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">換機</th>
-                  <th class="px-3 py-2 text-center text-xs font-medium text-slate-400 uppercase" colspan="2">可達性</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">備註</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
                 </tr>
@@ -299,45 +234,39 @@
                   <th class="px-2 py-1"></th>
                   <th class="px-2 py-1"></th>
                   <th class="px-2 py-1"></th>
-                  <th class="px-2 py-1 text-center text-xs text-red-400">舊</th>
-                  <th class="px-2 py-1 text-center text-xs text-green-400">新</th>
-                  <th class="px-2 py-1"></th>
-                  <th class="px-2 py-1"></th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-700">
-                <tr v-for="device in deviceList" :key="device.id" class="hover:bg-slate-700/50 transition" :class="{ 'bg-cyan-900/20': selectedDevices.includes(device.id), 'bg-amber-900/10': device.old_hostname === device.new_hostname }">
+                <tr v-for="(device, index) in deviceList" :key="device.id" class="hover:bg-slate-700/50 transition row-stagger" :class="{ 'bg-cyan-900/20': selectedDevices.includes(device.id) }" :style="{ animationDelay: index * 30 + 'ms' }">
                   <td class="px-2 py-2 text-center">
                     <input type="checkbox" :value="device.id" v-model="selectedDevices" class="rounded border-slate-500" />
                   </td>
-                  <td class="px-2 py-2 font-mono text-red-300 text-xs">{{ device.old_hostname }}</td>
-                  <td class="px-2 py-2 font-mono text-slate-400 text-xs">{{ device.old_ip_address }}</td>
-                  <td class="px-2 py-2 text-slate-400 text-xs">{{ device.old_vendor }}</td>
-                  <td class="px-2 py-2 font-mono text-green-300 text-xs">{{ device.new_hostname }}</td>
-                  <td class="px-2 py-2 font-mono text-slate-400 text-xs">{{ device.new_ip_address }}</td>
-                  <td class="px-2 py-2 text-slate-400 text-xs">{{ device.new_vendor }}</td>
+                  <td class="px-2 py-2 font-mono text-slate-200 text-xs">{{ device.old_hostname || '-' }}</td>
+                  <td class="px-2 py-2 font-mono text-slate-400 text-xs">
+                    <span
+                      v-if="device.old_hostname"
+                      class="inline-block w-2 h-2 rounded-full mr-3 align-middle"
+                      :class="getReachability(device.old_hostname) === true
+                        ? 'ping-dot-green ping-glow-green'
+                        : getReachability(device.old_hostname) === false
+                          ? 'ping-dot-red ping-glow-red animate-pulse'
+                          : 'bg-slate-600'"
+                    ></span>{{ device.old_ip_address || '-' }}</td>
+                  <td class="px-2 py-2 text-slate-400 text-xs">{{ device.old_vendor || '-' }}</td>
+                  <td class="px-2 py-2 font-mono text-slate-200 text-xs">{{ device.new_hostname || '-' }}</td>
+                  <td class="px-2 py-2 font-mono text-slate-400 text-xs">
+                    <span
+                      v-if="device.new_hostname"
+                      class="inline-block w-2 h-2 rounded-full mr-3 align-middle"
+                      :class="getReachability(device.new_hostname) === true
+                        ? 'ping-dot-green ping-glow-green'
+                        : getReachability(device.new_hostname) === false
+                          ? 'ping-dot-red ping-glow-red animate-pulse'
+                          : 'bg-slate-600'"
+                    ></span>{{ device.new_ip_address || '-' }}</td>
+                  <td class="px-2 py-2 text-slate-400 text-xs">{{ device.new_vendor || '-' }}</td>
                   <td class="px-2 py-2">
                     <span class="px-1.5 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs">{{ device.tenant_group || 'F18' }}</span>
-                  </td>
-                  <td class="px-2 py-2">
-                    <span :class="device.use_same_port ? 'text-green-400' : 'text-slate-500'" class="text-xs">
-                      {{ device.use_same_port ? '✓' : '✗' }}
-                    </span>
-                  </td>
-                  <td class="px-2 py-2">
-                    <span :class="device.is_replaced ? 'text-orange-400' : 'text-slate-500'" class="text-xs">
-                      {{ device.is_replaced ? '是' : '否' }}
-                    </span>
-                  </td>
-                  <td class="px-2 py-2 text-center">
-                    <span v-if="device.old_is_reachable === true" class="text-green-400 text-xs">🟢</span>
-                    <span v-else-if="device.old_is_reachable === false" class="text-red-400 text-xs">🔴</span>
-                    <span v-else class="text-slate-500 text-xs">⚪</span>
-                  </td>
-                  <td class="px-2 py-2 text-center">
-                    <span v-if="device.is_reachable === true" class="text-green-400 text-xs">🟢</span>
-                    <span v-else-if="device.is_reachable === false" class="text-red-400 text-xs">🔴</span>
-                    <span v-else class="text-slate-500 text-xs">⚪</span>
                   </td>
                   <td class="px-2 py-2 text-slate-400 text-xs max-w-[150px] truncate" :title="device.description">
                     {{ device.description || '-' }}
@@ -348,7 +277,7 @@
                   </td>
                 </tr>
                 <tr v-if="deviceList.length === 0">
-                  <td colspan="14" class="px-4 py-8 text-center text-slate-500">
+                  <td colspan="10" class="px-4 py-8 text-center text-slate-500">
                     尚無設備資料，請匯入 CSV 或手動新增
                   </td>
                 </tr>
@@ -358,160 +287,16 @@
 
           <!-- 提示 -->
           <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,is_replaced,use_same_port,tenant_group,description（is_replaced: TRUE/FALSE；若不更換設備填 FALSE，新舊填同一台；tenant_group: F18/F6/AP/F14/F12）
+            💡 CSV 格式：old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,tenant_group,description（舊/新設備各三欄必須同時填寫或同時留空，至少需要填一側；tenant_group: F18/F6/AP/F14/F12）
           </p>
-        </div>
-      </div>
-
-      <!-- ARP 來源 Tab (歲修特定) -->
-      <div v-if="activeTab === 'arp'" class="space-y-4">
-        <div class="flex justify-between items-center">
-          <h3 class="text-white font-semibold">ARP 來源設備</h3>
-          <div class="flex gap-2">
-            <button @click="downloadArpTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
-              📄 下載範本
-            </button>
-            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
-              📥 匯入 CSV
-              <input type="file" accept=".csv" class="hidden" @change="importArpList" />
-            </label>
-            <button @click="openAddArp" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
-              ➕ 新增來源
-            </button>
-          </div>
-        </div>
-
-        <div v-if="!selectedMaintenanceId" class="text-center py-8 text-slate-400">
-          請先在頂部選擇歲修 ID
-        </div>
-
-        <div v-else>
-          <p class="text-sm text-slate-400 mb-3">
-            指定從哪些 Router/Gateway 獲取 ARP Table，用於對應 MAC → IP
-          </p>
-
-          <!-- 搜尋和操作 -->
-          <div class="flex gap-3 mb-3">
-            <input
-              v-model="arpSearch"
-              type="text"
-              placeholder="搜尋設備或備註..."
-              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
-              @input="loadArpList"
-            />
-            <button @click="exportArpCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition">
-              📤 匯出 CSV
-            </button>
-          </div>
-
-          <!-- 批量操作 -->
-          <div v-if="selectedArps.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
-            <span class="text-sm text-cyan-300">已選 {{ selectedArps.length }} 筆</span>
-            <button v-if="userCanWrite" @click="batchDeleteArps" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
-              🗑️ 批量刪除
-            </button>
-            <button @click="clearArpSelection" class="px-2 py-1 text-slate-400 hover:text-white text-sm">
-              ✕ 清除選擇
-            </button>
-          </div>
-
-          <div ref="arpScrollContainer" class="overflow-x-auto max-h-[400px] overflow-y-auto">
-            <table class="min-w-full text-sm">
-              <thead class="bg-slate-900/60 sticky top-0">
-                <tr>
-                  <th class="px-2 py-2 text-center">
-                    <input type="checkbox" v-model="arpSelectAll" @change="toggleArpSelectAll" class="rounded border-slate-500" />
-                  </th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">設備</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">優先級</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">備註</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-slate-700">
-                <tr v-for="arp in arpSources" :key="arp.id" class="hover:bg-slate-700/50 transition" :class="{ 'bg-cyan-900/20': selectedArps.includes(arp.id) }">
-                  <td class="px-2 py-2 text-center">
-                    <input type="checkbox" :value="arp.id" v-model="selectedArps" class="rounded border-slate-500" />
-                  </td>
-                  <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ arp.hostname }}</td>
-                  <td class="px-3 py-2 text-slate-300 text-xs">{{ arp.priority }}</td>
-                  <td class="px-3 py-2 text-slate-400 text-xs">{{ arp.description || '-' }}</td>
-                  <td class="px-3 py-2 text-xs whitespace-nowrap">
-                    <button v-if="userCanWrite" @click="editArp(arp)" class="text-cyan-400 hover:text-cyan-300 mr-2">編輯</button>
-                    <button v-if="userCanWrite" @click="deleteArpSource(arp)" class="text-red-400 hover:text-red-300">刪除</button>
-                  </td>
-                </tr>
-                <tr v-if="arpSources.length === 0">
-                  <td colspan="5" class="px-4 py-8 text-center text-slate-500">尚無 ARP 來源設備</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：hostname,priority,description（priority 數字越小優先級越高）
-          </p>
-        </div>
-      </div>
-    </div>
-
-    <!-- 新增/編輯 ARP 來源 Modal -->
-    <div v-if="showAddArpModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="closeArpModal">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[450px]">
-        <h3 class="text-lg font-semibold text-white mb-4">{{ editingArp ? '編輯 ARP 來源' : '新增 ARP 來源' }}</h3>
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm text-slate-400 mb-1">設備 Hostname <span class="text-red-400">*</span></label>
-            <input v-model="newArp.hostname" type="text" placeholder="CORE-ROUTER-01" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-1">優先級</label>
-            <input v-model.number="newArp.priority" type="number" min="1" placeholder="100" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
-            <p class="text-xs text-slate-500 mt-1">數字越小優先級越高，預設 100</p>
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-1">備註（選填）</label>
-            <input v-model="newArp.description" type="text" placeholder="例如：主要 Gateway" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
-          </div>
-        </div>
-        <div class="flex justify-end gap-2 mt-6">
-          <button @click="closeArpModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">取消</button>
-          <button @click="saveArp" :disabled="!newArp.hostname" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
-            {{ editingArp ? '儲存' : '新增' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 設定分類 Modal（多選） -->
-    <div v-if="showSetCategoryModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="showSetCategoryModal = false">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-96">
-        <h3 class="text-lg font-semibold text-white mb-4">設定分類（可多選）</h3>
-        <p class="text-sm text-slate-400 mb-4">
-          MAC: <span class="font-mono text-cyan-300">{{ selectedMacForCategory?.mac_address }}</span>
-        </p>
-        <div class="space-y-2 max-h-60 overflow-y-auto">
-          <label v-for="cat in categories" :key="cat.id" class="flex items-center gap-2 p-2 rounded hover:bg-slate-700 cursor-pointer">
-            <input type="checkbox" :value="cat.id" v-model="selectedCategoryIds" class="text-cyan-500 rounded" />
-            <span class="text-slate-200">{{ cat.name }}</span>
-          </label>
-          <p v-if="categories.length === 0" class="text-slate-500 text-sm py-2 text-center">尚無分類，請先至「管理分類」新增</p>
-        </div>
-        <p class="text-xs text-slate-500 mt-3">不勾選任何分類 = 移除所有分類</p>
-        <div class="flex justify-end gap-2 mt-4">
-          <button @click="showSetCategoryModal = false" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">
-            取消
-          </button>
-          <button @click="setMacCategory" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500">
-            確定
-          </button>
         </div>
       </div>
     </div>
 
     <!-- 新增/編輯 Client Modal -->
-    <div v-if="showAddMacModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="closeClientModal">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[450px]">
+    <Transition name="modal">
+    <div v-if="showAddMacModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closeClientModal">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[450px]">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingClient ? '編輯 Client' : '新增 Client' }}</h3>
         <div class="space-y-4">
           <div class="grid grid-cols-2 gap-4">
@@ -549,7 +334,7 @@
             >
               <option v-for="tg in tenantGroupOptions" :key="tg" :value="tg">{{ tg }}</option>
             </select>
-            <p class="text-xs text-slate-500 mt-1">用於 GNMS Ping 偵測 Client 可達性</p>
+            <p class="text-xs text-slate-500 mt-1">Tenant 群組分類</p>
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">備註（選填）</label>
@@ -560,19 +345,17 @@
               class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
             />
           </div>
-          <!-- 分類（僅新增模式顯示，編輯請用「分類」按鈕） -->
-          <div v-if="!editingClient">
-            <label class="block text-sm text-slate-400 mb-1">分類（選填，可多選）</label>
-            <div class="bg-slate-900 border border-slate-600 rounded p-2 max-h-32 overflow-y-auto">
-              <label v-for="cat in categories" :key="cat.id" class="flex items-center gap-2 py-1 hover:bg-slate-800 rounded px-1 cursor-pointer">
-                <input type="checkbox" :value="cat.id" v-model="newMac.categoryIds" class="text-cyan-500 rounded" />
-                <span class="text-slate-200 text-sm">{{ cat.name }}</span>
-              </label>
-              <p v-if="categories.length === 0" class="text-slate-500 text-sm py-1">尚無分類</p>
-            </div>
-            <p class="text-xs text-slate-500 mt-1">如需新增分類，請至「管理分類」</p>
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">預設負責人（選填）</label>
+            <select
+              v-model="newMac.default_assignee"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm"
+            >
+              <option value="">不指定（預設為系統管理員）</option>
+              <option v-for="name in filteredDisplayNames" :key="name" :value="name">{{ name }}</option>
+            </select>
+            <p class="text-xs text-slate-500 mt-1">案件開啟時預設指派給誰</p>
           </div>
-          <p v-else class="text-xs text-slate-500">💡 如需修改分類，請關閉此視窗後點擊「分類」按鈕</p>
         </div>
         <div class="flex justify-end gap-2 mt-6">
           <button @click="closeClientModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">
@@ -584,54 +367,31 @@
         </div>
       </div>
     </div>
-
-    <!-- 批量分類 Modal（多選） -->
-    <div v-if="showBatchCategoryModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="showBatchCategoryModal = false">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-96">
-        <h3 class="text-lg font-semibold text-white mb-4">批量設定分類（可多選）</h3>
-        <p class="text-sm text-slate-400 mb-4">
-          將 <span class="text-cyan-300 font-bold">{{ selectedMacs.length }}</span> 個 MAC 設定為：
-        </p>
-        <div class="space-y-2 max-h-60 overflow-y-auto">
-          <label v-for="cat in categories" :key="cat.id" class="flex items-center gap-2 p-2 rounded hover:bg-slate-700 cursor-pointer">
-            <input type="checkbox" :value="cat.id" v-model="batchCategoryIds" class="text-cyan-500 rounded" />
-            <span class="text-slate-200">{{ cat.name }}</span>
-          </label>
-          <p v-if="categories.length === 0" class="text-slate-500 text-sm py-2 text-center">尚無分類，請先至「管理分類」新增</p>
-        </div>
-        <p class="text-xs text-slate-500 mt-3">不勾選任何分類 = 移除所有分類</p>
-        <div class="flex justify-end gap-2 mt-4">
-          <button @click="showBatchCategoryModal = false" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">
-            取消
-          </button>
-          <button @click="applyBatchCategory" class="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-500">
-            套用
-          </button>
-        </div>
-      </div>
-    </div>
+    </Transition>
 
     <!-- 新增/編輯設備對應 Modal -->
-    <div v-if="showAddDeviceModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" @click.self="closeDeviceModal">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[650px]">
+    <Transition name="modal">
+    <div v-if="showAddDeviceModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closeDeviceModal">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[650px]">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingDevice ? '編輯設備對應' : '新增設備對應' }}</h3>
-        <p class="text-sm text-slate-400 mb-4">💡 若設備不更換，請將新舊設備填寫為同一台</p>
+        <p class="text-sm text-slate-400 mb-4">💡 至少需填寫一側，該側需填寫完整設備資訊（Hostname、IP、Device Type）</p>
 
         <div class="grid grid-cols-2 gap-6">
           <!-- 舊設備 -->
           <div class="space-y-3">
-            <h4 class="text-sm font-medium text-red-400 border-b border-slate-600 pb-1">舊設備 (OLD)</h4>
+            <h4 class="text-sm font-medium text-red-400 border-b border-slate-600 pb-1">舊設備 (OLD) <span class="text-slate-500 font-normal">- 選填</span></h4>
             <div>
-              <label class="block text-xs text-slate-400 mb-1">Hostname <span class="text-red-400">*</span></label>
+              <label class="block text-xs text-slate-400 mb-1">Hostname</label>
               <input v-model="newDevice.old_hostname" type="text" placeholder="OLD-SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-slate-400 mb-1">IP 位址 <span class="text-red-400">*</span></label>
+              <label class="block text-xs text-slate-400 mb-1">IP 位址</label>
               <input v-model="newDevice.old_ip_address" type="text" placeholder="10.1.1.1" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-slate-400 mb-1">Device Type <span class="text-red-400">*</span></label>
+              <label class="block text-xs text-slate-400 mb-1">Device Type</label>
               <select v-model="newDevice.old_vendor" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
+                <option value="">-- 不選 --</option>
                 <option value="HPE">HPE</option>
                 <option value="Cisco-IOS">Cisco-IOS</option>
                 <option value="Cisco-NXOS">Cisco-NXOS</option>
@@ -641,18 +401,19 @@
 
           <!-- 新設備 -->
           <div class="space-y-3">
-            <h4 class="text-sm font-medium text-green-400 border-b border-slate-600 pb-1">新設備 (NEW)</h4>
+            <h4 class="text-sm font-medium text-green-400 border-b border-slate-600 pb-1">新設備 (NEW) <span class="text-slate-500 font-normal">- 選填</span></h4>
             <div>
-              <label class="block text-xs text-slate-400 mb-1">Hostname <span class="text-red-400">*</span></label>
+              <label class="block text-xs text-slate-400 mb-1">Hostname</label>
               <input v-model="newDevice.new_hostname" type="text" placeholder="NEW-SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-slate-400 mb-1">IP 位址 <span class="text-red-400">*</span></label>
+              <label class="block text-xs text-slate-400 mb-1">IP 位址</label>
               <input v-model="newDevice.new_ip_address" type="text" placeholder="10.1.1.101" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-slate-400 mb-1">Device Type <span class="text-red-400">*</span></label>
+              <label class="block text-xs text-slate-400 mb-1">Device Type</label>
               <select v-model="newDevice.new_vendor" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
+                <option value="">-- 不選 --</option>
                 <option value="HPE">HPE</option>
                 <option value="Cisco-IOS">Cisco-IOS</option>
                 <option value="Cisco-NXOS">Cisco-NXOS</option>
@@ -661,18 +422,8 @@
           </div>
         </div>
 
-        <!-- 對應設定 -->
+        <!-- 其他設定 -->
         <div class="mt-4 pt-4 border-t border-slate-600 space-y-3">
-          <div class="flex items-center gap-4">
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" v-model="newDevice.use_same_port" class="rounded border-slate-500" />
-              <span class="text-slate-300 text-sm">使用相同 Port 對應</span>
-            </label>
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" v-model="newDevice.is_replaced" class="rounded border-slate-500" />
-              <span class="text-slate-300 text-sm">會更換設備</span>
-            </label>
-          </div>
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-xs text-slate-400 mb-1">Tenant Group <span class="text-red-400">*</span></label>
@@ -696,60 +447,12 @@
         </div>
       </div>
     </div>
-
-    <!-- 分類管理 Modal -->
-    <CategoryModal
-      v-if="showCategoryModal"
-      :categories="categories"
-      :maintenance-id="selectedMaintenanceId"
-      @close="showCategoryModal = false"
-      @refresh="onCategoryRefresh"
-    />
-
-    <!-- 通用訊息 Modal -->
-    <div v-if="messageModal.show" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60]" @click.self="closeMessageModal">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-96">
-        <div class="flex items-start gap-3">
-          <span v-if="messageModal.type === 'success'" class="text-2xl text-green-400">✓</span>
-          <span v-else-if="messageModal.type === 'error'" class="text-2xl text-red-400">✕</span>
-          <span v-else class="text-2xl text-blue-400">ℹ</span>
-          <div class="flex-1">
-            <h3 class="text-lg font-semibold text-white mb-2">{{ messageModal.title || '提示' }}</h3>
-            <p class="text-slate-300 whitespace-pre-line">{{ messageModal.message }}</p>
-          </div>
-        </div>
-        <div class="flex justify-end mt-6">
-          <button @click="closeMessageModal" class="px-4 py-2 bg-slate-600 text-white rounded hover:bg-slate-500">
-            確定
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 通用確認 Modal -->
-    <div v-if="confirmModal.show" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60]">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-96">
-        <div class="flex items-start gap-3">
-          <span class="text-2xl text-amber-400">⚠</span>
-          <div class="flex-1">
-            <h3 class="text-lg font-semibold text-white mb-2">{{ confirmModal.title || '確認' }}</h3>
-            <p class="text-slate-300 whitespace-pre-line">{{ confirmModal.message }}</p>
-          </div>
-        </div>
-        <div class="flex justify-end gap-2 mt-6">
-          <button @click="confirmModal.show = false; confirmModal.resolve && confirmModal.resolve(false)" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">
-            取消
-          </button>
-          <button @click="handleConfirm" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500">
-            確定
-          </button>
-        </div>
-      </div>
-    </div>
+    </Transition>
 
     <!-- 匯入結果 Modal -->
-    <div v-if="importResultModal.show" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60]" @click.self="closeImportResultModal">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-6 w-[550px] max-h-[80vh] flex flex-col">
+    <Transition name="modal">
+    <div v-if="importResultModal.show" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4" @click.self="closeImportResultModal">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[550px] max-h-[80vh] flex flex-col">
         <div class="flex items-start gap-3 mb-4">
           <span class="text-2xl" :class="importResultModal.totalErrors > 0 ? 'text-amber-400' : 'text-green-400'">
             {{ importResultModal.totalErrors > 0 ? '⚠' : '✓' }}
@@ -767,7 +470,7 @@
           </div>
           <div class="bg-slate-700/50 rounded p-3 text-center">
             <div class="text-2xl font-bold text-slate-400">{{ importResultModal.skipped }}</div>
-            <div class="text-xs text-slate-400">略過（重複）</div>
+            <div class="text-xs text-slate-400">{{ importResultModal.middleLabel || '略過（重複）' }}</div>
           </div>
           <div class="bg-red-900/30 rounded p-3 text-center">
             <div class="text-2xl font-bold text-red-400">{{ importResultModal.totalErrors }}</div>
@@ -814,26 +517,31 @@
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- Loading -->
-    <div v-if="loading" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-      <div class="bg-slate-800 border border-slate-700 rounded-lg p-6">
+    <Transition name="modal">
+    <div v-if="loading" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-400 mx-auto mb-2"></div>
         <p class="text-slate-300">載入中...</p>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 
 <script>
-import CategoryModal from '../components/CategoryModal.vue';
-import { apiFetch, formatErrorMessage, ErrorType } from '../utils/api.js';
-import { canWrite, getAuthHeaders } from '../utils/auth.js';
+import api, { downloadFile } from '@/utils/api';
+import { canWrite } from '@/utils/auth';
+import { useToast } from '@/composables/useToast';
 
 export default {
   name: 'Devices',
   inject: ['maintenanceId', 'refreshMaintenanceList'],
-  components: { CategoryModal },
+  setup() {
+    return useToast();
+  },
   data() {
     return {
       loading: false,
@@ -843,63 +551,39 @@ export default {
       tabs: [
         { id: 'maclist', name: 'Client 清單', icon: '📋', scope: 'maintenance' },
         { id: 'devices', name: '設備清單', icon: '🖥️', scope: 'maintenance' },
-        { id: 'arp', name: 'ARP 來源', icon: '🌐', scope: 'maintenance' },
       ],
 
       // 新設備清單
       deviceList: [],
-      deviceStats: { total: 0, by_role: { old: 0, new: 0, unchanged: 0 }, reachable_rate: 0 },
+      deviceStats: {
+        total: 0, old_count: 0, new_count: 0,
+        old_reachable: 0, old_unreachable: 0, old_unchecked: 0,
+        new_reachable: 0, new_unreachable: 0, new_unchecked: 0,
+      },
       deviceSearch: '',
       deviceFilterRole: '',
-      deviceFilterReachable: '',
       deviceFilterMapping: '',
       deviceSearchTimeout: null,
       selectedDevices: [],
       deviceSelectAll: false,
-      batchTestingReachability: false,  // 正在批量測試可達性
       reachabilityInterval: null,  // 自動測試可達性 interval ID (每10秒)
+      reachabilityStatus: {},  // hostname -> { is_reachable, success_rate, last_check_at }
 
       // Client 清單 (原 MAC 清單)
       macList: [],
-      macListStats: {
-        total: 0, categorized: 0, uncategorized: 0,
-        detected: 0, mismatch: 0, not_detected: 0, not_checked: 0,
-      },
+      macListStats: { total: 0 },
       macSearch: '',
-      macFilterStatus: 'all',
-      macFilterCategory: 'all',
       showAddMacModal: false,
-      editingClient: false,  // 區分新增/編輯模式
-      editingClientId: null,  // 編輯中的 Client ID
+      editingClient: false,
+      editingClientId: null,
       newMac: {
         mac_address: '', ip_address: '', tenant_group: 'F18',
-        description: '', categoryIds: [],
+        description: '', default_assignee: '',
       },
-      detecting: false,  // 偵測中狀態
-      clientDetectionInterval: null,  // 自動偵測 Client interval ID (每10秒)
+      userDisplayNames: [],
       macSearchTimeout: null,
-      categories: [],
-      showSetCategoryModal: false,
-      selectedMacForCategory: null,
-      selectedCategoryIds: [],  // 多選分類 IDs
-      // 批量選擇
       selectedMacs: [],
       selectAll: false,
-      showBatchCategoryModal: false,
-      batchCategoryIds: [],  // 多選分類 IDs
-
-      // ARP 來源
-      arpLoading: false,
-      arpSources: [],
-      arpSearch: '',
-      selectedArps: [],
-      arpSelectAll: false,
-      showAddArpModal: false,
-      editingArp: null,
-      newArp: { hostname: '', priority: 100, description: '' },
-
-      // 分類管理 Modal
-      showCategoryModal: false,
 
       // Modal 控制
       showAddDeviceModal: false,
@@ -907,27 +591,11 @@ export default {
       tenantGroupOptions: ['F18', 'F6', 'AP', 'F14', 'F12'],  // Tenant Group 選項
       newDevice: {
         id: null,
-        old_hostname: '', old_ip_address: '', old_vendor: 'HPE',
-        new_hostname: '', new_ip_address: '', new_vendor: 'HPE',
-        use_same_port: true, is_replaced: false, tenant_group: 'F18', description: ''
+        old_hostname: '', old_ip_address: '', old_vendor: '',
+        new_hostname: '', new_ip_address: '', new_vendor: '',
+        tenant_group: 'F18', description: ''
       },
 
-      // 通用訊息 Modal
-      messageModal: {
-        show: false,
-        type: 'info',  // info, success, error
-        title: '',
-        message: '',
-      },
-
-      // 通用確認 Modal
-      confirmModal: {
-        show: false,
-        title: '',
-        message: '',
-        resolve: null,
-        onConfirm: null,
-      },
 
       // 匯入結果 Modal
       importResultModal: {
@@ -936,6 +604,7 @@ export default {
         skipped: 0,
         errors: [],
         totalErrors: 0,
+        middleLabel: '略過（重複）',
       },
     };
   },
@@ -946,49 +615,48 @@ export default {
     userCanWrite() {
       return canWrite.value;
     },
+    filteredDisplayNames() {
+      // 過濾掉「系統管理員」，因為已在預設選項中標示
+      return this.userDisplayNames.filter(n => n !== '系統管理員');
+    },
     canAddDevice() {
-      return this.newDevice.old_hostname && this.newDevice.old_ip_address && this.newDevice.old_vendor
-          && this.newDevice.new_hostname && this.newDevice.new_ip_address && this.newDevice.new_vendor;
+      const d = this.newDevice;
+      const oldH = d.old_hostname?.trim();
+      const oldIp = d.old_ip_address?.trim();
+      const oldV = d.old_vendor;
+      const newH = d.new_hostname?.trim();
+      const newIp = d.new_ip_address?.trim();
+      const newV = d.new_vendor;
+
+      const oldFilled = oldH && oldIp && oldV;
+      const newFilled = newH && newIp && newV;
+      const oldPartial = (oldH || oldIp || oldV) && !oldFilled;
+      const newPartial = (newH || newIp || newV) && !newFilled;
+
+      // At least one side fully filled, no partial fills
+      return (oldFilled || newFilled) && !oldPartial && !newPartial;
     },
   },
   watch: {
     selectedMaintenanceId(newId) {
-      // 切換歲修 ID 時停止所有自動測試
       this.stopReachabilityPolling();
-      this.stopClientDetectionPolling();
       if (newId) {
         this.loadMaintenanceData();
       }
     },
     activeTab(newTab) {
-      // 保存 Tab 狀態到 localStorage
       localStorage.setItem('devices_active_tab', newTab);
-      // 根據 Tab 啟動/停止對應的自動測試
       if (newTab === 'devices') {
-        this.stopClientDetectionPolling();
         this.startReachabilityPolling();
-      } else if (newTab === 'maclist') {
-        this.stopReachabilityPolling();
-        this.startClientDetectionPolling();
       } else {
         this.stopReachabilityPolling();
-        this.stopClientDetectionPolling();
       }
     },
-    // 監聽設備列表變化，有設備時啟動自動測試
     'deviceList.length'(newLen) {
       if (newLen > 0 && this.activeTab === 'devices') {
         this.startReachabilityPolling();
       } else if (newLen === 0) {
         this.stopReachabilityPolling();
-      }
-    },
-    // 監聽 Client 列表變化，有 Client 時啟動自動偵測
-    'macList.length'(newLen) {
-      if (newLen > 0 && this.activeTab === 'maclist') {
-        this.startClientDetectionPolling();
-      } else if (newLen === 0) {
-        this.stopClientDetectionPolling();
       }
     },
   },
@@ -999,14 +667,13 @@ export default {
       this.activeTab = savedTab;
     }
 
+    this.loadUserDisplayNames();
     if (this.selectedMaintenanceId) {
       this.loadMaintenanceData();
     }
   },
   beforeUnmount() {
-    // 清理所有自動測試計時器
     this.stopReachabilityPolling();
-    this.stopClientDetectionPolling();
   },
   methods: {
     async loadMaintenanceData() {
@@ -1014,9 +681,6 @@ export default {
 
       this.loading = true;
       try {
-        // 載入分類
-        await this.loadCategories();
-
         // 載入 MAC 清單
         await this.loadMacList();
         await this.loadMacStats();
@@ -1024,20 +688,24 @@ export default {
         // 載入設備清單
         await this.loadDeviceList();
         await this.loadDeviceStats();
+        await this.loadReachabilityStatus();
 
-        // 載入 ARP 來源
-        await this.loadArpList();
-
-        // 根據當前 Tab 啟動對應的自動測試
         if (this.activeTab === 'devices' && this.deviceList.length > 0) {
           this.startReachabilityPolling();
-        } else if (this.activeTab === 'maclist' && this.macList.length > 0) {
-          this.startClientDetectionPolling();
         }
       } catch (e) {
         console.error('載入歲修數據失敗:', e);
       } finally {
         this.loading = false;
+      }
+    },
+
+    async loadUserDisplayNames() {
+      try {
+        const { data } = await api.get('/users/display-names');
+        this.userDisplayNames = data;
+      } catch (e) {
+        console.error('載入使用者列表失敗:', e);
       }
     },
 
@@ -1051,23 +719,15 @@ export default {
 
       this.macLoading = true;
       try {
-        // 使用 detailed 端點獲取完整資訊
         const params = new URLSearchParams();
-        // 清理搜尋輸入後再發送 API（保留空格）
         const cleanSearch = this.sanitizeSearchInput(this.macSearch);
         if (cleanSearch) params.append('search', cleanSearch);
-        if (this.macFilterStatus !== 'all') params.append('filter_status', this.macFilterStatus);
-        if (this.macFilterCategory !== 'all') params.append('filter_category', this.macFilterCategory);
 
-        let url = `/api/v1/mac-list/${this.selectedMaintenanceId}/detailed`;
+        let url = `/mac-list/${this.selectedMaintenanceId}/detailed`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url, {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          this.macList = await res.json();
-        }
+        const { data } = await api.get(url);
+        this.macList = data;
 
         // 恢復滾動位置
         this.$nextTick(() => {
@@ -1082,109 +742,12 @@ export default {
       }
     },
 
-    async loadCategories() {
-      if (!this.selectedMaintenanceId) return;
-
-      try {
-        const res = await fetch(`/api/v1/categories?maintenance_id=${this.selectedMaintenanceId}`, {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          this.categories = await res.json();
-        }
-      } catch (e) {
-        console.error('載入分類失敗:', e);
-      }
-    },
-
-    async openSetCategory(mac) {
-      this.selectedMacForCategory = mac;
-      // 查詢該 MAC 目前屬於哪些分類
-      this.selectedCategoryIds = [];
-      for (const cat of this.categories) {
-        try {
-          const res = await fetch(`/api/v1/categories/${cat.id}/members`, {
-            headers: getAuthHeaders()
-          });
-          if (res.ok) {
-            const members = await res.json();
-            if (members.some(m => m.mac_address === mac.mac_address)) {
-              this.selectedCategoryIds.push(cat.id);
-            }
-          }
-        } catch (e) {
-          console.error('查詢分類成員失敗:', e);
-        }
-      }
-      this.showSetCategoryModal = true;
-    },
-
-    async setMacCategory() {
-      if (!this.selectedMacForCategory || !this.selectedMaintenanceId) return;
-
-      try {
-        const mac = this.selectedMacForCategory.mac_address;
-        const newCategoryIds = new Set(this.selectedCategoryIds);
-
-        // 找出目前 MAC 所屬的所有分類
-        const currentCategoryIds = new Set();
-        for (const cat of this.categories) {
-          try {
-            const res = await fetch(`/api/v1/categories/${cat.id}/members`, {
-              headers: getAuthHeaders()
-            });
-            if (res.ok) {
-              const members = await res.json();
-              if (members.some(m => m.mac_address === mac)) {
-                currentCategoryIds.add(cat.id);
-              }
-            }
-          } catch {
-            // 查詢失敗時忽略，繼續處理其他分類
-          }
-        }
-
-        // 移除不再選中的分類
-        for (const catId of currentCategoryIds) {
-          if (!newCategoryIds.has(catId)) {
-            await fetch(`/api/v1/categories/${catId}/members/${encodeURIComponent(mac)}`, {
-              method: 'DELETE',
-              headers: getAuthHeaders()
-            });
-          }
-        }
-
-        // 添加新選中的分類
-        for (const catId of newCategoryIds) {
-          if (!currentCategoryIds.has(catId)) {
-            await fetch(`/api/v1/categories/${catId}/members`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-              body: JSON.stringify({ mac_address: mac }),
-            });
-          }
-        }
-
-        this.showSetCategoryModal = false;
-        await this.loadMacList();
-        await this.loadMacStats();
-        this.showMessage('分類設定成功', 'success');
-      } catch (e) {
-        console.error('設定分類失敗:', e);
-        this.showMessage(e.message || '設定分類失敗', 'error');
-      }
-    },
-
     async loadMacStats() {
       if (!this.selectedMaintenanceId) return;
 
       try {
-        const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/stats`, {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          this.macListStats = await res.json();
-        }
+        const { data } = await api.get(`/mac-list/${this.selectedMaintenanceId}/stats`);
+        this.macListStats = data;
       } catch (e) {
         console.error('載入 MAC 統計失敗:', e);
       }
@@ -1239,10 +802,10 @@ export default {
     },
 
     downloadMacTemplate() {
-      const csv = `mac_address,ip_address,tenant_group,description,category
-AA:BB:CC:DD:EE:01,192.168.1.100,F18,單一分類範例,生產機台
-AA:BB:CC:DD:EE:02,192.168.1.101,F6,多分類範例(用分號分隔),EQP;AMHS
-AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
+      const csv = `mac_address,ip_address,tenant_group,description,default_assignee
+AA:BB:CC:DD:EE:01,192.168.1.100,F18,1號機台,系統管理員
+AA:BB:CC:DD:EE:02,192.168.1.101,F6,2號機台,
+AA:BB:CC:DD:EE:03,192.168.1.102,AP,,`;
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
@@ -1270,31 +833,25 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
       formData.append('file', file);
 
       try {
-        const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/import-csv`, {
-          method: 'POST',
-          body: formData,
-          headers: getAuthHeaders()
-        });
-        const data = await res.json();
-
-        if (res.ok) {
-          await this.loadCategories();  // 可能有新分類
-          await this.loadMacList();
-          await this.loadMacStats();
-          // 使用新的匯入結果 Modal 顯示詳細錯誤
-          this.importResultModal = {
-            show: true,
-            imported: data.imported || 0,
-            skipped: data.skipped || 0,
-            errors: data.errors || [],
-            totalErrors: data.total_errors || 0,
-          };
-        } else {
-          this.showMessage(data.detail || '匯入失敗', 'error');
-        }
+        const { data } = await api.post(
+          `/mac-list/${this.selectedMaintenanceId}/import-csv`,
+          formData,
+          { headers: { 'Content-Type': 'multipart/form-data' } },
+        );
+        await this.loadMacList();
+        await this.loadMacStats();
+        // 使用新的匯入結果 Modal 顯示詳細錯誤
+        this.importResultModal = {
+          show: true,
+          imported: data.imported || 0,
+          skipped: data.skipped || 0,
+          errors: data.errors || [],
+          totalErrors: data.total_errors || 0,
+          middleLabel: '略過（重複）',
+        };
       } catch (e) {
         console.error('MAC 匯入失敗:', e);
-        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+        this.showMessage(e.response?.data?.detail || '匯入失敗，請檢查網路連線', 'error');
       } finally {
         this.macLoading = false;
       }
@@ -1307,28 +864,23 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
       if (!confirmed) return;
 
       try {
-        const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/${encodeURIComponent(mac.mac_address)}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          await this.loadMacList();
-          await this.loadMacStats();
-        }
+        await api.delete(`/mac-list/${this.selectedMaintenanceId}/${encodeURIComponent(mac.mac_address)}`);
+        await this.loadMacList();
+        await this.loadMacStats();
       } catch (e) {
         console.error('刪除 MAC 失敗:', e);
         this.showMessage('刪除失敗', 'error');
       }
     },
 
-    // 編輯 Client（不處理分類，分類請用「分類」按鈕）
+    // 編輯 Client
     editClient(mac) {
       this.newMac = {
         mac_address: mac.mac_address || '',
         ip_address: mac.ip_address || '',
         tenant_group: mac.tenant_group || 'F18',
         description: mac.description || '',
-        categoryIds: [],  // 編輯模式不處理分類
+        default_assignee: mac.default_assignee || '',
       };
       this.editingClient = true;
       this.editingClientId = mac.id;
@@ -1340,7 +892,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
       this.showAddMacModal = false;
       this.editingClient = false;
       this.editingClientId = null;
-      this.newMac = { mac_address: '', ip_address: '', tenant_group: 'F18', description: '', categoryIds: [] };
+      this.newMac = { mac_address: '', ip_address: '', tenant_group: 'F18', description: '', default_assignee: '' };
     },
 
     // 儲存 Client（新增或編輯）
@@ -1368,64 +920,39 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
       }
 
       const description = this.newMac.description?.trim() || null;
-      const categoryIds = this.newMac.categoryIds || [];
       const tenantGroup = this.newMac.tenant_group || 'F18';
+      const defaultAssignee = this.newMac.default_assignee?.trim() || null;
 
       const isEdit = this.editingClient && this.editingClientId;
 
       try {
-        let res;
         if (isEdit) {
-          // 編輯模式：使用 PUT 請求（不處理分類）
-          res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/${this.editingClientId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify({
-              ip_address: ip,
-              tenant_group: tenantGroup,
-              description: description,
-              // 不傳 category，分類請用「分類」按鈕
-            }),
+          // 編輯模式：使用 PUT 請求
+          await api.put(`/mac-list/${this.selectedMaintenanceId}/${this.editingClientId}`, {
+            ip_address: ip,
+            tenant_group: tenantGroup,
+            description: description,
+            default_assignee: defaultAssignee,
           });
         } else {
           // 新增模式：使用 POST 請求
-          res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify({
-              mac_address: mac,
-              ip_address: ip,
-              tenant_group: tenantGroup,
-              description: description,
-            }),
+          await api.post(`/mac-list/${this.selectedMaintenanceId}`, {
+            mac_address: mac,
+            ip_address: ip,
+            tenant_group: tenantGroup,
+            description: description,
+            default_assignee: defaultAssignee,
           });
-
-          // 新增成功後，添加到選中的分類
-          if (res.ok && categoryIds.length > 0) {
-            for (const catId of categoryIds) {
-              await fetch(`/api/v1/categories/${catId}/members`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                body: JSON.stringify({ mac_address: mac }),
-              });
-            }
-          }
         }
 
-        if (res.ok) {
-          const msg = isEdit ? 'Client 更新成功' : 'Client 新增成功';
-          this.closeClientModal();
-          await this.loadCategories();  // 重新載入分類（可能有新建的）
-          await this.loadMacList();
-          await this.loadMacStats();
-          this.showMessage(msg, 'success');
-        } else {
-          const err = await res.json();
-          this.showMessage(err.detail || (isEdit ? '更新失敗' : '新增失敗'), 'error');
-        }
+        const msg = isEdit ? 'Client 更新成功' : 'Client 新增成功';
+        this.closeClientModal();
+        await this.loadMacList();
+        await this.loadMacStats();
+        this.showMessage(msg, 'success');
       } catch (e) {
         console.error(isEdit ? '更新 Client 失敗:' : '新增 Client 失敗:', e);
-        this.showMessage(isEdit ? '更新失敗' : '新增失敗', 'error');
+        this.showMessage(e.response?.data?.detail || (isEdit ? '更新失敗' : '新增失敗'), 'error');
       }
     },
 
@@ -1461,150 +988,26 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
         // 將選中的 ID 轉換成整數陣列
         const macIds = this.selectedMacs.map(id => parseInt(id, 10));
 
-        const res = await fetch(`/api/v1/mac-list/${this.selectedMaintenanceId}/batch-delete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ mac_ids: macIds }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          this.showMessage(`成功刪除 ${data.deleted_count} 個 MAC 地址`, 'success');
-          this.clearSelection();
-          await this.loadMacList();
-          await this.loadMacStats();
-        } else {
-          this.showMessage('批量刪除失敗', 'error');
-        }
+        const { data } = await api.post(`/mac-list/${this.selectedMaintenanceId}/batch-delete`, { mac_ids: macIds });
+        this.showMessage(`成功刪除 ${data.deleted_count} 個 MAC 地址`, 'success');
+        this.clearSelection();
+        await this.loadMacList();
+        await this.loadMacStats();
       } catch (e) {
         console.error('批量刪除 MAC 失敗:', e);
         this.showMessage('批量刪除失敗', 'error');
       }
     },
 
-    exportMacCsv() {
+    async exportMacCsv() {
       const params = new URLSearchParams();
       if (this.macSearch) {
         params.append('search', this.macSearch);
       }
-      // 偵測狀態篩選
-      if (this.macFilterStatus && this.macFilterStatus !== 'all') {
-        params.append('filter_status', this.macFilterStatus);
-      }
-      // 分類篩選
-      if (this.macFilterCategory && this.macFilterCategory !== 'all') {
-        params.append('filter_category', this.macFilterCategory);
-      }
-      const url = `/api/v1/mac-list/${this.selectedMaintenanceId}/export-csv?${params}`;
-      window.open(url, '_blank');
-    },
-
-    openBatchCategory() {
-      this.batchCategoryIds = [];
-      this.showBatchCategoryModal = true;
-    },
-
-    async applyBatchCategory() {
-      if (this.selectedMacs.length === 0) return;
-
-      this.loading = true;
-      const newCategoryIds = new Set(this.batchCategoryIds);
-
-      try {
-        // 將選中的 ID 轉換成 MAC 地址
-        const selectedMacObjects = this.macList.filter(m => this.selectedMacs.includes(m.id));
-
-        for (const macObj of selectedMacObjects) {
-          const macAddress = macObj.mac_address;
-
-          // 先從所有分類移除該 MAC
-          for (const cat of this.categories) {
-            try {
-              await fetch(`/api/v1/categories/${cat.id}/members/${encodeURIComponent(macAddress)}`, {
-                method: 'DELETE',
-                headers: getAuthHeaders()
-              });
-            } catch {
-              // 忽略刪除失敗（可能本來就不在該分類）
-            }
-          }
-
-          // 添加到選中的分類
-          for (const catId of newCategoryIds) {
-            await fetch(`/api/v1/categories/${catId}/members`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-              body: JSON.stringify({ mac_address: macAddress }),
-            });
-          }
-        }
-
-        const count = this.selectedMacs.length;
-        this.showBatchCategoryModal = false;
-        this.clearSelection();
-        await this.loadMacList();
-        await this.loadMacStats();
-        this.showMessage(`已成功為 ${count} 個 MAC 設定分類`, 'success');
-      } catch (e) {
-        console.error('批量分類失敗:', e);
-        this.showMessage('批量分類失敗', 'error');
-      } finally {
-        this.loading = false;
-      }
-    },
-
-    // 分類更新後的回調（同時刷新 Client 清單）
-    async onCategoryRefresh() {
-      await this.loadCategories();
-      await this.loadMacList();
-      await this.loadMacStats();
-    },
-
-    // 偵測 Client 狀態（靜默模式）
-    async detectClients() {
-      if (!this.selectedMaintenanceId || this.detecting) return;
-
-      this.detecting = true;
-      try {
-        const result = await apiFetch(
-          `/api/v1/mac-list/${this.selectedMaintenanceId}/detect`,
-          { method: 'POST' },
-          60000  // 偵測可能需要較長時間
-        );
-
-        if (result.ok) {
-          await this.loadMacList();
-          await this.loadMacStats();
-        }
-      } catch (e) {
-        console.error('Client 偵測失敗:', e);
-      } finally {
-        this.detecting = false;
-      }
-    },
-
-    // 啟動 Client 狀態輪詢（每 10 秒，只讀取不觸發偵測）
-    startClientDetectionPolling() {
-      // 已經在執行中就跳過
-      if (this.clientDetectionInterval) return;
-      // 沒有 Client 就跳過
-      if (this.macList.length === 0) return;
-
-      // 每 10 秒重新載入狀態（被動輪詢，不主動觸發偵測）
-      this.clientDetectionInterval = setInterval(async () => {
-        if (!this.detecting) {
-          await this.loadMacList();
-          await this.loadMacStats();
-        }
-      }, 10000);
-    },
-
-    // 停止 Client 自動偵測
-    stopClientDetectionPolling() {
-      if (this.clientDetectionInterval) {
-        clearInterval(this.clientDetectionInterval);
-        this.clientDetectionInterval = null;
-      }
+      await downloadFile(
+        `/mac-list/${this.selectedMaintenanceId}/export-csv?${params}`,
+        `mac_list_${this.selectedMaintenanceId}.csv`,
+      );
     },
 
     // ========== 設備清單方法 ==========
@@ -1622,23 +1025,15 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
         const cleanSearch = this.sanitizeSearchInput(this.deviceSearch);
         if (cleanSearch) params.append('search', cleanSearch);
         if (this.deviceFilterRole) params.append('role', this.deviceFilterRole);
-        if (this.deviceFilterReachable) {
-          params.append('reachability', this.deviceFilterReachable);
-        }
         if (this.deviceFilterMapping) {
           params.append('has_mapping', this.deviceFilterMapping);
         }
 
-        let url = `/api/v1/maintenance-devices/${this.selectedMaintenanceId}`;
+        let url = `/maintenance-devices/${this.selectedMaintenanceId}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const res = await fetch(url, {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          const data = await res.json();
-          this.deviceList = data.devices || [];
-        }
+        const { data } = await api.get(url);
+        this.deviceList = data.devices || [];
 
         // 恢復滾動位置
         this.$nextTick(() => {
@@ -1657,15 +1052,27 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
       if (!this.selectedMaintenanceId) return;
 
       try {
-        const res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/stats`, {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          this.deviceStats = await res.json();
-        }
+        const { data } = await api.get(`/maintenance-devices/${this.selectedMaintenanceId}/stats`);
+        this.deviceStats = data;
       } catch (e) {
         console.error('載入設備統計失敗:', e);
       }
+    },
+
+    async loadReachabilityStatus() {
+      if (!this.selectedMaintenanceId) return;
+      try {
+        const { data } = await api.get(`/maintenance-devices/${this.selectedMaintenanceId}/reachability-status`);
+        this.reachabilityStatus = data.devices || {};
+      } catch (e) {
+        console.error('載入可達性狀態失敗:', e);
+      }
+    },
+
+    getReachability(hostname) {
+      if (!hostname) return null;
+      const status = this.reachabilityStatus[hostname];
+      return status ? status.is_reachable : null;
     },
 
     debouncedLoadDeviceList() {
@@ -1675,10 +1082,10 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,無分類範例,`;
     },
 
     downloadDeviceTemplate() {
-      const csv = `old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,is_replaced,use_same_port,tenant_group,description
-OLD-SW-001,10.1.1.1,HPE,NEW-SW-001,10.1.1.101,HPE,TRUE,TRUE,F18,1F機房更換
-OLD-SW-002,10.1.1.2,Cisco-IOS,NEW-SW-002,10.1.1.102,Cisco-IOS,TRUE,TRUE,F6,2F機房更換
-SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,FALSE,TRUE,AP,不更換設備`;
+      const csv = `old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,tenant_group,description
+OLD-SW-001,10.1.1.1,HPE,NEW-SW-001,10.1.1.101,HPE,F18,新舊設備都填
+,,,,NEW-SW-003,10.1.1.103,Cisco-IOS,F6,只填新設備
+OLD-SW-004,10.1.1.4,Cisco-NXOS,,,,,只填舊設備`;
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
@@ -1706,23 +1113,25 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,FALSE,TRUE
       formData.append('file', file);
 
       try {
-        const res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/import-csv`, {
-          method: 'POST',
-          body: formData,
-          headers: getAuthHeaders()
-        });
-        const data = await res.json();
-
-        if (res.ok) {
-          await this.loadDeviceList();
-          await this.loadDeviceStats();
-          this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
-        } else {
-          this.showMessage(data.detail || '匯入失敗', 'error');
-        }
+        const { data } = await api.post(
+          `/maintenance-devices/${this.selectedMaintenanceId}/import-csv`,
+          formData,
+          { headers: { 'Content-Type': 'multipart/form-data' } },
+        );
+        await this.loadDeviceList();
+        await this.loadDeviceStats();
+        // 使用匯入結果 Modal 顯示詳細結果
+        this.importResultModal = {
+          show: true,
+          imported: data.imported || 0,
+          skipped: data.updated || 0,
+          errors: data.errors || [],
+          totalErrors: data.total_errors || 0,
+          middleLabel: '更新',
+        };
       } catch (e) {
         console.error('設備匯入失敗:', e);
-        this.showMessage('匯入失敗，請檢查網路連線', 'error');
+        this.showMessage(e.response?.data?.detail || '匯入失敗，請檢查網路連線', 'error');
       } finally {
         this.deviceLoading = false;
       }
@@ -1735,9 +1144,9 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,FALSE,TRUE
       this.editingDevice = false;
       this.newDevice = {
         id: null,
-        old_hostname: '', old_ip_address: '', old_vendor: 'HPE',
-        new_hostname: '', new_ip_address: '', new_vendor: 'HPE',
-        use_same_port: true, is_replaced: false, tenant_group: 'F18', description: ''
+        old_hostname: '', old_ip_address: '', old_vendor: '',
+        new_hostname: '', new_ip_address: '', new_vendor: '',
+        tenant_group: 'F18', description: ''
       };
     },
 
@@ -1745,60 +1154,59 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,FALSE,TRUE
     async saveDevice() {
       if (!this.canAddDevice || !this.selectedMaintenanceId) return;
 
-      // IP address format validation
       const ipPattern = /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-      const oldIp = this.newDevice.old_ip_address.trim();
-      const newIp = this.newDevice.new_ip_address.trim();
+      const d = this.newDevice;
 
-      if (!ipPattern.test(oldIp)) {
+      const oldIp = d.old_ip_address?.trim() || '';
+      const newIp = d.new_ip_address?.trim() || '';
+
+      // Validate old IP only if old side is filled
+      if (oldIp && !ipPattern.test(oldIp)) {
         this.showMessage('舊設備 IP 位址格式錯誤，正確格式：例如 192.168.1.1', 'error');
         return;
       }
 
-      if (!ipPattern.test(newIp)) {
+      // Validate new IP only if new side is filled
+      if (newIp && !ipPattern.test(newIp)) {
         this.showMessage('新設備 IP 位址格式錯誤，正確格式：例如 192.168.1.1', 'error');
         return;
       }
 
       const payload = {
-        old_hostname: this.newDevice.old_hostname.trim(),
-        old_ip_address: oldIp,
-        old_vendor: this.newDevice.old_vendor,
-        new_hostname: this.newDevice.new_hostname.trim(),
-        new_ip_address: newIp,
-        new_vendor: this.newDevice.new_vendor,
-        use_same_port: this.newDevice.use_same_port,
-        is_replaced: this.newDevice.is_replaced,
-        tenant_group: this.newDevice.tenant_group,
-        description: this.newDevice.description?.trim() || null,
+        old_hostname: d.old_hostname?.trim() || null,
+        old_ip_address: oldIp || null,
+        old_vendor: d.old_vendor || null,
+        new_hostname: d.new_hostname?.trim() || null,
+        new_ip_address: newIp || null,
+        new_vendor: d.new_vendor || null,
+        tenant_group: d.tenant_group,
+        description: d.description?.trim() || null,
       };
 
-      const isEdit = this.editingDevice && this.newDevice.id;
+      const isEdit = this.editingDevice && d.id;
       const url = isEdit
-        ? `/api/v1/maintenance-devices/${this.selectedMaintenanceId}/${this.newDevice.id}`
-        : `/api/v1/maintenance-devices/${this.selectedMaintenanceId}`;
+        ? `/maintenance-devices/${this.selectedMaintenanceId}/${d.id}`
+        : `/maintenance-devices/${this.selectedMaintenanceId}`;
       const method = isEdit ? 'PUT' : 'POST';
 
-      const result = await apiFetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      try {
+        const apiMethod = method === 'PUT' ? api.put : api.post;
+        await apiMethod(url, payload);
 
-      if (result.ok) {
         const msg = isEdit ? '設備對應更新成功' : '設備對應新增成功';
         this.closeDeviceModal();
         await this.loadDeviceList();
         await this.loadDeviceStats();
         this.showMessage(msg, 'success');
-      } else {
-        const errorMsg = formatErrorMessage(result.error);
-        if (result.error?.type === ErrorType.VALIDATION) {
-          this.showMessage(`資料驗證失敗：${errorMsg}`, 'error');
-        } else if (result.error?.type === ErrorType.NETWORK) {
+      } catch (e) {
+        const detail = e.response?.data?.detail;
+        const status = e.response?.status;
+        if (status === 400 || status === 422) {
+          this.showMessage(`資料驗證失敗：${detail || '請檢查輸入'}`, 'error');
+        } else if (!e.response) {
           this.showMessage('網路連線失敗，請檢查連線狀態', 'error');
         } else {
-          this.showMessage(errorMsg || (this.editingDevice ? '更新失敗' : '新增失敗'), 'error');
+          this.showMessage(detail || (this.editingDevice ? '更新失敗' : '新增失敗'), 'error');
         }
       }
     },
@@ -1809,12 +1217,10 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,FALSE,TRUE
         id: device.id,
         old_hostname: device.old_hostname || '',
         old_ip_address: device.old_ip_address || '',
-        old_vendor: device.old_vendor || 'HPE',
+        old_vendor: device.old_vendor || '',
         new_hostname: device.new_hostname || '',
         new_ip_address: device.new_ip_address || '',
-        new_vendor: device.new_vendor || 'HPE',
-        use_same_port: device.use_same_port ?? true,
-        is_replaced: device.is_replaced ?? false,
+        new_vendor: device.new_vendor || '',
         tenant_group: device.tenant_group || 'F18',
         description: device.description || '',
       };
@@ -1823,44 +1229,18 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,FALSE,TRUE
     },
 
     async deleteDeviceItem(device) {
-      const confirmed = await this.showConfirm(`確定要刪除設備對應 ${device.old_hostname} → ${device.new_hostname}？`, '刪除確認');
+      const oldName = device.old_hostname || '-';
+      const newName = device.new_hostname || '-';
+      const confirmed = await this.showConfirm(`確定要刪除設備對應 ${oldName} → ${newName}？`, '刪除確認');
       if (!confirmed) return;
 
       try {
-        const res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/${device.id}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          await this.loadDeviceList();
-          await this.loadDeviceStats();
-        }
+        await api.delete(`/maintenance-devices/${this.selectedMaintenanceId}/${device.id}`);
+        await this.loadDeviceList();
+        await this.loadDeviceStats();
       } catch (e) {
         console.error('刪除設備對應失敗:', e);
         this.showMessage('刪除失敗', 'error');
-      }
-    },
-
-    // 批量測試所有設備可達性（靜默模式）
-    async batchTestReachability() {
-      if (this.batchTestingReachability || !this.selectedMaintenanceId || this.deviceList.length === 0) return;
-
-      this.batchTestingReachability = true;
-      try {
-        const res = await fetch(
-          `/api/v1/maintenance-devices/${this.selectedMaintenanceId}/batch-test-reachability`,
-          { method: 'POST', headers: getAuthHeaders() }
-        );
-
-        if (res.ok) {
-          // 重新載入設備列表和統計
-          await this.loadDeviceList();
-          await this.loadDeviceStats();
-        }
-      } catch (e) {
-        console.error('批量測試可達性失敗:', e);
-      } finally {
-        this.batchTestingReachability = false;
       }
     },
 
@@ -1886,6 +1266,7 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,FALSE,TRUE
       try {
         await this.loadDeviceList();
         await this.loadDeviceStats();
+        await this.loadReachabilityStatus();
       } catch (e) {
         console.error('刷新設備資料失敗:', e);
       }
@@ -1922,73 +1303,28 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,FALSE,TRUE
       if (!confirmed) return;
 
       try {
-        const res = await fetch(`/api/v1/maintenance-devices/${this.selectedMaintenanceId}/batch-delete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ device_ids: this.selectedDevices }),
+        const { data } = await api.post(`/maintenance-devices/${this.selectedMaintenanceId}/batch-delete`, {
+          device_ids: this.selectedDevices,
         });
-
-        if (res.ok) {
-          const data = await res.json();
-          this.showMessage(`成功刪除 ${data.deleted_count} 筆設備對應`, 'success');
-          this.clearDeviceSelection();
-          await this.loadDeviceList();
-          await this.loadDeviceStats();
-        } else {
-          this.showMessage('批量刪除失敗', 'error');
-        }
+        this.showMessage(`成功刪除 ${data.deleted_count} 筆設備對應`, 'success');
+        this.clearDeviceSelection();
+        await this.loadDeviceList();
+        await this.loadDeviceStats();
       } catch (e) {
         console.error('批量刪除設備失敗:', e);
         this.showMessage('批量刪除失敗', 'error');
       }
     },
 
-    exportDeviceCsv() {
+    async exportDeviceCsv() {
       const params = new URLSearchParams();
       if (this.deviceSearch) {
         params.append('search', this.deviceSearch);
       }
-      if (this.deviceFilterReachable) {
-        params.append('reachability', this.deviceFilterReachable);
-      }
-      const url = `/api/v1/maintenance-devices/${this.selectedMaintenanceId}/export-csv?${params}`;
-      window.open(url, '_blank');
-    },
-
-    // ========== 通用 Modal 方法 ==========
-    showMessage(message, type = 'info', title = '') {
-      this.messageModal = {
-        show: true,
-        type,
-        title: title || (type === 'success' ? '成功' : type === 'error' ? '錯誤' : '提示'),
-        message,
-      };
-    },
-
-    closeMessageModal() {
-      this.messageModal.show = false;
-    },
-
-    showConfirm(message, title = '確認') {
-      return new Promise((resolve) => {
-        this.confirmModal = {
-          show: true,
-          title,
-          message,
-          resolve,
-          onConfirm: null,
-        };
-      });
-    },
-
-    handleConfirm() {
-      if (this.confirmModal.resolve) {
-        this.confirmModal.resolve(true);
-      }
-      if (this.confirmModal.onConfirm) {
-        this.confirmModal.onConfirm();
-      }
-      this.confirmModal.show = false;
+      await downloadFile(
+        `/maintenance-devices/${this.selectedMaintenanceId}/export-csv?${params}`,
+        `devices_${this.selectedMaintenanceId}.csv`,
+      );
     },
 
     // ========== 匯入結果 Modal 方法 ==========
@@ -2025,218 +1361,6 @@ SW-UNCHANGED,10.1.1.200,Cisco-NXOS,SW-UNCHANGED,10.1.1.200,Cisco-NXOS,FALSE,TRUE
       link.href = URL.createObjectURL(blob);
       link.download = `import_errors_${new Date().toISOString().slice(0,10)}.csv`;
       link.click();
-    },
-
-    // ========== ARP 來源操作 ==========
-    async loadArpList() {
-      if (!this.selectedMaintenanceId) return;
-
-      // 保存捲動位置
-      const scrollTop = this.$refs.arpScrollContainer?.scrollTop || 0;
-
-      try {
-        const params = new URLSearchParams();
-        if (this.arpSearch) params.append('search', this.arpSearch);
-
-        let url = `/api/v1/expectations/arp/${this.selectedMaintenanceId}`;
-        if (params.toString()) url += '?' + params.toString();
-
-        const res = await fetch(url, {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          const data = await res.json();
-          this.arpSources = data.items || [];
-          // 恢復捲動位置
-          this.$nextTick(() => {
-            if (this.$refs.arpScrollContainer) {
-              this.$refs.arpScrollContainer.scrollTop = scrollTop;
-            }
-          });
-        }
-      } catch (e) {
-        console.error('載入 ARP 來源失敗:', e);
-      }
-    },
-
-    downloadArpTemplate() {
-      const csv = `hostname,priority,description
-CORE-ROUTER-01,10,主要 Gateway
-CORE-ROUTER-02,20,備援 Gateway
-DISTRO-SW-01,100,分發層交換機`;
-      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = 'arp_sources_template.csv';
-      link.click();
-    },
-
-    async importArpList(event) {
-      const file = event.target.files[0];
-      if (!file || !this.selectedMaintenanceId) {
-        event.target.value = '';
-        return;
-      }
-
-      this.arpLoading = true;
-      const formData = new FormData();
-      formData.append('file', file);
-
-      try {
-        const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/import-csv`, {
-          method: 'POST',
-          body: formData,
-          headers: getAuthHeaders()
-        });
-        const data = await res.json();
-
-        if (res.ok) {
-          await this.loadArpList();
-          this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
-        } else {
-          this.showMessage(data.detail || '匯入失敗', 'error');
-        }
-      } catch (e) {
-        console.error('ARP 來源匯入失敗:', e);
-        this.showMessage('匯入失敗，請檢查網路連線', 'error');
-      } finally {
-        this.arpLoading = false;
-      }
-      event.target.value = '';
-    },
-
-    openAddArp() {
-      this.editingArp = null;
-      this.newArp = { hostname: '', priority: 100, description: '' };
-      this.showAddArpModal = true;
-    },
-
-    editArp(arp) {
-      this.editingArp = arp;
-      this.newArp = {
-        id: arp.id,
-        hostname: arp.hostname || '',
-        priority: arp.priority || 100,
-        description: arp.description || '',
-      };
-      this.showAddArpModal = true;
-    },
-
-    closeArpModal() {
-      this.showAddArpModal = false;
-      this.editingArp = null;
-      this.newArp = { hostname: '', priority: 100, description: '' };
-    },
-
-    async saveArp() {
-      if (!this.newArp.hostname || !this.selectedMaintenanceId) return;
-
-      try {
-        let res;
-        const payload = {
-          hostname: this.newArp.hostname.trim(),
-          priority: this.newArp.priority || 100,
-          description: this.newArp.description?.trim() || null,
-        };
-
-        if (this.editingArp && this.newArp.id) {
-          res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/${this.newArp.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify(payload),
-          });
-        } else {
-          res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify(payload),
-          });
-        }
-
-        if (res.ok) {
-          const msg = this.editingArp ? 'ARP 來源更新成功' : 'ARP 來源新增成功';
-          this.closeArpModal();
-          await this.loadArpList();
-          this.showMessage(msg, 'success');
-        } else {
-          const err = await res.json();
-          this.showMessage(err.detail || (this.editingArp ? '更新失敗' : '新增失敗'), 'error');
-        }
-      } catch (e) {
-        console.error('儲存 ARP 來源失敗:', e);
-        this.showMessage('儲存失敗', 'error');
-      }
-    },
-
-    async deleteArpSource(arp) {
-      const confirmed = await this.showConfirm(`確定要刪除 ARP 來源 ${arp.hostname}？`, '刪除確認');
-      if (!confirmed) return;
-
-      try {
-        const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/${arp.id}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          await this.loadArpList();
-          this.showMessage('刪除成功', 'success');
-        }
-      } catch (e) {
-        console.error('刪除 ARP 來源失敗:', e);
-        this.showMessage('刪除失敗', 'error');
-      }
-    },
-
-    toggleArpSelectAll() {
-      if (this.arpSelectAll) {
-        this.selectedArps = this.arpSources.map(a => a.id);
-      } else {
-        this.selectedArps = [];
-      }
-    },
-
-    clearArpSelection() {
-      this.selectedArps = [];
-      this.arpSelectAll = false;
-    },
-
-    async batchDeleteArps() {
-      if (this.selectedArps.length === 0) return;
-
-      const confirmed = await this.showConfirm(
-        `確定要刪除選中的 ${this.selectedArps.length} 筆 ARP 來源？`,
-        '批量刪除確認'
-      );
-      if (!confirmed) return;
-
-      try {
-        const res = await fetch(`/api/v1/expectations/arp/${this.selectedMaintenanceId}/batch-delete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ item_ids: this.selectedArps }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          this.showMessage(`成功刪除 ${data.deleted_count} 筆 ARP 來源`, 'success');
-          this.clearArpSelection();
-          await this.loadArpList();
-        } else {
-          this.showMessage('批量刪除失敗', 'error');
-        }
-      } catch (e) {
-        console.error('批量刪除 ARP 來源失敗:', e);
-        this.showMessage('批量刪除失敗', 'error');
-      }
-    },
-
-    exportArpCsv() {
-      const params = new URLSearchParams();
-      if (this.arpSearch) {
-        params.append('search', this.arpSearch);
-      }
-      const url = `/api/v1/expectations/arp/${this.selectedMaintenanceId}/export-csv?${params}`;
-      window.open(url, '_blank');
     },
   },
 };

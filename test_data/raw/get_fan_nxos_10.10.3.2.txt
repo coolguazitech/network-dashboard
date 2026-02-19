@@ -1,0 +1,8 @@
+Fan:
+--------------------------------------------------------------------------
+Fan             Model                Hw     Direction      Status
+--------------------------------------------------------------------------
+Fan1(sys_fan1)  NXA-FAN-30CFM-F      --     front-to-back  Ok
+Fan2(sys_fan2)  NXA-FAN-30CFM-F      --     front-to-back  Ok
+Fan_in_PS1      --                   --     front-to-back  Ok
+Fan_in_PS2      --                   --     front-to-back  Absent

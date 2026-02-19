@@ -1,0 +1,4 @@
+Port        Align-Err    FCS-Err   Xmit-Err    Rcv-Err  UnderSize OutDiscards
+Gi0/1               0          0          0          0          0           0
+Gi0/2               0          5          0          3          0           0
+Gi0/3               0          0          0          0          0           0

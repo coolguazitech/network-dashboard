@@ -5,6 +5,24 @@ Parses Cisco NX-OS `show interface transceiver details` per-interface block outp
 
 Real CLI command: show interface transceiver details
 Platforms: Nexus 3000, 5000, 7000, 9000 series
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class TransceiverChannelData(BaseModel):
+    channel: int                             # 1-4 (SFP=1, QSFP=1~4)
+    tx_power: float | None = None            # dBm, range -40.0 ~ 10.0
+    rx_power: float | None = None            # dBm, range -40.0 ~ 10.0
+    bias_current_ma: float | None = None     # mA, >= 0
+
+class TransceiverData(ParsedData):
+    interface_name: str                      # e.g. "GigabitEthernet1/0/1"
+    temperature: float | None = None         # °C, range -10.0 ~ 100.0
+    voltage: float | None = None             # V, range 0 ~ 10.0
+    channels: list[TransceiverChannelData]   # one per lane
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: show interface transceiver details
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 

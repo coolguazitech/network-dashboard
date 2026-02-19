@@ -1,0 +1,6 @@
+                                        Optical   Optical
+                   Temperature  Voltage  Current  Tx Power  Rx Power
+Port       (Celsius)    (Volts)  (mA)     (dBm)     (dBm)
+---------  -----------  -------  -------  --------  --------
+Gi1/0/1    30.5         3.29     6.2      -2.8      -3.5
+Gi1/0/2    29.0         3.30     6.1      -2.6      -3.2

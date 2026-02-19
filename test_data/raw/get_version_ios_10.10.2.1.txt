@@ -1,0 +1,14 @@
+Cisco IOS Software, C3750E Software (C3750E-UNIVERSALK9-M), Version 15.2(4)E10
+Technical Support: http://www.cisco.com/techsupport
+Copyright (c) 1986-2020 by Cisco Systems, Inc.
+
+ROM: Bootstrap program is C3750E boot loader
+BOOTLDR: C3750E Boot Loader Version 12.2(58r)SE
+
+SW-ACCESS-01 uptime is 30 weeks, 2 days, 14 hours, 5 minutes
+System returned to ROM by power-on
+
+System image file is "flash:c3750e-universalk9-mz.152-4.E10.bin"
+
+Model number          : WS-C3750X-48PF-L
+System serial number  : FDO1234A5BC

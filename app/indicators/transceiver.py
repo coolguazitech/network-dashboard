@@ -1,12 +1,12 @@
 """
 Transceiver (光模塊) indicator evaluator.
 
-Evaluates if transceiver data meets expectations (bilateral thresholds).
-Uses typed TransceiverRecord table via TransceiverRecordRepo.
+Uses TransceiverRecord with flat tx_power/rx_power/temperature/voltage fields.
 """
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -25,8 +25,18 @@ from app.indicators.base import (
 from app.repositories.typed_records import TransceiverRecordRepo
 from app.services.threshold_service import get_threshold
 
-# Fields to aggregate when computing time-series averages.
-_METRIC_FIELDS = ("tx_power", "rx_power", "temperature", "voltage")
+
+@dataclass(frozen=True)
+class _Thresholds:
+    """Immutable snapshot of transceiver thresholds for a given maintenance."""
+    tx_power_min: float
+    tx_power_max: float
+    rx_power_min: float
+    rx_power_max: float
+    temperature_min: float
+    temperature_max: float
+    voltage_min: float
+    voltage_max: float
 
 
 class TransceiverIndicator(BaseIndicator):
@@ -39,41 +49,19 @@ class TransceiverIndicator(BaseIndicator):
 
     indicator_type = "transceiver"
 
-    # 當前評估中的歲修 ID（由 evaluate / get_time_series / get_latest_raw_data 設定）
-    _maintenance_id: str | None = None
-
-    # 光模塊閾值：優先讀 DB 覆寫，fallback 到 .env（見 threshold_service.py）
-    @property
-    def TX_POWER_MIN(self) -> float:
-        return get_threshold("transceiver_tx_power_min", self._maintenance_id)
-
-    @property
-    def TX_POWER_MAX(self) -> float:
-        return get_threshold("transceiver_tx_power_max", self._maintenance_id)
-
-    @property
-    def RX_POWER_MIN(self) -> float:
-        return get_threshold("transceiver_rx_power_min", self._maintenance_id)
-
-    @property
-    def RX_POWER_MAX(self) -> float:
-        return get_threshold("transceiver_rx_power_max", self._maintenance_id)
-
-    @property
-    def TEMPERATURE_MIN(self) -> float:
-        return get_threshold("transceiver_temperature_min", self._maintenance_id)
-
-    @property
-    def TEMPERATURE_MAX(self) -> float:
-        return get_threshold("transceiver_temperature_max", self._maintenance_id)
-
-    @property
-    def VOLTAGE_MIN(self) -> float:
-        return get_threshold("transceiver_voltage_min", self._maintenance_id)
-
-    @property
-    def VOLTAGE_MAX(self) -> float:
-        return get_threshold("transceiver_voltage_max", self._maintenance_id)
+    @staticmethod
+    def _load_thresholds(maintenance_id: str) -> _Thresholds:
+        """Load all thresholds for a maintenance — no mutable state on self."""
+        return _Thresholds(
+            tx_power_min=get_threshold("transceiver_tx_power_min", maintenance_id),
+            tx_power_max=get_threshold("transceiver_tx_power_max", maintenance_id),
+            rx_power_min=get_threshold("transceiver_rx_power_min", maintenance_id),
+            rx_power_max=get_threshold("transceiver_rx_power_max", maintenance_id),
+            temperature_min=get_threshold("transceiver_temperature_min", maintenance_id),
+            temperature_max=get_threshold("transceiver_temperature_max", maintenance_id),
+            voltage_min=get_threshold("transceiver_voltage_min", maintenance_id),
+            voltage_max=get_threshold("transceiver_voltage_max", maintenance_id),
+        )
 
     # ── evaluate ────────────────────────────────────────────────
 
@@ -82,14 +70,8 @@ class TransceiverIndicator(BaseIndicator):
         maintenance_id: str,
         session: AsyncSession,
     ) -> IndicatorEvaluationResult:
-        """
-        評估光模塊指標。
-
-        Args:
-            maintenance_id: 維護作業 ID
-            session: 資料庫 session
-        """
-        self._maintenance_id = maintenance_id
+        """評估光模塊指標。"""
+        th = self._load_thresholds(maintenance_id)
         repo = TransceiverRecordRepo(session)
         records = await repo.get_latest_per_device(maintenance_id)
 
@@ -100,7 +82,7 @@ class TransceiverIndicator(BaseIndicator):
 
         for record in records:
             total_count += 1
-            failure = self._check_single_record(record)
+            failure = self._check_single_record(record, th)
             if failure is None:
                 pass_count += 1
                 if len(passes) < 10:
@@ -108,12 +90,7 @@ class TransceiverIndicator(BaseIndicator):
                         "device": record.switch_hostname,
                         "interface": record.interface_name,
                         "reason": "光模塊正常",
-                        "data": {
-                            "tx_power": record.tx_power,
-                            "rx_power": record.rx_power,
-                            "temperature": record.temperature,
-                            "voltage": record.voltage,
-                        },
+                        "data": self._record_data(record),
                     })
             else:
                 failures.append(failure)
@@ -125,53 +102,51 @@ class TransceiverIndicator(BaseIndicator):
             pass_count=pass_count,
             fail_count=total_count - pass_count,
             pass_rates={
-                "tx_power_ok": self._calculate_pass_rate(
+                "tx_power_ok": self._field_pass_rate(
                     records, "tx_power",
-                    self.TX_POWER_MIN, self.TX_POWER_MAX,
+                    th.tx_power_min, th.tx_power_max,
                 ),
-                "rx_power_ok": self._calculate_pass_rate(
+                "rx_power_ok": self._field_pass_rate(
                     records, "rx_power",
-                    self.RX_POWER_MIN, self.RX_POWER_MAX,
+                    th.rx_power_min, th.rx_power_max,
                 ),
-                "temperature_ok": self._calculate_pass_rate(
+                "temperature_ok": self._field_pass_rate(
                     records, "temperature",
-                    self.TEMPERATURE_MIN, self.TEMPERATURE_MAX,
+                    th.temperature_min, th.temperature_max,
                 ),
-                "voltage_ok": self._calculate_pass_rate(
+                "voltage_ok": self._field_pass_rate(
                     records, "voltage",
-                    self.VOLTAGE_MIN, self.VOLTAGE_MAX,
+                    th.voltage_min, th.voltage_max,
                 ),
             },
             failures=failures if failures else None,
             passes=passes if passes else None,
-            summary=f"光模塊驗收: {pass_count}/{total_count} 通過 "
-                   f"({self._calc_percent(pass_count, total_count):.1f}%)"
+            summary=(
+                f"光模塊驗收: {pass_count}/{total_count} 通過 "
+                f"({self._calc_percent(pass_count, total_count):.1f}%)"
+            ),
         )
 
-    def _check_single_record(
-        self, record: TransceiverRecord
-    ) -> dict[str, Any] | None:
-        """
-        Check a single transceiver record against thresholds.
+    # ── single-record check ─────────────────────────────────────
 
-        Returns:
-            A failure dict if the record fails any check, or None if it passes.
-        """
-        if record.tx_power is None and record.rx_power is None:
+    def _check_single_record(
+        self, record: TransceiverRecord, th: _Thresholds,
+    ) -> dict[str, Any] | None:
+        """Check a single record. Return failure dict or None if passed."""
+        if (
+            record.tx_power is None
+            and record.rx_power is None
+            and record.temperature is None
+            and record.voltage is None
+        ):
             return {
                 "device": record.switch_hostname,
                 "interface": record.interface_name,
                 "reason": "光模塊缺失或無法讀取",
-                "data": {
-                    "tx_power": None,
-                    "rx_power": None,
-                    "temperature": None,
-                    "voltage": None,
-                },
+                "data": self._record_data(record),
             }
 
-        failure_reasons = self._collect_failure_reasons(record)
-
+        failure_reasons = self._collect_failure_reasons(record, th)
         if not failure_reasons:
             return None
 
@@ -179,92 +154,95 @@ class TransceiverIndicator(BaseIndicator):
             "device": record.switch_hostname,
             "interface": record.interface_name,
             "reason": " | ".join(failure_reasons),
-            "data": {
-                "tx_power": record.tx_power,
-                "rx_power": record.rx_power,
-                "temperature": record.temperature,
-                "voltage": record.voltage,
-            },
+            "data": self._record_data(record),
         }
 
+    @staticmethod
     def _collect_failure_reasons(
-        self, record: TransceiverRecord
+        record: TransceiverRecord, th: _Thresholds,
     ) -> list[str]:
         """Return a list of human-readable failure reasons for *record*."""
         reasons: list[str] = []
 
         if record.tx_power is not None:
-            if record.tx_power < self.TX_POWER_MIN:
+            if record.tx_power < th.tx_power_min:
                 reasons.append(
                     f"Tx Power 過低: {record.tx_power} dBm "
-                    f"(範圍: {self.TX_POWER_MIN}~{self.TX_POWER_MAX})"
+                    f"(範圍: {th.tx_power_min}~{th.tx_power_max})"
                 )
-            elif record.tx_power > self.TX_POWER_MAX:
+            elif record.tx_power > th.tx_power_max:
                 reasons.append(
                     f"Tx Power 過高: {record.tx_power} dBm "
-                    f"(範圍: {self.TX_POWER_MIN}~{self.TX_POWER_MAX})"
+                    f"(範圍: {th.tx_power_min}~{th.tx_power_max})"
                 )
 
         if record.rx_power is not None:
-            if record.rx_power < self.RX_POWER_MIN:
+            if record.rx_power < th.rx_power_min:
                 reasons.append(
                     f"Rx Power 過低: {record.rx_power} dBm "
-                    f"(範圍: {self.RX_POWER_MIN}~{self.RX_POWER_MAX})"
+                    f"(範圍: {th.rx_power_min}~{th.rx_power_max})"
                 )
-            elif record.rx_power > self.RX_POWER_MAX:
+            elif record.rx_power > th.rx_power_max:
                 reasons.append(
                     f"Rx Power 過高: {record.rx_power} dBm "
-                    f"(範圍: {self.RX_POWER_MIN}~{self.RX_POWER_MAX})"
+                    f"(範圍: {th.rx_power_min}~{th.rx_power_max})"
                 )
 
         if record.temperature is not None:
-            if record.temperature < self.TEMPERATURE_MIN:
+            if record.temperature < th.temperature_min:
                 reasons.append(
                     f"溫度過低: {record.temperature}°C "
-                    f"(範圍: {self.TEMPERATURE_MIN}~{self.TEMPERATURE_MAX}°C)"
+                    f"(範圍: {th.temperature_min}~{th.temperature_max}°C)"
                 )
-            elif record.temperature > self.TEMPERATURE_MAX:
+            elif record.temperature > th.temperature_max:
                 reasons.append(
                     f"溫度過高: {record.temperature}°C "
-                    f"(範圍: {self.TEMPERATURE_MIN}~{self.TEMPERATURE_MAX}°C)"
+                    f"(範圍: {th.temperature_min}~{th.temperature_max}°C)"
                 )
 
         if record.voltage is not None:
-            if record.voltage < self.VOLTAGE_MIN:
+            if record.voltage < th.voltage_min:
                 reasons.append(
                     f"電壓過低: {record.voltage}V "
-                    f"(範圍: {self.VOLTAGE_MIN}~{self.VOLTAGE_MAX}V)"
+                    f"(範圍: {th.voltage_min}~{th.voltage_max}V)"
                 )
-            elif record.voltage > self.VOLTAGE_MAX:
+            elif record.voltage > th.voltage_max:
                 reasons.append(
                     f"電壓過高: {record.voltage}V "
-                    f"(範圍: {self.VOLTAGE_MIN}~{self.VOLTAGE_MAX}V)"
+                    f"(範圍: {th.voltage_min}~{th.voltage_max}V)"
                 )
 
         return reasons
 
+    @staticmethod
+    def _record_data(record: TransceiverRecord) -> dict[str, Any]:
+        """Serialise key fields for failure/pass data payload."""
+        return {
+            "tx_power": record.tx_power,
+            "rx_power": record.rx_power,
+            "temperature": record.temperature,
+            "voltage": record.voltage,
+        }
+
     # ── pass-rate helpers ───────────────────────────────────────
 
-    def _calculate_pass_rate(
+    def _field_pass_rate(
         self,
         records: list[TransceiverRecord],
         field: str,
         min_threshold: float,
         max_threshold: float,
     ) -> float:
-        """計算特定字段的通過率（雙向閾值）。"""
+        """Calculate pass rate for a record-level field."""
         total = 0
         passed = 0
-
         for record in records:
             value = getattr(record, field)
             if value is None:
                 continue
-
             total += 1
             if min_threshold <= value <= max_threshold:
                 passed += 1
-
         return self._calc_percent(passed, total)
 
     @staticmethod
@@ -328,7 +306,6 @@ class TransceiverIndicator(BaseIndicator):
         maintenance_id: str,
     ) -> list[TimeSeriesPoint]:
         """獲取時間序列數據。"""
-        self._maintenance_id = maintenance_id
         repo = TransceiverRecordRepo(session)
         records = await repo.get_time_series_records(maintenance_id, limit)
 
@@ -337,7 +314,6 @@ class TransceiverIndicator(BaseIndicator):
             grouped[record.collected_at].append(record)
 
         time_series: list[TimeSeriesPoint] = []
-
         for timestamp in sorted(grouped.keys()):
             values = self._aggregate_group_averages(grouped[timestamp])
             if values:
@@ -352,13 +328,22 @@ class TransceiverIndicator(BaseIndicator):
         group: list[TransceiverRecord],
     ) -> dict[str, float]:
         """Compute per-field averages for a group of records sharing a timestamp."""
-        buckets: dict[str, list[float]] = {f: [] for f in _METRIC_FIELDS}
+        buckets: dict[str, list[float]] = {
+            "tx_power": [],
+            "rx_power": [],
+            "temperature": [],
+            "voltage": [],
+        }
 
         for record in group:
-            for field in _METRIC_FIELDS:
-                value = getattr(record, field)
-                if value is not None:
-                    buckets[field].append(value)
+            if record.tx_power is not None:
+                buckets["tx_power"].append(record.tx_power)
+            if record.rx_power is not None:
+                buckets["rx_power"].append(record.rx_power)
+            if record.temperature is not None:
+                buckets["temperature"].append(record.temperature)
+            if record.voltage is not None:
+                buckets["voltage"].append(record.voltage)
 
         return {
             field: sum(vals) / len(vals)
@@ -375,30 +360,29 @@ class TransceiverIndicator(BaseIndicator):
         maintenance_id: str,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
-        self._maintenance_id = maintenance_id
+        th = self._load_thresholds(maintenance_id)
         repo = TransceiverRecordRepo(session)
         records = await repo.get_latest_records(maintenance_id, limit)
 
-        return [self._record_to_raw_row(record) for record in records]
-
-    def _record_to_raw_row(self, record: TransceiverRecord) -> RawDataRow:
-        """Convert a single TransceiverRecord to a RawDataRow."""
-        return RawDataRow(
-            switch_hostname=record.switch_hostname,
-            interface_name=record.interface_name,
-            tx_power=record.tx_power,
-            rx_power=record.rx_power,
-            temperature=record.temperature,
-            voltage=record.voltage,
-            tx_pass=(
-                self.TX_POWER_MIN <= record.tx_power <= self.TX_POWER_MAX
-                if record.tx_power is not None
-                else None
-            ),
-            rx_pass=(
-                self.RX_POWER_MIN <= record.rx_power <= self.RX_POWER_MAX
-                if record.rx_power is not None
-                else None
-            ),
-            collected_at=record.collected_at,
-        )
+        return [
+            RawDataRow(
+                switch_hostname=record.switch_hostname,
+                interface_name=record.interface_name,
+                tx_power=record.tx_power,
+                rx_power=record.rx_power,
+                temperature=record.temperature,
+                voltage=record.voltage,
+                tx_pass=(
+                    th.tx_power_min <= record.tx_power <= th.tx_power_max
+                    if record.tx_power is not None
+                    else None
+                ),
+                rx_pass=(
+                    th.rx_power_min <= record.rx_power <= th.rx_power_max
+                    if record.rx_power is not None
+                    else None
+                ),
+                collected_at=record.collected_at,
+            )
+            for record in records
+        ]

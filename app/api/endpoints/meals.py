@@ -6,12 +6,13 @@ Meal Delivery Status API endpoints.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.api.endpoints.auth import get_current_user
 from app.core.enums import MealDeliveryStatus
 from app.core.timezone import now_utc
 from app.db.base import get_session_context
@@ -53,7 +54,10 @@ class MealZoneResponse(BaseModel):
 
 
 @router.get("/{maintenance_id}")
-async def get_meal_status(maintenance_id: str) -> dict[str, Any]:
+async def get_meal_status(
+    maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> dict[str, Any]:
     """獲取所有區域的餐點狀態。"""
     async with get_session_context() as session:
         stmt = select(MealZone).where(MealZone.maintenance_id == maintenance_id)
@@ -121,6 +125,7 @@ async def update_meal_status(
     maintenance_id: str,
     zone_code: str,
     data: MealStatusUpdate,
+    _: Annotated[dict[str, Any], Depends(get_current_user)],
 ) -> dict[str, Any]:
     """更新區域餐點狀態。"""
     # 驗證區域代碼
@@ -144,19 +149,21 @@ async def update_meal_status(
                 maintenance_id=maintenance_id,
                 zone_code=zone_code,
                 zone_name=zone_config["zone_name"],
+                meal_count=0,
             )
             session.add(zone)
 
-        # 更新狀態
+        # 更新狀態（接受大小寫：前端送 lowercase，enum 為 uppercase）
         try:
-            zone.status = MealDeliveryStatus(data.status)
+            new_status = MealDeliveryStatus(data.status.upper())
         except ValueError:
             raise HTTPException(status_code=400, detail=f"無效的狀態: {data.status}")
+        zone.status = new_status
 
         # 更新到達時間
-        if data.status == "arrived":
+        if new_status == MealDeliveryStatus.ARRIVED:
             zone.arrived_time = now_utc()
-        elif data.status == "pending":
+        elif new_status == MealDeliveryStatus.PENDING:
             zone.arrived_time = None
 
         # 更新其他欄位
@@ -205,7 +212,10 @@ async def update_meal_status(
 
 
 @router.post("/{maintenance_id}/reset")
-async def reset_meal_status(maintenance_id: str) -> dict[str, Any]:
+async def reset_meal_status(
+    maintenance_id: str,
+    _: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> dict[str, Any]:
     """重置所有區域的餐點狀態（用於新的一天）。"""
     async with get_session_context() as session:
         stmt = select(MealZone).where(MealZone.maintenance_id == maintenance_id)

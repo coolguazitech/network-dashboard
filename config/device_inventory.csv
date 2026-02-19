@@ -1,0 +1,7 @@
+ip,hostname,device_type
+# === 請替換為真實設備清單 ===
+# device_type 支援: hpe, ios, nxos
+# 範例:
+# 10.1.1.1,SW-HPE-001,hpe
+# 10.2.1.1,SW-IOS-001,ios
+# 10.3.1.1,SW-NXOS-001,nxos

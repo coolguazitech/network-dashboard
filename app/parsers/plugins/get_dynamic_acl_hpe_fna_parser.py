@@ -1,8 +1,18 @@
 """
 Parser for 'get_dynamic_acl_hpe_fna' API.
 
-Parses HPE Comware ``display mac-authentication verbose`` output for
+Parses HPE Comware ``display mac-authentication connection`` output for
 dynamically applied ACL bindings.  Also supports a CSV fallback format.
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class AclData(ParsedData):
+    interface_name: str                      # e.g. "GigabitEthernet1/0/1"
+    acl_number: str | None = None            # ACL number/name, None if no ACL bound
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: display mac-authentication connection
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 
@@ -17,20 +27,32 @@ class GetDynamicAclHpeFnaParser(BaseParser[AclData]):
     """
     Parser for HPE dynamic ACL bindings from MAC authentication output.
 
-    Primary format (``display mac-authentication verbose``):
-    ```
-    Interface         MAC Address        ACL Number  Auth State
-    GE1/0/1           aabb-ccdd-0001     3001        Authenticated
-    GE1/0/2           aabb-ccdd-0002     --          Unauthenticated
-    GE1/0/3           aabb-ccdd-0003     3001        Authenticated
-    ```
+    Real CLI output (``display mac-authentication connection``)::
 
-    CSV fallback:
-    ```
-    Interface,ACL
-    GE1/0/1,3001
-    GE1/0/2,
-    ```
+        Slot ID   : 1
+        Total connections : 3
+
+        Interface         MAC Address     Auth State      ACL Number
+        GE1/0/1           aabb-ccdd-0001  Authenticated   3001
+        GE1/0/2           aabb-ccdd-0002  Unauthenticated --
+        GE1/0/3           aabb-ccdd-0003  Authenticated   3001
+
+    The FNA API may also return a simplified format::
+
+        Interface         MAC Address        ACL Number  Auth State
+        GE1/0/1           aabb-ccdd-0001     3001        Authenticated
+        GE1/0/2           aabb-ccdd-0002     --          Unauthenticated
+
+    CSV fallback::
+
+        Interface,ACL
+        GE1/0/1,3001
+        GE1/0/2,
+
+    Notes:
+        - MAC format: xxxx-xxxx-xxxx (HPE hyphenated).
+        - ACL Number: numeric or ``--`` (no ACL).
+        - Column order may vary between firmware versions.
     """
 
     device_type = DeviceType.HPE
@@ -56,6 +78,12 @@ class GetDynamicAclHpeFnaParser(BaseParser[AclData]):
     # Common header keywords to skip
     HEADER_KEYWORDS = {"interface", "port", "---"}
 
+    # Known auth-state values (lowercase) — used to distinguish ACL vs auth columns
+    AUTH_STATE_KEYWORDS = {
+        "authenticated", "unauthenticated", "authorized", "unauthorized",
+        "mac-auth", "auth", "unauth",
+    }
+
     def parse(self, raw_output: str) -> list[AclData]:
         results: list[AclData] = []
 
@@ -71,6 +99,24 @@ class GetDynamicAclHpeFnaParser(BaseParser[AclData]):
 
         return results
 
+    def _pick_acl_value(self, col3: str, col4: str) -> str:
+        """Determine which column holds the ACL number.
+
+        Column order may vary between firmware versions:
+          - Interface | MAC | ACL Number | Auth State  → col3 = ACL
+          - Interface | MAC | Auth State | ACL Number  → col4 = ACL
+        """
+        c3 = col3.strip()
+        c4 = col4.strip()
+        if c3.lower() in self.AUTH_STATE_KEYWORDS:
+            return c4
+        if c4.lower() in self.AUTH_STATE_KEYWORDS:
+            return c3
+        # Heuristic: numeric values are ACL numbers
+        if c3.isdigit() or c3 in ("--", "-", "N/A", ""):
+            return c3
+        return c4
+
     def _parse_table_format(self, raw_output: str) -> list[AclData]:
         """Parse whitespace-delimited table output."""
         results: list[AclData] = []
@@ -84,7 +130,7 @@ class GetDynamicAclHpeFnaParser(BaseParser[AclData]):
             if interface_name.startswith("-"):
                 continue
 
-            acl_val = match.group(3).strip()
+            acl_val = self._pick_acl_value(match.group(3), match.group(4))
             acl_number = (
                 None if acl_val in ("--", "-", "N/A", "") else acl_val
             )

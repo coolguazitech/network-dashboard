@@ -23,7 +23,6 @@ from pydantic import BaseModel
 
 from app.parsers.protocols import (
     AclData,
-    ArpData,
     InterfaceStatusData,
     MacTableData,
     PingResultData,
@@ -81,42 +80,6 @@ class MacTableParser(BaseFetcherParser):
 
         return entries
 
-
-# ── ARP Table ────────────────────────────────────────────────────
-
-
-class ArpParser(BaseFetcherParser):
-    """
-    解析 Fetcher `get_arp_table` 的回傳。
-
-    Fetcher 回傳格式 (CSV):
-        IP,MAC
-        10.0.1.101,AA:BB:CC:XX:XX:XX
-
-    產出: list[ArpData]
-    用途: 為 MAC 地址關聯 IP 地址。
-    """
-
-    def parse(self, raw_output: str) -> list[ArpData]:
-        if not raw_output or not raw_output.strip():
-            return []
-
-        entries: list[ArpData] = []
-        reader = csv.DictReader(StringIO(raw_output))
-
-        for row in reader:
-            ip = row.get("IP", "").strip()
-            mac = row.get("MAC", "").strip()
-
-            if not ip or not mac:
-                continue
-
-            entries.append(ArpData(
-                ip_address=ip,
-                mac_address=mac,
-            ))
-
-        return entries
 
 
 # ── Interface Status ─────────────────────────────────────────────

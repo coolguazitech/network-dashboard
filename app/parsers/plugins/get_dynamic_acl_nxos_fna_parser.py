@@ -5,6 +5,16 @@ Parses Cisco NX-OS dynamic ACL bindings.  NX-OS does NOT have
 ``show authentication sessions``; it uses ``show dot1x all summary``
 or ``show port-security interface`` for authentication status.
 Also supports a CSV fallback format.
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class AclData(ParsedData):
+    interface_name: str                      # e.g. "GigabitEthernet1/0/1"
+    acl_number: str | None = None            # ACL number/name, None if no ACL bound
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: show dot1x all det
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 
@@ -19,14 +29,18 @@ class GetDynamicAclNxosFnaParser(BaseParser[AclData]):
     """
     Parser for Cisco NX-OS dynamic ACL bindings.
 
-    NX-OS does NOT have ``show authentication sessions`` (that's IOS only).
-    The FNA API may use ``show dot1x all summary`` or similar::
+    Real CLI ``show dot1x all summary`` (ref: Cisco NX-OS docs)::
 
-        Interface  PAE    Client          Status        ACL
-        Eth1/1     Auth   aabb.ccdd.0001  Authorized    101
-        Eth1/2     Auth   aabb.ccdd.0002  Unauthorized  --
+           Interface     PAE              Client          Status
+        ------------------------------------------------------------------
+             Ethernet1/1    AUTH                none    UNAUTHORIZED
 
-    Also handles generic tabular format::
+           Interface     PAE              Client          Status
+        ------------------------------------------------------------------
+            Ethernet1/33    AUTH   00:16:5A:4C:00:07      AUTHORIZED
+                                   00:16:5A:4C:00:06      AUTHORIZED
+
+    The FNA API may transform this to include ACL bindings::
 
         Interface         MAC Address        ACL         Status
         Eth1/1            aabb.ccdd.0001     101         Authorized
@@ -38,7 +52,9 @@ class GetDynamicAclNxosFnaParser(BaseParser[AclData]):
         Eth1/1,101
         Eth1/2,
 
-    Note: Exact FNA output format needs verification with real API.
+    Notes:
+        - NX-OS uses ``show dot1x`` instead of IOS ``show authentication sessions``.
+        - Exact FNA output format depends on API transformation layer.
     """
 
     device_type = DeviceType.CISCO_NXOS
@@ -64,6 +80,12 @@ class GetDynamicAclNxosFnaParser(BaseParser[AclData]):
     # Common header keywords to skip
     HEADER_KEYWORDS = {"interface", "port", "---"}
 
+    # Known auth-state values (lowercase) — used to distinguish ACL vs auth columns
+    AUTH_STATE_KEYWORDS = {
+        "authenticated", "unauthenticated", "authorized", "unauthorized",
+        "mac-auth", "auth", "unauth",
+    }
+
     def parse(self, raw_output: str) -> list[AclData]:
         results: list[AclData] = []
 
@@ -79,6 +101,23 @@ class GetDynamicAclNxosFnaParser(BaseParser[AclData]):
 
         return results
 
+    def _pick_acl_value(self, col3: str, col4: str) -> str:
+        """Determine which column holds the ACL number.
+
+        Column order may vary between firmware versions:
+          - Interface | MAC | ACL Number | Status  → col3 = ACL
+          - Interface | MAC | Status | ACL Number  → col4 = ACL
+        """
+        c3 = col3.strip()
+        c4 = col4.strip()
+        if c3.lower() in self.AUTH_STATE_KEYWORDS:
+            return c4
+        if c4.lower() in self.AUTH_STATE_KEYWORDS:
+            return c3
+        if c3.isdigit() or c3 in ("--", "-", "N/A", ""):
+            return c3
+        return c4
+
     def _parse_table_format(self, raw_output: str) -> list[AclData]:
         """Parse whitespace-delimited table output."""
         results: list[AclData] = []
@@ -92,7 +131,7 @@ class GetDynamicAclNxosFnaParser(BaseParser[AclData]):
             if interface_name.startswith("-"):
                 continue
 
-            acl_val = match.group(3).strip()
+            acl_val = self._pick_acl_value(match.group(3), match.group(4))
             acl_number = (
                 None if acl_val in ("--", "-", "N/A", "") else acl_val
             )

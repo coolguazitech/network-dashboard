@@ -83,30 +83,39 @@ class ClientDetectionStatus(str, Enum):
     """
     Detection status for clients in maintenance.
 
-    - NOT_CHECKED: Initial state, not yet checked
-    - DETECTED: Client IP is reachable via GNMS Ping
-    - MISMATCH: ARP data shows different IP-MAC mapping than user provided
-    - NOT_DETECTED: Client IP is not reachable
+    Values are uppercase to match production DB enum definitions.
     """
 
-    NOT_CHECKED = "not_checked"  # 未檢查
-    DETECTED = "detected"  # 已偵測
-    MISMATCH = "mismatch"  # 不匹配
-    NOT_DETECTED = "not_detected"  # 未偵測
+    NOT_CHECKED = "NOT_CHECKED"
+    DETECTED = "DETECTED"
+    MISMATCH = "MISMATCH"
+    NOT_DETECTED = "NOT_DETECTED"
+
+
+class CaseStatus(str, Enum):
+    """
+    案件處理狀態。
+
+    Values are uppercase to match production DB enum definitions.
+    """
+
+    UNASSIGNED = "UNASSIGNED"       # 未指派
+    ASSIGNED = "ASSIGNED"           # 已指派
+    IN_PROGRESS = "IN_PROGRESS"     # 處理中
+    DISCUSSING = "DISCUSSING"       # 待討論
+    RESOLVED = "RESOLVED"           # 已解決
 
 
 class MealDeliveryStatus(str, Enum):
     """
     餐點配送狀態。
 
-    - NO_MEAL: 灰色燈號 - 該區沒有工作人員/沒有便當
-    - PENDING: 紅色燈號 - 有便當但還沒來
-    - ARRIVED: 綠色燈號 - 餐點已送達
+    Values are uppercase to match production DB enum definitions.
     """
 
-    NO_MEAL = "no_meal"
-    PENDING = "pending"
-    ARRIVED = "arrived"
+    NO_MEAL = "NO_MEAL"
+    PENDING = "PENDING"
+    ARRIVED = "ARRIVED"
 
 
 class Permission(str, Enum):
@@ -133,11 +142,13 @@ class UserRole(str, Enum):
     - ROOT: 超級管理員，可管理歲修 ID 和使用者
     - PM: 專案經理，有除了歲修/用戶管理外的所有寫入權限
     - GUEST: 訪客，只有讀取權限，所有寫入操作都禁止
+
+    Values are uppercase to match production DB enum definitions.
     """
 
-    ROOT = "root"
-    PM = "pm"
-    GUEST = "guest"
+    ROOT = "ROOT"
+    PM = "PM"
+    GUEST = "GUEST"
 
 
 # ── ParsedData 嚴格枚舉 ─────────────────────────────────────────

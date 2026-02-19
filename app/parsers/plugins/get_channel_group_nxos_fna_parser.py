@@ -3,6 +3,19 @@ Parser for 'get_channel_group_nxos_fna' API.
 
 Parses Cisco NX-OS `show port-channel summary` output to extract
 port-channel interface, status, protocol, and member details.
+
+=== ParsedData Model (DO NOT REMOVE) ===
+class PortChannelData(ParsedData):
+    interface_name: str                      # e.g. "Po1", "Bridge-Aggregation1"
+    status: str                              # auto-normalized → LinkStatus (up/down/unknown)
+    protocol: str | None = None              # auto-normalized → AggregationProtocol (lacp/pagp/static/none)
+    members: list[str]                       # member interface names
+    member_status: dict[str, str] | None     # {interface: "up"|"down"}, optional
+=== End ParsedData Model ===
+
+=== Real CLI Command ===
+Command: show port-channel summary
+=== End Real CLI Command ===
 """
 from __future__ import annotations
 

@@ -1,0 +1,143 @@
+# =============================================================================
+# Mock API Test Configuration — 搭配 mock_api_server.py 測試進度條和 timeout
+# =============================================================================
+#
+# 使用方式：
+#   Terminal 1:  make mock-server
+#   Terminal 2:  make fetch-mock
+# =============================================================================
+
+sources:
+  FNA:
+    base_url: "http://127.0.0.1:9999"
+    timeout: 30
+    auth: null                                    # Mock 不需要認證
+
+  DNA:
+    base_url: "http://127.0.0.1:9999"
+    timeout: 30
+    auth: null
+
+
+endpoints:
+  # FNA
+  get_gbic_details:     "/switch/network/get_gbic_details/{ip}"
+  get_channel_group:    "/switch/network/get_channel_group/{ip}"
+  get_uplink:           "/switch/network/get_uplink/{ip}"
+  get_error_count:      "/switch/network/get_error_count/{ip}"
+  get_static_acl:       "/switch/network/get_static_acl/{ip}"
+  get_dynamic_acl:      "/switch/network/get_dynamic_acl/{ip}"
+  # DNA
+  get_mac_table:
+    hpe:  "/api/v1/hpe/mac-table/display_mac_table"
+    ios:  "/api/v1/ios/mac-table/show_mac_table"
+    nxos: "/api/v1/nxos/mac-table/show_mac_table"
+  get_fan:
+    hpe:  "/api/v1/hpe/fan/display_fan"
+    ios:  "/api/v1/ios/fan/show_fan"
+    nxos: "/api/v1/nxos/fan/show_fan"
+  get_power:
+    hpe:  "/api/v1/hpe/power/display_power"
+    ios:  "/api/v1/ios/power/show_power"
+    nxos: "/api/v1/nxos/power/show_power"
+  get_version:
+    hpe:  "/api/v1/hpe/version/display_version"
+    ios:  "/api/v1/ios/version/show_version"
+    nxos: "/api/v1/nxos/version/show_version"
+  get_interface_status:
+    hpe:  "/api/v1/hpe/interface-status/display_interface_brief"
+    ios:  "/api/v1/ios/interface-status/show_interfaces_status"
+    nxos: "/api/v1/nxos/interface-status/show_interface_status"
+
+
+targets:
+  - ip: "10.10.1.1"
+    hostname: "hpe-sw-01"
+    device_type: hpe
+
+  - ip: "10.10.1.2"
+    hostname: "hpe-sw-02"
+    device_type: hpe
+
+  - ip: "10.10.2.1"
+    hostname: "ios-sw-01"
+    device_type: ios
+
+  - ip: "10.10.2.2"
+    hostname: "ios-sw-02"
+    device_type: ios
+
+  - ip: "10.10.3.1"
+    hostname: "nxos-sw-01"
+    device_type: nxos
+
+  - ip: "10.10.3.2"
+    hostname: "nxos-sw-02"
+    device_type: nxos
+
+
+# =============================================================================
+# API 定義（同 api_test.yaml）
+# =============================================================================
+apis:
+  # FNA APIs
+  - name: get_gbic_details
+    source: FNA
+    parser_command: "get_gbic_details_{device_type}_fna"
+    description: "光模組 Tx/Rx 功率"
+
+  - name: get_channel_group
+    source: FNA
+    parser_command: "get_channel_group_{device_type}_fna"
+    description: "Port-Channel 狀態及成員"
+
+  - name: get_uplink
+    source: FNA
+    parser_command: "get_uplink_{device_type}_fna"
+    description: "Uplink 鄰居拓撲 (CDP/LLDP)"
+
+  - name: get_error_count
+    source: FNA
+    parser_command: "get_error_count_{device_type}_fna"
+    description: "Interface 錯誤計數"
+
+  - name: get_static_acl
+    source: FNA
+    parser_command: "get_static_acl_{device_type}_fna"
+    description: "Static ACL 綁定"
+
+  - name: get_dynamic_acl
+    source: FNA
+    parser_command: "get_dynamic_acl_{device_type}_fna"
+    description: "Dynamic ACL 綁定"
+
+  # DNA APIs
+  - name: get_mac_table
+    source: DNA
+    query_params: { hosts: "{ip}" }
+    parser_command: "get_mac_table_{device_type}_dna"
+    description: "MAC 位址表"
+
+  - name: get_fan
+    source: DNA
+    query_params: { hosts: "{ip}" }
+    parser_command: "get_fan_{device_type}_dna"
+    description: "風扇狀態"
+
+  - name: get_power
+    source: DNA
+    query_params: { hosts: "{ip}" }
+    parser_command: "get_power_{device_type}_dna"
+    description: "電源供應器狀態"
+
+  - name: get_version
+    source: DNA
+    query_params: { hosts: "{ip}" }
+    parser_command: "get_version_{device_type}_dna"
+    description: "韌體版本"
+
+  - name: get_interface_status
+    source: DNA
+    query_params: { hosts: "{ip}" }
+    parser_command: "get_interface_status_{device_type}_dna"
+    description: "Interface 狀態（速率/雙工）"
