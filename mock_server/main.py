@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from fastapi import FastAPI, Query, Response
+from fastapi import FastAPI, Query, Request, Response
 
 from mock_server import db
 from mock_server.config import settings
@@ -133,6 +133,28 @@ def mock_api(
         api_name, switch_ip, device_type, fails, active_seconds,
     )
 
+    return Response(content=output, media_type="text/plain")
+
+
+@app.post("/api/v1/ping")
+async def mock_gnms_ping(request: Request) -> Response:
+    """
+    Mock GNMS Ping — POST + JSON body。
+
+    真實 API 格式:
+        POST /api/v1/ping
+        {"app_name": "...", "token": "...", "addresses": ["10.1.1.1", ...]}
+    """
+    body = await request.json()
+    addresses = body.get("addresses", [])
+    switch_ips = ",".join(addresses) if addresses else None
+
+    output = gnms_ping.generate(
+        device_type="",
+        fails=False,
+        switch_ips=switch_ips,
+        failure_rate=settings.mock_steady_failure_rate,
+    )
     return Response(content=output, media_type="text/plain")
 
 

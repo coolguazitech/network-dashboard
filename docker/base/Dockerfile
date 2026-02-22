@@ -98,6 +98,7 @@ RUN apt-get update && \
     # 其他必要工具
     curl \
     tini \
+    make \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean \
     # 建立非 root 使用者
@@ -135,12 +136,20 @@ COPY --chown=appuser:appgroup alembic/ alembic/
 # 複製測試資料（Mock 模式 & CSV 匯入範本）
 COPY --chown=appuser:appgroup test_data/ test_data/
 
+# 複製 Parser 驗證腳本 + Makefile（容器內 make fetch / parse）
+COPY --chown=appuser:appgroup scripts/ scripts/
+COPY --chown=appuser:appgroup Makefile ./
+
 # 從前端建構階段複製靜態檔案
 COPY --from=frontend-builder --chown=appuser:appgroup /app/frontend/dist /app/static
 
 # 建立必要目錄
 RUN mkdir -p /app/logs /app/data && \
     chown -R appuser:appgroup /app
+
+# 複製啟動腳本
+COPY --chown=appuser:appgroup docker/base/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # 切換到非 root 使用者
 USER appuser
@@ -159,8 +168,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # 暴露埠號
 EXPOSE 8000
 
-# 使用 tini 作為 init 程序
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# 使用 tini 作為 init 程序，透過 entrypoint.sh 自動跑 alembic migrate
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/entrypoint.sh"]
 
 # 啟動指令
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -18,6 +18,7 @@ class SourceConfig(BaseModel):
 
     base_url: str = ""
     timeout: int = 30
+    token: str = ""  # FNA: Bearer token; DNA: 留空
 
 
 class FetcherSourceConfig(BaseModel):
@@ -35,12 +36,14 @@ class GnmsPingConfig(BaseModel):
 
         GNMSPING__TIMEOUT=60
         GNMSPING__ENDPOINT=/api/v1/ping
+        GNMSPING__TOKEN=your-gnmsping-token
         GNMSPING__BASE_URLS__F18=http://gnmsping-f18:8001
         GNMSPING__BASE_URLS__F6=http://gnmsping-f6:8001
     """
 
     timeout: int = 60
     endpoint: str = "/api/v1/ping"
+    token: str = ""  # GNMSPING token（所有 tenant 共用）
     base_urls: dict[str, str] = {}  # TenantGroup value → base_url
 
 

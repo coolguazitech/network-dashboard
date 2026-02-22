@@ -68,8 +68,8 @@ docker-compose*.yml
 # Kubernetes (not needed in image)
 k8s/
 
-# Scripts (not needed in image)
-scripts/
+# Scripts — 保留 parser 驗證腳本（容器內 make fetch/parse 需要）
+# scripts/
 
 # Frontend node_modules (built in separate stage)
 frontend/node_modules/

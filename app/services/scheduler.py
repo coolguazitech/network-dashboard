@@ -422,7 +422,7 @@ class SchedulerService:
             logger.warning("No GNMSPING base_urls configured, skipping device ping")
             return
 
-        async with httpx.AsyncClient(timeout=ping_cfg.timeout) as http:
+        async with httpx.AsyncClient(timeout=ping_cfg.timeout, verify=False) as http:
             for mid in maintenance_ids:
                 try:
                     async with get_session_context() as session:
@@ -460,11 +460,12 @@ class SchedulerService:
 
                             url = base_url.rstrip("/") + ping_cfg.endpoint
                             try:
-                                resp = await http.get(
+                                resp = await http.post(
                                     url,
-                                    params={
-                                        "switch_ips": ",".join(sorted(device_ip_map)),
-                                        "maintenance_id": mid,
+                                    json={
+                                        "app_name": "network_change_orchestrator",
+                                        "token": ping_cfg.token,
+                                        "addresses": sorted(device_ip_map),
                                     },
                                 )
                                 resp.raise_for_status()
@@ -552,7 +553,7 @@ class SchedulerService:
             logger.warning("No GNMSPING base_urls configured, skipping client ping")
             return
 
-        async with httpx.AsyncClient(timeout=ping_cfg.timeout) as http:
+        async with httpx.AsyncClient(timeout=ping_cfg.timeout, verify=False) as http:
             for mid in maintenance_ids:
                 try:
                     # 收集所有 tenant 的 ping 結果，匯總後一次更新 Case
@@ -597,11 +598,12 @@ class SchedulerService:
 
                             url = base_url.rstrip("/") + ping_cfg.endpoint
                             try:
-                                resp = await http.get(
+                                resp = await http.post(
                                     url,
-                                    params={
-                                        "switch_ips": ",".join(sorted(client_ips)),
-                                        "maintenance_id": mid,
+                                    json={
+                                        "app_name": "network_change_orchestrator",
+                                        "token": ping_cfg.token,
+                                        "addresses": sorted(client_ips),
                                     },
                                 )
                                 resp.raise_for_status()

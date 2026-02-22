@@ -2,10 +2,10 @@
 # Production Docker Compose - 一鍵起服務
 #
 # 使用方式：
-#   1. 複製 .env.production → .env，修改密碼 + API URL
+#   1. 複製 .env.production → .env，修改密碼 + API URL + Token
 #   2. 修改下方 image 為公司 registry 掃描後的 URL
 #   3. docker-compose -f docker-compose.production.yml up -d
-#   4. docker exec netora_app alembic upgrade head
+#   4. 等 30 秒（alembic 遷移自動執行）
 #   5. 開瀏覽器 http://localhost:8000 → root/admin123 登入
 # =============================================================================
 

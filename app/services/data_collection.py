@@ -105,7 +105,7 @@ class ApiCollectionService:
         t0 = _time.monotonic()
         sem = asyncio.Semaphore(20)
 
-        async with httpx.AsyncClient() as http:
+        async with httpx.AsyncClient(verify=False) as http:
             # 1. Load target devices (shared read-only query)
             async with get_session_context() as session:
                 stmt = select(MaintenanceDeviceList).where(

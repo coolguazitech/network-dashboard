@@ -114,6 +114,11 @@ class ConfiguredFetcher(BaseFetcher):
             k: v for k, v in all_vars.items() if k not in placeholders
         }
 
+        # ── Headers (FNA Bearer token) ──
+        headers: dict[str, str] = {}
+        if source_config.token:
+            headers["Authorization"] = f"Bearer {source_config.token}"
+
         # ── GET request (with retry for transient errors) ──
         timeout = source_config.timeout
         max_retries = 2
@@ -121,11 +126,16 @@ class ConfiguredFetcher(BaseFetcher):
 
         for attempt in range(max_retries + 1):
             try:
-                client = ctx.http or httpx.AsyncClient(timeout=timeout)
+                client = ctx.http or httpx.AsyncClient(
+                    timeout=timeout, verify=False,
+                )
                 own_client = ctx.http is None
 
                 try:
-                    resp = await client.get(url, params=query_params, timeout=timeout)
+                    resp = await client.get(
+                        url, params=query_params,
+                        headers=headers, timeout=timeout,
+                    )
                     resp.raise_for_status()
                     return FetchResult(raw_output=resp.text)
                 finally:

@@ -81,14 +81,17 @@ JWT_SECRET=<隨機字串>
 APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.0.0
 
 # ===== 真實 API 來源（必改）=====
+# FNA: Bearer token 認證; DNA: 不需認證; 皆無 SSL
 FETCHER_SOURCE__FNA__BASE_URL=http://<FNA伺服器IP>:<port>
 FETCHER_SOURCE__FNA__TIMEOUT=30
+FETCHER_SOURCE__FNA__TOKEN=<FNA Bearer token>
 FETCHER_SOURCE__DNA__BASE_URL=http://<DNA伺服器IP>:<port>
 FETCHER_SOURCE__DNA__TIMEOUT=30
 
-# ===== GNMS Ping（必改，每個 tenant_group 各自的 base URL）=====
+# ===== GNMS Ping（必改，POST + JSON body，每個 tenant_group 各自的 base URL）=====
 GNMSPING__TIMEOUT=60
 GNMSPING__ENDPOINT=/api/v1/ping
+GNMSPING__TOKEN=<GNMSPING token（所有 tenant 共用）>
 GNMSPING__BASE_URLS__F18=http://<GNMSPING-F18伺服器IP>:<port>
 GNMSPING__BASE_URLS__F6=http://<GNMSPING-F6伺服器IP>:<port>
 GNMSPING__BASE_URLS__AP=http://<GNMSPING-AP伺服器IP>:<port>
@@ -135,13 +138,10 @@ docker-compose -f docker-compose.production.yml ps
 | netora_s3 | 8333 | healthy |
 | netora_pma | 8080 | running |
 
-### 1.6 執行資料庫遷移
+### 1.6 Health check + 首次登入
 
-```bash
-docker exec netora_app alembic upgrade head
-```
-
-### 1.7 Health check + 首次登入
+> **資料庫遷移**：容器啟動時會自動執行 `alembic upgrade head`，不需要手動操作。
+> 啟動日誌會顯示 `Alembic migration completed.`。
 
 ```bash
 curl http://localhost:8000/health
@@ -157,7 +157,7 @@ curl http://localhost:8000/health
 > **此時 Dashboard 上的指標可能顯示異常或無資料**，因為 Parser 是第一版，
 > 可能無法正確解析真實 API 回傳的格式。這是正常的，Phase 2 會修正。
 
-### 1.8 驗證 API 連通性
+### 1.7 驗證 API 連通性
 
 先確認 Fetcher 能連到外部 API：
 
@@ -165,11 +165,19 @@ curl http://localhost:8000/health
 # 進入容器
 docker exec -it netora_app bash
 
-# 測試 FNA 連通（替換成真實 IP）
-curl -v "http://<FNA伺服器IP>:<port>/switch/network/get_fan/10.1.1.1"
+# 測試 FNA 連通（替換成真實 IP，FNA 需 Bearer token）
+# FNA API：get_gbic_details, get_channel_group, get_uplink, get_error_count, get_static_acl, get_dynamic_acl
+curl -v -H "Authorization: Bearer <FNA_TOKEN>" \
+  "http://<FNA伺服器IP>:<port>/switch/network/get_gbic_details/10.1.1.1"
 
-# 測試 DNA 連通
-curl -v "http://<DNA伺服器IP>:<port>/api/v1/hpe/fan/10.1.1.1"
+# 測試 DNA 連通（不需認證）
+# DNA API：get_mac_table, get_fan, get_power, get_version, get_interface_status
+curl -v "http://<DNA伺服器IP>:<port>/api/v1/hpe/fan/display_fan?hosts=10.1.1.1"
+
+# 測試 GNMSPING 連通（POST + JSON body）
+curl -v -X POST "http://<GNMSPING伺服器IP>:<port>/api/v1/ping" \
+  -H "Content-Type: application/json" \
+  -d '{"app_name":"network_change_orchestrator","token":"<GNMSPING_TOKEN>","addresses":["10.1.1.1"]}'
 
 # 離開容器
 exit
@@ -194,7 +202,7 @@ exit
 
 ```bash
 cd netora
-pip install httpx pyyaml pydantic pydantic-settings pymysql bcrypt pyjwt sqlalchemy
+pip install httpx pyyaml pydantic pydantic-settings pymysql bcrypt pyjwt sqlalchemy alembic aiomysql
 ```
 
 如果公司機器**沒有** Python，可以全部在容器內操作（見 [2.1b 容器內操作](#21b-容器內操作替代方案)）。
@@ -224,10 +232,7 @@ pip install httpx pyyaml pydantic pydantic-settings pymysql bcrypt pyjwt sqlalch
 docker-compose -f docker-compose.production.yml up -d
 docker exec -it netora_app bash
 
-# 容器內安裝 make（只需一次）
-apt-get update && apt-get install -y make
-
-# 之後所有 make 指令都在容器內執行
+# make 和 scripts 已預裝在 image 裡，直接使用
 cd /app
 ```
 
@@ -544,13 +549,9 @@ docker-compose -f docker-compose.production.yml ps
 curl http://localhost:8000/health
 ```
 
-### 3.5 執行資料庫遷移（如果 model 有改）
+### 3.5 驗證上線
 
-```bash
-docker exec netora_app alembic upgrade head
-```
-
-### 3.6 驗證上線
+> 資料庫遷移會在容器啟動時自動執行。
 
 1. 登入 `http://localhost:8000`（root / admin123）
 2. 選擇歲修 ID
@@ -565,7 +566,7 @@ docker exec netora_app alembic upgrade head
 docker logs netora_app -f --tail 200
 ```
 
-### 3.7 確認 Parser 載入狀態
+### 3.6 確認 Parser 載入狀態
 
 ```bash
 docker exec netora_app python -c "
@@ -589,7 +590,7 @@ print(f'Total: {len(parser_registry._parsers)} parsers')
 | 症狀 | 可能原因 | 解決方式 |
 |------|---------|---------|
 | `make fetch` 全部 Connection refused | API URL 錯誤 | 確認 `config/api_test.yaml` 的 `sources.*.base_url` |
-| `make fetch` 部分 401 Unauthorized | FNA 需要 token | 設定 `export FNA_TOKEN=xxx` |
+| `make fetch` 部分 401 Unauthorized | FNA 需要 token | `.env` 設定 `FETCHER_SOURCE__FNA__TOKEN=xxx`；`make fetch` 用 `export FNA_TOKEN=xxx` |
 | `make parse` 全部 EMPTY | 真實 API 格式與 mock 不同 | 正常，進入 `make parse-debug` AI 修正流程 |
 | `make fetch-dry` 路徑有空白 | endpoint 沒填 | 填寫 `config/api_test.yaml` 中的 TODO |
 | Dashboard 顯示「採集異常」| Fetcher 連不上 API | 確認 `.env` 中 `FETCHER_SOURCE__*__BASE_URL` 正確 |
@@ -638,7 +639,7 @@ docker exec -i netora_db mysql -u root -p<密碼> netora < backup.sql
 # 重置所有資料（從零開始）
 docker-compose -f docker-compose.production.yml down -v
 docker-compose -f docker-compose.production.yml up -d
-docker exec netora_app alembic upgrade head
+# alembic 會自動執行
 ```
 
 ---
@@ -740,9 +741,9 @@ app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
 unzip netora-main.zip && cd netora-main
 docker pull <公司registry>/network-dashboard-base:v2.0.0
 cp .env.production .env
-# 編輯 .env：密碼 + APP_IMAGE + API URL + endpoint
+# 編輯 .env：密碼 + APP_IMAGE + API URL + Token + endpoint
 docker-compose -f docker-compose.production.yml up -d
-docker exec netora_app alembic upgrade head
+# alembic 自動執行，等 30 秒
 curl http://localhost:8000/health
 # 瀏覽器 http://localhost:8000 → root/admin123
 
@@ -767,5 +768,5 @@ docker build \
 # 編輯 .env: APP_IMAGE=netora-production:v2.0.0
 docker-compose -f docker-compose.production.yml down
 docker-compose -f docker-compose.production.yml up -d
-docker exec netora_app alembic upgrade head
+# alembic 自動執行
 ```
