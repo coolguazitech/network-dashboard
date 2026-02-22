@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import Response
 
 from app.api.endpoints.auth import get_current_user
-from app.services.storage import upload_file
+from app.services.storage import get_object, upload_file
 from app.services.system_log import write_log
 
 router = APIRouter(prefix="/uploads", tags=["Uploads"])
@@ -61,3 +62,13 @@ async def upload_case_image(
     )
 
     return {"url": url, "filename": filename}
+
+
+@router.get("/files/{file_path:path}")
+async def serve_uploaded_file(file_path: str) -> Response:
+    """Proxy S3 objects through the app so browsers only need port 8000."""
+    try:
+        data, content_type = await get_object(file_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
+    return Response(content=data, media_type=content_type)

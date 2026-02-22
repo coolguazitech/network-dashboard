@@ -22,14 +22,27 @@
 
 ### 1.1 取得 Image
 
-將 `coolguazi/network-dashboard-base:v2.0.0` 提交公司 registry 掃描。
+將以下 image 提交公司 registry 掃描：
+
+| Image | 用途 |
+|-------|------|
+| `coolguazi/network-dashboard-base:v2.0.0` | 主應用 |
+| `coolguazi/netora-mariadb:10.11` | 資料庫 |
+| `coolguazi/netora-mock-api:v2.0.0` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
+| `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
+
 掃描通過後會拿到公司內部的 image URL，例如：
 
 ```
 registry.company.com/netora/network-dashboard-base:v2.0.0
+registry.company.com/netora/netora-mariadb:10.11
+...
 ```
 
-記下這個 URL，後面多處要用。
+記下這些 URL，後面多處要用。
+
+> **重要**：所有 image 必須在外面預先 build 好再帶進公司。公司環境**無法執行 `docker build`**，因為 Dockerfile 中的 `pip install`、`apt-get`、`git clone` 等指令需要外網。
 
 ### 1.2 下載 Repo
 
@@ -47,23 +60,38 @@ cd netora
 
 ### 1.3 設定 Image URL
 
-編輯 `docker-compose.production.yml`，將 `APP_IMAGE` 改為公司 registry URL：
+在 `.env` 中加入公司 registry 的 image URL：
 
 ```bash
-# 方法 A：直接寫在 .env
-echo 'APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.0.0' >> .env
-
-# 方法 B：直接改 docker-compose.production.yml 的 image 欄位
-#   image: registry.company.com/netora/network-dashboard-base:v2.0.0
+# 加到 .env（或 .env.mock / .env.production 複製前先加）
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.0.0
+DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
+MOCK_IMAGE=registry.company.com/netora/netora-mock-api:v2.0.0
 ```
 
 拉取 image：
 
 ```bash
 docker pull registry.company.com/netora/network-dashboard-base:v2.0.0
+docker pull registry.company.com/netora/netora-mariadb:10.11
+docker pull registry.company.com/netora/netora-mock-api:v2.0.0
+# SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 
-### 1.4 建立環境設定
+### 1.4 建立環境設定 & 啟動服務
+
+提供兩種模式，**擇一**即可：
+
+#### 模式 A：Mock 模式（先驗證系統能跑，不需要真實 API）
+
+```bash
+cp .env.mock .env
+docker compose -f docker-compose.production.yml --profile mock up -d
+```
+
+> `.env.mock` 開箱即用，所有 API 指向內建的 mock-api 容器，不需改任何設定。
+
+#### 模式 B：真實模式（接公司 API）
 
 ```bash
 cp .env.production .env
@@ -115,28 +143,47 @@ FETCHER_ENDPOINT__GET_VERSION=/api/v1/{device_type}/version/{switch_ip}
 FETCHER_ENDPOINT__GET_INTERFACE_STATUS=/api/v1/{device_type}/interface-status/{switch_ip}
 ```
 
-> **注意**：S3 credentials（MINIO__ACCESS_KEY / SECRET_KEY）已預設為 `minioadmin`，不需要改。
-
-### 1.5 啟動服務
+啟動（不需要 `--profile mock`）：
 
 ```bash
-docker-compose -f docker-compose.production.yml up -d
+docker compose -f docker-compose.production.yml up -d
 ```
+
+> **注意**：S3 credentials（MINIO__ACCESS_KEY / SECRET_KEY）已預設為 `minioadmin`，不需要改。
+
+#### 模式切換
+
+| 切換方向 | 操作 |
+|----------|------|
+| Mock → 真實 | `cp .env.production .env`，填入真實 API，重啟不帶 `--profile mock` |
+| 真實 → Mock | `cp .env.mock .env`，重啟帶 `--profile mock` |
+
+重啟指令：
+
+```bash
+docker compose -f docker-compose.production.yml --profile mock down
+docker compose -f docker-compose.production.yml --profile mock up -d   # Mock
+# 或
+docker compose -f docker-compose.production.yml up -d                  # 真實
+```
+
+### 1.5 確認服務狀態
 
 等待約 30 秒，確認所有容器正常：
 
 ```bash
-docker-compose -f docker-compose.production.yml ps
+docker compose -f docker-compose.production.yml ps
 ```
 
 預期結果：
 
-| 容器 | 埠號 | 狀態 |
-|------|------|------|
-| netora_app | 8000 | healthy |
-| netora_db | 3306 | healthy |
-| netora_s3 | 8333 | healthy |
-| netora_pma | 8080 | running |
+| 容器 | 埠號 | 狀態 | 備註 |
+|------|------|------|------|
+| netora_app | 8000 | healthy | |
+| netora_db | 3306 | healthy | |
+| netora_s3 | 8333 | healthy | |
+| netora_pma | 8080 | running | |
+| netora_mock_api | 9999 | running | 僅 Mock 模式 |
 
 ### 1.6 Health check + 首次登入
 
@@ -605,17 +652,39 @@ print(f'Total: {len(parser_registry._parsers)} parsers')
 在公司外面：
 
 ```bash
-docker save coolguazi/network-dashboard-base:v2.0.0 | gzip > netora-v2.0.0.tar.gz
-docker save mariadb:10.11 | gzip > mariadb-10.11.tar.gz
-docker save chrislusf/seaweedfs:4.13 | gzip > seaweedfs-4.13.tar.gz
+docker save coolguazi/network-dashboard-base:v2.0.0 | gzip > netora-app-v2.0.0.tar.gz
+docker save coolguazi/netora-mariadb:10.11 | gzip > netora-mariadb-10.11.tar.gz
+docker save coolguazi/netora-mock-api:v2.0.0 | gzip > netora-mock-api-v2.0.0.tar.gz
+docker save coolguazi/netora-seaweedfs:4.13 | gzip > netora-seaweedfs-4.13.tar.gz
+docker save coolguazi/netora-phpmyadmin:5.2 | gzip > netora-phpmyadmin-5.2.tar.gz
 ```
 
 帶 tar.gz 到公司後：
 
 ```bash
-docker load < netora-v2.0.0.tar.gz
-docker load < mariadb-10.11.tar.gz
-docker load < seaweedfs-4.13.tar.gz
+docker load < netora-app-v2.0.0.tar.gz
+docker load < netora-mariadb-10.11.tar.gz
+docker load < netora-mock-api-v2.0.0.tar.gz
+docker load < netora-seaweedfs-4.13.tar.gz
+docker load < netora-phpmyadmin-5.2.tar.gz
+```
+
+### 版本更新（重要）
+
+公司環境**無法 `docker build`**（無外網，`pip install` / `apt-get` / `git clone` 會失敗）。
+
+更新流程：
+
+1. **在公司外面**（有網路的環境）rebuild image 並推到 registry 或匯出 tar.gz
+2. **帶進公司**後 `docker pull` 或 `docker load`
+3. 重啟服務：
+
+```bash
+docker compose -f docker-compose.production.yml --profile mock down   # Mock 模式
+docker compose -f docker-compose.production.yml --profile mock up -d
+# 或
+docker compose -f docker-compose.production.yml down                  # 真實模式
+docker compose -f docker-compose.production.yml up -d
 ```
 
 ### 除錯指令

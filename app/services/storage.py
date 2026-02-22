@@ -90,17 +90,29 @@ async def upload_file(
 
 
 
+async def get_object(object_name: str) -> tuple[bytes, str]:
+    """
+    Download an object from MinIO.
+
+    Returns:
+        (data_bytes, content_type)
+    """
+    client = _get_client()
+    bucket = settings.minio.bucket
+    response = await client.get_object(bucket, object_name)
+    try:
+        data = await response.read()
+    finally:
+        response.close()
+        await response.release()
+    ct = response.headers.get("Content-Type", "application/octet-stream")
+    return data, ct
+
+
 def get_public_url(object_name: str) -> str:
     """
-    Build the public URL for an object.
+    Build the proxy URL that goes through the app (port 8000).
 
-    If MINIO__PUBLIC_URL is set (e.g., "https://files.example.com"),
-    the URL will be "{public_url}/{bucket}/{object_name}".
-
-    Otherwise falls back to "http://{endpoint}/{bucket}/{object_name}".
+    Returns a relative path so it works regardless of host/port.
     """
-    cfg = settings.minio
-    base = cfg.public_url.rstrip("/") if cfg.public_url else (
-        f"{'https' if cfg.secure else 'http'}://{cfg.endpoint}"
-    )
-    return f"{base}/{cfg.bucket}/{object_name}"
+    return f"/api/v1/uploads/files/{object_name}"

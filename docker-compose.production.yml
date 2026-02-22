@@ -1,12 +1,16 @@
 # =============================================================================
 # Production Docker Compose - 一鍵起服務
 #
-# 使用方式：
-#   1. 複製 .env.production → .env，修改密碼 + API URL + Token
+# 真實模式：
+#   1. cp .env.production .env → 填入密碼 + API URL + Token
 #   2. 修改下方 image 為公司 registry 掃描後的 URL
-#   3. docker-compose -f docker-compose.production.yml up -d
+#   3. docker compose -f docker-compose.production.yml up -d
 #   4. 等 30 秒（alembic 遷移自動執行）
 #   5. 開瀏覽器 http://localhost:8000 → root/admin123 登入
+#
+# Mock 模式（不需要真實 API，開箱即用）：
+#   1. cp .env.mock .env
+#   2. docker compose -f docker-compose.production.yml --profile mock up -d
 # =============================================================================
 
 services:
@@ -39,9 +43,7 @@ services:
       retries: 3
 
   db:
-    build:
-      context: .
-      dockerfile: docker/mariadb/Dockerfile
+    image: ${DB_IMAGE:-coolguazi/netora-mariadb:10.11}
     container_name: netora_db
     restart: unless-stopped
     environment:
@@ -93,6 +95,26 @@ services:
       PMA_PASSWORD: ${DB_PASSWORD:-admin}
     ports:
       - "${PMA_PORT:-8080}:80"
+
+  # ── Mock API Server（僅 mock profile 啟用）──────────────────────────
+  mock-api:
+    image: ${MOCK_IMAGE:-coolguazi/netora-mock-api:v2.0.0}
+    container_name: netora_mock_api
+    restart: unless-stopped
+    profiles: ["mock"]
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-netora}
+      DB_USER: ${DB_USER:-admin}
+      DB_PASSWORD: ${DB_PASSWORD:-admin}
+      MOCK_STEADY_FAILURE_RATE: ${MOCK_STEADY_FAILURE_RATE:-0.05}
+      MOCK_STEADY_ONSET_RANGE: ${MOCK_STEADY_ONSET_RANGE:-3600}
+    ports:
+      - "9999:9999"
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   mariadb_data:
