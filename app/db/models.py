@@ -763,7 +763,6 @@ class ClientComparison(Base):
     old_duplex: Mapped[str | None] = mapped_column(String(20), nullable=True)
     old_link_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     old_ping_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    old_acl_passes: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     # 新設備端
     new_ip_address: Mapped[str | None] = mapped_column(String(15), nullable=True)
@@ -774,7 +773,6 @@ class ClientComparison(Base):
     new_duplex: Mapped[str | None] = mapped_column(String(20), nullable=True)
     new_link_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     new_ping_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    new_acl_passes: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     differences: Mapped[str | None] = mapped_column(JSON, nullable=True)
     is_changed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -812,12 +810,40 @@ class ClientRecord(Base):
     link_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     ping_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     acl_rules_applied: Mapped[str | None] = mapped_column(JSON, nullable=True)
-    acl_passes: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     raw_data: Mapped[str | None] = mapped_column(Text, nullable=True)
     parsed_data: Mapped[str | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(),
     )
+
+
+class LatestClientRecord(Base):
+    """
+    Per-MAC 變化偵測指標（基準 + 變化點策略）。
+
+    與 LatestCollectionBatch 相同模式，但以 (maintenance_id, mac_address) 為 key。
+    每次 ClientCollectionService 組裝 ClientRecord 時，比對 data_hash：
+    - hash 相同 → 只更新 last_checked_at，不寫新 ClientRecord
+    - hash 不同 → 寫新 ClientRecord，更新 data_hash
+    """
+
+    __tablename__ = "latest_client_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "maintenance_id", "mac_address",
+            name="uk_latest_client_record",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    mac_address: Mapped[str] = mapped_column(String(17))
+    data_hash: Mapped[str] = mapped_column(String(16))
+    collected_at: Mapped[datetime] = mapped_column(DateTime)
+    last_checked_at: Mapped[datetime] = mapped_column(DateTime)
+
+    def __repr__(self) -> str:
+        return f"<LatestClientRecord {self.maintenance_id}:{self.mac_address}>"
 
 
 class SeverityOverride(Base):
@@ -1009,3 +1035,27 @@ class ReferenceClient(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(),
     )
+
+
+# ══════════════════════════════════════════════════════════════════
+# 交換機管理
+# ══════════════════════════════════════════════════════════════════
+
+
+class Switch(Base):
+    """交換機設備資訊。"""
+
+    __tablename__ = "switches"
+
+    id = Column(Integer, primary_key=True)
+    hostname = Column(String(255), unique=True, nullable=False, index=True)
+    ip_address = Column(String(45), unique=True, nullable=False)
+    vendor = Column(String(100), nullable=False)
+    platform = Column(String(100), nullable=False)
+    site = Column(String(200), nullable=True)
+    model = Column(String(200), nullable=True)
+    location = Column(String(500), nullable=True)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=func.now())

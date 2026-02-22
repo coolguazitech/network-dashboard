@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import UserRole
 from app.services.auth_service import AuthService
+from app.services.system_log import write_log
 from app.db.base import get_async_session
 from app.db.models import MaintenanceConfig
 
@@ -190,6 +191,14 @@ async def login(data: LoginRequest) -> dict[str, Any]:
             detail=error or "帳號或密碼錯誤",
         )
 
+    await write_log(
+        level="INFO",
+        source=user.username,
+        summary=f"使用者「{user.display_name or user.username}」登入",
+        module="auth",
+        maintenance_id=user.maintenance_id,
+    )
+
     return {
         "token": token,
         "user": {
@@ -245,6 +254,13 @@ async def change_password(
             detail="舊密碼錯誤",
         )
 
+    await write_log(
+        level="INFO",
+        source=user.get("username", "unknown"),
+        summary=f"使用者「{user.get('username', '')}」變更密碼",
+        module="auth",
+    )
+
     return {"message": "密碼變更成功"}
 
 
@@ -269,6 +285,14 @@ async def register_guest(data: GuestRegisterRequest) -> dict[str, Any]:
             detail=error or "註冊失敗",
         )
 
+    await write_log(
+        level="INFO",
+        source=user.username,
+        summary=f"訪客「{user.display_name or user.username}」自行註冊（待啟用）",
+        module="auth",
+        maintenance_id=user.maintenance_id,
+    )
+
     return {
         "message": "註冊成功，請聯繫管理員啟用帳號",
         "username": user.username,
@@ -287,6 +311,12 @@ async def init_root() -> dict[str, Any]:
     root = await AuthService.create_root_if_not_exists()
 
     if root:
+        await write_log(
+            level="INFO",
+            source="system",
+            summary="初始化 Root 帳號",
+            module="auth",
+        )
         return {
             "message": "Root 帳號已就緒",
             "username": root.username,

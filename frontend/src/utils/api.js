@@ -3,6 +3,7 @@
  * 統一處理 API 請求和錯誤分類
  */
 import axios from 'axios'
+import { logoutAndRedirect } from './auth'
 
 // 建立 axios 實例
 const api = axios.create({
@@ -27,12 +28,7 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('auth_token')
-      localStorage.removeItem('auth_user')
-      // 避免在登入頁面無限重定向
-      if (!window.location.pathname.includes('/login')) {
-        window.location.href = '/login'
-      }
+      logoutAndRedirect()
     }
     return Promise.reject(error)
   }
@@ -96,6 +92,30 @@ const ERROR_MESSAGES = {
  * @returns {Object} 錯誤資訊 { type, message, status }
  */
 export function classifyError(error, status = null) {
+  // axios 超時錯誤
+  if (error?.code === 'ECONNABORTED') {
+    return {
+      type: ErrorType.TIMEOUT,
+      message: ERROR_MESSAGES[ErrorType.TIMEOUT],
+      status: null,
+    };
+  }
+
+  // axios 網路錯誤
+  if (error?.message === 'Network Error') {
+    return {
+      type: ErrorType.NETWORK,
+      message: ERROR_MESSAGES[ErrorType.NETWORK],
+      status: null,
+    };
+  }
+
+  // axios 回應錯誤（有 response.status）
+  if (error?.response?.status) {
+    const axiosStatus = error.response.status;
+    return classifyError(null, axiosStatus);
+  }
+
   // 如果是 fetch 網路錯誤
   if (error instanceof TypeError && error.message.includes('fetch')) {
     return {
@@ -106,7 +126,7 @@ export function classifyError(error, status = null) {
   }
 
   // 如果是 AbortError（超時）
-  if (error.name === 'AbortError') {
+  if (error?.name === 'AbortError') {
     return {
       type: ErrorType.TIMEOUT,
       message: ERROR_MESSAGES[ErrorType.TIMEOUT],

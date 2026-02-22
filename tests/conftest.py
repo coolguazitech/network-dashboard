@@ -29,3 +29,47 @@ def load_raw(filename: str) -> str:
     if not path.exists():
         pytest.skip(f"Test data file not found: {path}")
     return path.read_text(encoding="utf-8")
+
+
+# ══════════════════════════════════════════════════════════════════
+# Shared user payload fixtures for endpoint tests
+# ══════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def root_user() -> dict:
+    """JWT payload for a ROOT user."""
+    return {
+        "user_id": 1,
+        "username": "root",
+        "role": "ROOT",
+        "maintenance_id": None,
+        "display_name": "系統管理員",
+        "is_root": True,
+    }
+
+
+@pytest.fixture
+def pm_user() -> dict:
+    """JWT payload for a PM user scoped to MAINT-001."""
+    return {
+        "user_id": 2,
+        "username": "pm1",
+        "role": "PM",
+        "maintenance_id": "MAINT-001",
+        "display_name": "PM User",
+        "is_root": False,
+    }
+
+
+@pytest.fixture
+def guest_user() -> dict:
+    """JWT payload for a GUEST user scoped to MAINT-001."""
+    return {
+        "user_id": 3,
+        "username": "guest1",
+        "role": "GUEST",
+        "maintenance_id": "MAINT-001",
+        "display_name": "Guest User",
+        "is_root": False,
+    }

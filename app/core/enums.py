@@ -50,24 +50,6 @@ class DataType(str, Enum):
     BOOLEAN = "boolean"
 
 
-class MetricType(str, Enum):
-    """
-    Types of metrics for evaluation.
-
-    - RANGE: value must be within min/max range
-    - THRESHOLD: value must be above/below threshold
-    - EQUALS: value must equal expected value (string comparison)
-    - BOOLEAN: value is true/false
-    - MAPPING: compare before/after with device mapping
-    """
-
-    RANGE = "range"
-    THRESHOLD = "threshold"
-    EQUALS = "equals"
-    BOOLEAN = "boolean"
-    MAPPING = "mapping"
-
-
 
 class TenantGroup(str, Enum):
     """Tenant group for GNMS Ping API."""
@@ -116,23 +98,6 @@ class MealDeliveryStatus(str, Enum):
     NO_MEAL = "NO_MEAL"
     PENDING = "PENDING"
     ARRIVED = "ARRIVED"
-
-
-class Permission(str, Enum):
-    """
-    系統權限定義（簡化版）。
-
-    只保留關鍵的寫入權限，其餘功能預設可用。
-    """
-
-    # 設備管理（新增/刪除設備對應、Uplink期望）
-    DEVICE_WRITE = "device:write"
-
-    # 歲修管理（建立/刪除歲修）
-    MAINTENANCE_WRITE = "maintenance:write"
-
-    # 設定管理（修改系統設定）
-    SETTINGS_WRITE = "settings:write"
 
 
 class UserRole(str, Enum):

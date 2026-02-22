@@ -1,18 +1,14 @@
 """Mock: 設備連通性 (ping_batch)。"""
 from __future__ import annotations
 
-from mock_server.convergence import should_device_fail
-
 
 def generate(
     device_type: str,
-    is_old: bool | None,
-    active_seconds: float,
-    converge_time: float,
+    fails: bool = False,
     switch_ip: str = "10.0.0.1",
     **_kw: object,
 ) -> str:
-    unreachable = should_device_fail(is_old, active_seconds, converge_time)
+    unreachable = fails
 
     if unreachable:
         return (

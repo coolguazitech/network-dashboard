@@ -23,15 +23,15 @@ ParsedData 是 Parser 與下游程式之間的嚴格契約：
 - 無法匹配枚舉時 → "unknown"（不拋錯，讓 indicator 判為 fail）
 
 ParsedData 子類別一覽：
-    TransceiverData      - 光模組診斷（多通道 Tx/Rx/Bias、溫度、電壓）
-    InterfaceErrorData   - 介面 CRC 錯誤計數
+    TransceiverData      - 光模組診斷（巢狀 channels: 每通道 Tx/Rx/Bias + 模組層溫度/電壓）
+    InterfaceErrorData   - 介面 CRC 錯誤計數（inbound+outbound 加總）
     FanStatusData        - 風扇狀態（status 自動正規化為 OperationalStatus）
     VersionData          - 韌體版本（version, model, serial_number）
     NeighborData         - 鄰居資訊（CDP/LLDP）
     PortChannelData      - Port-Channel/LAG 資訊（成員、狀態、協議）
     PowerData            - 電源供應器狀態
-    MacTableData         - MAC 位址表
-AclData              - ACL 編號
+    MacTableData         - MAC 位址表（vlan_id 無結果時為 0）
+    AclData              - ACL 編號（來自 static_acl 或 dynamic_acl）
     PingResultData       - 單一 IP Ping 結果
 """
 from __future__ import annotations
@@ -130,29 +130,29 @@ class TransceiverChannelData(BaseModel):
 
 
 class TransceiverData(ParsedData):
-    """光模組診斷 — 扁平結構，每個介面/通道一筆。
+    """光模組診斷 — 每個介面一筆，通道資料以巢狀 list 表示。
 
-    對應 production transceiver_records 表結構。
-    多通道 QSFP 模組由 parser 拆成多筆 TransceiverData。
+    一個 SFP 模組有 1 個 channel，一個 QSFP 模組有 1~4 個 channel。
+    temperature / voltage 屬於模組層級，tx_power / rx_power / bias 屬於通道層級。
+
+    存入 DB 時由 Repository 負責展開 channels 為扁平 rows。
     """
 
     interface_name: str
-    tx_power: float | None = Field(None, description="發射功率 (dBm)")
-    rx_power: float | None = Field(None, description="接收功率 (dBm)")
     temperature: float | None = Field(None, ge=-10.0, le=100.0, description="模組溫度 (°C)")
     voltage: float | None = Field(None, ge=0.0, le=10.0, description="模組電壓 (V)")
+    channels: list[TransceiverChannelData]
 
 
 class InterfaceErrorData(ParsedData):
-    """介面錯誤計數 — 對應 production interface_error_records 表結構。"""
+    """介面 CRC 錯誤計數。
+
+    crc_errors 是 inbound + outbound CRC 錯誤的加總結果。
+    Parser 負責將雙方向的計數合併後填入此欄位。
+    """
 
     interface_name: str
-    crc_errors: int = Field(0, ge=0)
-    input_errors: int = Field(0, ge=0)
-    output_errors: int = Field(0, ge=0)
-    collisions: int = Field(0, ge=0)
-    giants: int = Field(0, ge=0)
-    runts: int = Field(0, ge=0)
+    crc_errors: int = Field(0, ge=0, description="inbound + outbound CRC 錯誤加總")
 
 
 class FanStatusData(ParsedData):
@@ -252,7 +252,7 @@ class MacTableData(ParsedData):
 
     mac_address: str = Field(description="正規化為 AA:BB:CC:DD:EE:FF")
     interface_name: str
-    vlan_id: int = Field(ge=1, le=4094)
+    vlan_id: int = Field(default=0, ge=0, le=4094, description="VLAN ID，parse 無結果時為 0")
 
     @field_validator("mac_address", mode="before")
     @classmethod

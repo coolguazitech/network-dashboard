@@ -426,6 +426,43 @@ body {
   animation: bar-grow 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* ── 進度條流光效果 ─────────────────────────────────── */
+@keyframes shimmer-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.bar-shimmer {
+  position: relative;
+  overflow: hidden;
+  animation: bar-grow 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.bar-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.18) 30%,
+    rgba(255, 255, 255, 0.4) 50%,
+    rgba(255, 255, 255, 0.18) 70%,
+    transparent 100%
+  );
+  animation: shimmer-sweep 2s ease-in-out infinite;
+  animation-delay: 0.8s;
+}
+
+/* ── 環形進度動畫 ─────────────────────────────────── */
+@keyframes ring-draw {
+  from { stroke-dashoffset: 87.96; }
+}
+
+.ring-progress {
+  animation: ring-draw 1s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 /* ── 表格行交錯入場 ─────────────────────────────────── */
 @keyframes row-enter {
   from { opacity: 0; transform: translateX(-8px); }

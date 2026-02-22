@@ -1,11 +1,11 @@
-"""Tests for mock_server.generators — all 14 generators."""
+"""Tests for mock_server.generators — all 13 generators."""
 
 
 class TestMacTableGenerator:
     def test_hpe_format(self):
         from mock_server.generators.mac_table import generate
 
-        output = generate("hpe", None, 0, 600)
+        output = generate("hpe")
         assert "MAC ADDR" in output
         assert "VLAN ID" in output
         assert "AGING" in output
@@ -15,25 +15,24 @@ class TestMacTableGenerator:
     def test_ios_format(self):
         from mock_server.generators.mac_table import generate
 
-        output = generate("ios", None, 0, 600)
+        output = generate("ios")
         assert "Mac Address Table" in output
         assert "DYNAMIC" in output
 
     def test_nxos_format(self):
         from mock_server.generators.mac_table import generate
 
-        output = generate("nxos", None, 0, 600)
+        output = generate("nxos")
         assert "Legend:" in output
         assert "dynamic" in output
 
     def test_device_fail_returns_empty(self):
         from mock_server.generators.mac_table import generate
 
-        # New device before convergence → fails
-        output = generate("hpe", False, 0, 600)
+        output = generate("hpe", fails=True)
         assert "MAC ADDR" in output
         # Should be header only (empty table)
-        lines = [l for l in output.strip().splitlines() if l.strip()]
+        lines = [line for line in output.strip().splitlines() if line.strip()]
         assert len(lines) == 1  # only header
 
     def test_port_names_match_interface_status(self):
@@ -60,7 +59,7 @@ class TestMacTableGenerator:
             {"mac_address": "AA:BB:CC:DD:EE:02"},
             {"mac_address": "AA:BB:CC:DD:EE:03"},
         ]
-        output = generate("hpe", None, 600, 600, switch_ip="10.0.0.1", mac_list=mac_list)
+        output = generate("hpe", switch_ip="10.0.0.1", mac_list=mac_list)
         assert "MAC ADDR" in output
 
 
@@ -68,7 +67,7 @@ class TestInterfaceStatusGenerator:
     def test_hpe_format(self):
         from mock_server.generators.interface_status import generate
 
-        output = generate("hpe", None, 0, 600)
+        output = generate("hpe")
         assert "Interface" in output
         assert "Link" in output
         lines = output.strip().splitlines()
@@ -77,14 +76,14 @@ class TestInterfaceStatusGenerator:
     def test_ios_format(self):
         from mock_server.generators.interface_status import generate
 
-        output = generate("ios", None, 0, 600)
+        output = generate("ios")
         assert "Port" in output
         assert "Status" in output
 
     def test_nxos_format(self):
         from mock_server.generators.interface_status import generate
 
-        output = generate("nxos", None, 0, 600)
+        output = generate("nxos")
         assert "Port" in output
         assert "Status" in output
 
@@ -106,8 +105,7 @@ class TestInterfaceStatusGenerator:
     def test_fail_mode_produces_down_interfaces(self):
         from mock_server.generators.interface_status import generate
 
-        # Old device after switch point → fails
-        output = generate("hpe", True, 300, 600)
+        output = generate("hpe", fails=True)
         assert "DOWN" in output
 
 
@@ -116,7 +114,7 @@ class TestGnmsPingGenerator:
         from mock_server.generators.gnms_ping import generate
 
         output = generate(
-            "hpe", None, 600, 600,
+            "hpe",
             switch_ips="10.0.0.1,10.0.0.2,10.0.0.3",
         )
         lines = output.strip().splitlines()
@@ -126,98 +124,125 @@ class TestGnmsPingGenerator:
     def test_no_ips(self):
         from mock_server.generators.gnms_ping import generate
 
-        output = generate("hpe", None, 600, 600)
+        output = generate("hpe")
         assert "IP,Reachable,Latency_ms" in output
 
-    def test_convergence_behavior(self):
+    def test_deterministic(self):
         from mock_server.generators.gnms_ping import generate
 
-        # New device before switch → some IPs unreachable
-        output_early = generate(
-            "hpe", False, 0, 600,
+        output1 = generate(
+            "hpe",
             switch_ips="10.0.0.1,10.0.0.2",
+            failure_rate=0.05,
         )
-        # After convergence → should be reachable
-        output_late = generate(
-            "hpe", None, 600, 600,
+        output2 = generate(
+            "hpe",
             switch_ips="10.0.0.1,10.0.0.2",
+            failure_rate=0.05,
         )
-        # Just verify both produce valid CSV
-        assert "IP,Reachable,Latency_ms" in output_early
-        assert "IP,Reachable,Latency_ms" in output_late
+        assert output1 == output2
+
+    def test_high_failure_rate(self):
+        from mock_server.generators.gnms_ping import generate
+
+        output = generate(
+            "hpe",
+            switch_ips="10.0.0.1,10.0.0.2,10.0.0.3",
+            failure_rate=1.0,
+        )
+        assert "False" in output
 
 
 class TestFanGenerator:
     def test_hpe(self):
         from mock_server.generators.fan import generate
 
-        output = generate("hpe", None, 0, 600)
+        output = generate("hpe")
         assert "Slot" in output or "FanID" in output
 
     def test_ios(self):
         from mock_server.generators.fan import generate
 
-        output = generate("ios", None, 0, 600)
+        output = generate("ios")
         assert len(output.strip()) > 0
 
     def test_nxos(self):
         from mock_server.generators.fan import generate
 
-        output = generate("nxos", None, 0, 600)
+        output = generate("nxos")
         assert len(output.strip()) > 0
+
+    def test_fail_mode(self):
+        from mock_server.generators.fan import generate
+
+        output = generate("hpe", fails=True)
+        assert "Absent" in output
 
 
 class TestVersionGenerator:
     def test_hpe(self):
         from mock_server.generators.version import generate
 
-        output = generate("hpe", None, 0, 600)
+        output = generate("hpe")
         assert "Version" in output or "version" in output
 
     def test_ios(self):
         from mock_server.generators.version import generate
 
-        output = generate("ios", None, 0, 600)
+        output = generate("ios")
         assert "Version" in output
 
     def test_nxos(self):
         from mock_server.generators.version import generate
 
-        output = generate("nxos", None, 0, 600)
+        output = generate("nxos")
         assert len(output.strip()) > 0
+
+    def test_fail_mode_different_version(self):
+        from mock_server.generators.version import generate
+
+        healthy = generate("hpe")
+        failed = generate("hpe", fails=True)
+        assert healthy != failed
 
 
 class TestPowerGenerator:
     def test_hpe(self):
         from mock_server.generators.power import generate
 
-        output = generate("hpe", None, 0, 600)
+        output = generate("hpe")
         assert len(output.strip()) > 0
 
     def test_ios(self):
         from mock_server.generators.power import generate
 
-        output = generate("ios", None, 0, 600)
+        output = generate("ios")
         assert len(output.strip()) > 0
 
     def test_nxos(self):
         from mock_server.generators.power import generate
 
-        output = generate("nxos", None, 0, 600)
+        output = generate("nxos")
         assert len(output.strip()) > 0
+
+    def test_fail_mode(self):
+        from mock_server.generators.power import generate
+
+        output = generate("hpe", fails=True)
+        assert "Absent" in output
 
 
 class TestErrorCountGenerator:
     def test_hpe(self):
         from mock_server.generators.error_count import generate
 
-        output = generate("hpe", None, 0, 600)
+        output = generate("hpe")
         assert len(output.strip()) > 0
 
     def test_ios(self):
         from mock_server.generators.error_count import generate
 
-        output = generate("ios", None, 0, 600)
+        output = generate("ios")
         assert len(output.strip()) > 0
 
 
@@ -225,58 +250,90 @@ class TestUplinkGenerator:
     def test_hpe(self):
         from mock_server.generators.uplink import generate
 
-        output = generate("hpe", None, 0, 600)
+        output = generate("hpe")
         assert len(output.strip()) > 0
 
     def test_ios(self):
         from mock_server.generators.uplink import generate
 
-        output = generate("ios", None, 0, 600)
+        output = generate("ios")
         assert len(output.strip()) > 0
+
+    def test_fail_mode_reduces_neighbors(self):
+        from mock_server.generators.uplink import generate
+
+        healthy = generate("hpe")
+        failed = generate("hpe", fails=True)
+        assert healthy.count("LLDP neighbor") > failed.count("LLDP neighbor")
 
 
 class TestChannelGroupGenerator:
     def test_hpe(self):
         from mock_server.generators.channel_group import generate
 
-        output = generate("hpe", None, 0, 600)
+        output = generate("hpe")
         assert len(output.strip()) > 0
 
     def test_ios(self):
         from mock_server.generators.channel_group import generate
 
-        output = generate("ios", None, 0, 600)
+        output = generate("ios")
         assert len(output.strip()) > 0
+
+    def test_fail_mode(self):
+        from mock_server.generators.channel_group import generate
+
+        output = generate("hpe", fails=True)
+        assert "U" in output  # member status changes on failure
 
 
 class TestGbicDetailsGenerator:
     def test_hpe(self):
         from mock_server.generators.gbic_details import generate
 
-        output = generate("hpe", None, 0, 600)
+        output = generate("hpe")
         assert len(output.strip()) > 0
 
+    def test_ios(self):
+        from mock_server.generators.gbic_details import generate
+
+        output = generate("ios")
+        assert "Tx Power" in output or "dBm" in output
+
+    def test_nxos(self):
+        from mock_server.generators.gbic_details import generate
+
+        output = generate("nxos")
+        assert "Tx Power" in output
 
 
 class TestStaticAclGenerator:
     def test_hpe(self):
         from mock_server.generators.static_acl import generate
 
-        output = generate("hpe", None, 0, 600)
-        assert len(output.strip()) > 0
+        output = generate("hpe")
+        assert "Interface,ACL" in output
+        assert "3001" in output
 
 
 class TestDynamicAclGenerator:
     def test_hpe(self):
         from mock_server.generators.dynamic_acl import generate
 
-        output = generate("hpe", None, 0, 600)
-        assert len(output.strip()) > 0
+        output = generate("hpe")
+        assert "Interface,ACL" in output
+        assert "MAC-AUTH" in output
 
 
 class TestPingBatchGenerator:
-    def test_default(self):
+    def test_reachable(self):
         from mock_server.generators.ping_batch import generate
 
-        output = generate("hpe", None, 600, 600, switch_ip="10.0.0.1")
-        assert len(output.strip()) > 0
+        output = generate("hpe", switch_ip="10.0.0.1")
+        assert "0.0% packet loss" in output
+
+    def test_unreachable(self):
+        from mock_server.generators.ping_batch import generate
+
+        output = generate("hpe", fails=True, switch_ip="10.0.0.1")
+        assert "100.0% packet loss" in output

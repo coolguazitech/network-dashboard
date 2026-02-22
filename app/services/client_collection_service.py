@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_session_context
-from app.db.models import ClientRecord, MaintenanceMacList
+from app.db.models import ClientRecord, LatestClientRecord, MaintenanceMacList
 
 logger = logging.getLogger(__name__)
 
@@ -34,20 +34,17 @@ class ClientCollectionService:
     """
 
     def __init__(self) -> None:
-        from app.services.change_cache import ClientChangeCache
-        self.change_cache = ClientChangeCache()
+        pass
 
     async def collect_client_data(
         self,
         maintenance_id: str,
-        force_checkpoint: bool = False,
     ) -> dict[str, Any]:
         """
         主入口：從 DB 讀取已採集的資料，組裝 ClientRecord。
 
         Args:
             maintenance_id: 歲修 ID
-            force_checkpoint: True 時強制寫入 DB（整點 checkpoint）
 
         Returns:
             採集統計
@@ -176,7 +173,6 @@ class ClientCollectionService:
                     link_status=if_rec.link_status if if_rec else None,
                     ping_reachable=ping_ok,
                     acl_rules_applied=acl_number,
-                    acl_passes=(acl_number is not None) if acl_number is not None else None,
                 )
 
                 # 同一 MAC 出現在多台 switch → 保留資料最完整的
@@ -224,7 +220,6 @@ class ClientCollectionService:
                     link_status=None,
                     ping_reachable=ping_ok,
                     acl_rules_applied=None,
-                    acl_passes=None,
                 ))
 
             if missing_macs:
@@ -233,45 +228,41 @@ class ClientCollectionService:
                     len(missing_macs), maintenance_id,
                 )
 
-            # 9. 變更偵測 + 寫入 DB
-            data_changed = self.change_cache.has_changed(
-                maintenance_id, all_records,
-            )
-
-            if data_changed or force_checkpoint:
-                await self._phase4_save(session, all_records)
-
-                # DB 寫入成功，確認快取更新
-                self.change_cache.accept(maintenance_id)
-
-                if not all_records:
-                    await self._write_snapshot_marker(
-                        session=session,
-                        maintenance_id=maintenance_id,
-                        collected_at=now,
-                    )
+            # 9. Per-MAC 變更偵測 + 選擇性寫入
+            if all_records:
+                records_to_write = await self._save_changed_records(
+                    session=session,
+                    maintenance_id=maintenance_id,
+                    all_records=all_records,
+                    now=now,
+                )
+                if records_to_write:
                     logger.info(
-                        "Wrote snapshot marker for %s (no records)",
-                        maintenance_id,
+                        "Saved %d/%d changed client records for %s",
+                        records_to_write, len(all_records), maintenance_id,
                     )
                 else:
-                    logger.info(
-                        "Saved %d client records for %s%s",
-                        len(all_records), maintenance_id,
-                        " (checkpoint)" if force_checkpoint and not data_changed else "",
+                    logger.debug(
+                        "No client data change for %s (%d records checked)",
+                        maintenance_id, len(all_records),
                     )
             else:
-                logger.debug(
-                    "No client data change for %s, skipping DB write",
+                await self._write_snapshot_marker(
+                    session=session,
+                    maintenance_id=maintenance_id,
+                    collected_at=now,
+                )
+                logger.info(
+                    "Wrote snapshot marker for %s (no records)",
                     maintenance_id,
                 )
 
-        # 清理超過 30 天的舊資料
+        # 清理超過 7 天的舊資料
         async with get_session_context() as session:
             deleted = await self._cleanup_old_records(
                 session=session,
                 maintenance_id=maintenance_id,
-                retention_days=30,
+                retention_days=7,
             )
             if deleted > 0:
                 results["deleted_old_records"] = deleted
@@ -281,6 +272,79 @@ class ClientCollectionService:
             maintenance_id, results["client_records_count"],
         )
         return results
+
+    # ── Per-MAC change detection ────────────────────────────────
+
+    @staticmethod
+    def _compute_client_record_hash(record: ClientRecord) -> str:
+        """計算單一 ClientRecord 資料欄位的 SHA-256 hash（16 hex chars）。
+
+        只 hash 「狀態」欄位，不含 identity 欄位（mac_address, ip_address）。
+        """
+        import hashlib
+
+        key = (
+            f"{record.switch_hostname}|{record.interface_name}|"
+            f"{record.vlan_id}|{record.speed}|{record.duplex}|"
+            f"{record.link_status}|{record.ping_reachable}|"
+            f"{record.acl_rules_applied}"
+        )
+        return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+    async def _save_changed_records(
+        self,
+        session: AsyncSession,
+        maintenance_id: str,
+        all_records: list[ClientRecord],
+        now: datetime,
+    ) -> int:
+        """Per-MAC hash 比對，只寫入有變化的 ClientRecord。
+
+        Returns:
+            寫入的記錄數量。
+        """
+        # 一次載入此歲修所有 LatestClientRecord
+        latest_stmt = select(LatestClientRecord).where(
+            LatestClientRecord.maintenance_id == maintenance_id,
+        )
+        latest_result = await session.execute(latest_stmt)
+        latest_map: dict[str, LatestClientRecord] = {
+            row.mac_address.upper(): row
+            for row in latest_result.scalars().all()
+        }
+
+        records_to_write: list[ClientRecord] = []
+
+        for record in all_records:
+            mac_upper = (record.mac_address or "").upper()
+            new_hash = self._compute_client_record_hash(record)
+            existing = latest_map.get(mac_upper)
+
+            if existing and existing.data_hash == new_hash:
+                # 資料未變化 → 只更新 last_checked_at
+                existing.last_checked_at = now
+            else:
+                # 資料有變化（或首次見到）→ 寫新 ClientRecord
+                records_to_write.append(record)
+
+                if existing:
+                    existing.data_hash = new_hash
+                    existing.collected_at = now
+                    existing.last_checked_at = now
+                else:
+                    session.add(LatestClientRecord(
+                        maintenance_id=maintenance_id,
+                        mac_address=mac_upper,
+                        data_hash=new_hash,
+                        collected_at=now,
+                        last_checked_at=now,
+                    ))
+
+        if records_to_write:
+            await self._phase4_save(session, records_to_write)
+
+        await session.flush()
+        return len(records_to_write)
 
     # ── On-demand detection ─────────────────────────────────────
 
@@ -410,7 +474,6 @@ class ClientCollectionService:
             link_status=None,
             ping_reachable=None,
             acl_rules_applied=None,
-            acl_passes=None,
         )
         session.add(marker)
         await session.flush()

@@ -222,7 +222,7 @@ class ReportService:
 
         .indicators-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            grid-template-columns: repeat(2, 1fr);
             gap: 1.5rem;
             margin-bottom: 2rem;
         }}
@@ -485,27 +485,29 @@ class ReportService:
             else:
                 rate_class = "rate-fail"
 
-            # 生成失敗表格 HTML
+            # 生成細項 HTML
             failures_html = ""
-            if include_details and failures:
-                failures_html = self._render_detail_table(
-                    items=failures,
-                    css_class="fail",
-                    title=f"❌ 未通過項目 ({len(failures)})",
-                    max_items=20,
-                    total_items=len(failures),
-                )
-
-            # 生成通過表格 HTML
             passes_html = ""
-            if include_details and passes:
-                passes_html = self._render_detail_table(
-                    items=passes,
-                    css_class="pass",
-                    title=f"✅ 通過項目 (前 {len(passes)} 筆，共 {passed} 筆)",
-                    max_items=10,
-                    total_items=passed,
-                )
+            if include_details:
+                if failures:
+                    # 未達 100%：列出失敗項目
+                    failures_html = self._render_detail_table(
+                        items=failures,
+                        css_class="fail",
+                        title=f"❌ 未通過項目 ({len(failures)})",
+                        max_items=20,
+                        total_items=len(failures),
+                    )
+                elif passes:
+                    # 100% 通過：每台設備只顯示一次，取第一筆作為代表
+                    unique_passes = self._dedupe_by_device(passes)
+                    passes_html = self._render_detail_table(
+                        items=unique_passes,
+                        css_class="pass",
+                        title=f"✅ 通過項目 ({len(unique_passes)} 台設備)",
+                        max_items=20,
+                        total_items=len(unique_passes),
+                    )
 
             card = f"""
             <div class="indicator-card">
@@ -581,6 +583,18 @@ class ReportService:
                 </table>
                 {more_html}
             </div>"""
+
+    @staticmethod
+    def _dedupe_by_device(items: list[dict]) -> list[dict]:
+        """每台設備只保留第一筆，作為代表項目。"""
+        seen: set[str] = set()
+        result: list[dict] = []
+        for item in items:
+            device = item.get("device", "")
+            if device not in seen:
+                seen.add(device)
+                result.append(item)
+        return result
 
     @staticmethod
     def _escape(text: str) -> str:

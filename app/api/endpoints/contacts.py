@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from app.api.endpoints.auth import get_current_user, require_write
 from app.db.base import get_session_context
 from app.db.models import Contact, ContactCategory
+from app.services.system_log import write_log
 
 router = APIRouter(prefix="/contacts", tags=["Contacts"])
 
@@ -184,6 +185,12 @@ async def create_contact_category(
         await session.commit()
         await session.refresh(category)
 
+        await write_log(
+            level="INFO", source=_user.get("username", "unknown"),
+            summary=f"新增通訊錄分類「{category.name}」",
+            module="contacts", maintenance_id=data.maintenance_id,
+        )
+
         return {
             "id": category.id,
             "name": category.name,
@@ -237,6 +244,12 @@ async def update_contact_category(
         count_result = await session.execute(count_stmt)
         contact_count = count_result.scalar() or 0
 
+        await write_log(
+            level="INFO", source=_user.get("username", "unknown"),
+            summary=f"更新通訊錄分類「{category.name}」",
+            module="contacts", maintenance_id=category.maintenance_id,
+        )
+
         return {
             "id": category.id,
             "name": category.name,
@@ -276,6 +289,12 @@ async def delete_contact_category(
         # 硬刪除分類（從資料庫中完全移除）
         await session.delete(category)
         await session.commit()
+
+        await write_log(
+            level="WARNING", source=_user.get("username", "unknown"),
+            summary=f"刪除通訊錄分類「{category_name}」",
+            module="contacts", maintenance_id=category.maintenance_id,
+        )
 
         return {"message": f"分類 '{category_name}' 已刪除，聯絡人已移至未分類"}
 
@@ -381,6 +400,12 @@ async def create_contact(
         await session.commit()
         await session.refresh(contact)
 
+        await write_log(
+            level="INFO", source=_user.get("username", "unknown"),
+            summary=f"新增聯絡人「{contact.name}」",
+            module="contacts", maintenance_id=maintenance_id,
+        )
+
         return {
             "id": contact.id,
             "category_id": contact.category_id,
@@ -445,6 +470,12 @@ async def update_contact(
         cat_result = await session.execute(cat_stmt)
         cat_name = cat_result.scalar()
 
+        await write_log(
+            level="INFO", source=_user.get("username", "unknown"),
+            summary=f"更新聯絡人「{contact.name}」",
+            module="contacts", maintenance_id=maintenance_id,
+        )
+
         return {
             "id": contact.id,
             "category_id": contact.category_id,
@@ -479,10 +510,17 @@ async def delete_contact(
         if not contact:
             raise HTTPException(status_code=404, detail="聯絡人不存在")
 
+        contact_name = contact.name
         await session.delete(contact)
         await session.commit()
 
-        return {"message": f"聯絡人 '{contact.name}' 已刪除"}
+        await write_log(
+            level="WARNING", source=_user.get("username", "unknown"),
+            summary=f"刪除聯絡人「{contact_name}」",
+            module="contacts", maintenance_id=maintenance_id,
+        )
+
+        return {"message": f"聯絡人 '{contact_name}' 已刪除"}
 
 
 @router.post("/{maintenance_id}/import-csv")
@@ -570,6 +608,19 @@ async def import_contacts_csv(
             contacts_imported += 1
 
         await session.commit()
+
+        parts = []
+        if contacts_imported:
+            parts.append(f"匯入 {contacts_imported} 筆聯絡人")
+        if categories_created:
+            parts.append(f"新增 {categories_created} 個分類")
+        if errors:
+            parts.append(f"{len(errors)} 筆錯誤")
+        await write_log(
+            level="INFO", source=_user.get("username", "unknown"),
+            summary=f"CSV 匯入通訊錄：{'、'.join(parts)}",
+            module="contacts", maintenance_id=maintenance_id,
+        )
 
         return {
             "categories_created": categories_created,

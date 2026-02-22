@@ -89,13 +89,6 @@ async def upload_file(
     return get_public_url(object_name)
 
 
-async def delete_file(object_name: str) -> None:
-    """Delete an object from MinIO."""
-    client = _get_client()
-    bucket = settings.minio.bucket
-    await client.remove_object(bucket, object_name)
-    logger.debug("Deleted %s", object_name)
-
 
 def get_public_url(object_name: str) -> str:
     """

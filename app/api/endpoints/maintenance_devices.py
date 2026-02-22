@@ -19,7 +19,12 @@ import csv
 import io
 
 from app.db.base import get_async_session
-from app.db.models import MaintenanceDeviceList, DEVICE_VENDOR_OPTIONS
+from app.db.models import (
+    CollectionError,
+    LatestCollectionBatch,
+    MaintenanceDeviceList,
+    DEVICE_VENDOR_OPTIONS,
+)
 from app.core.enums import TenantGroup
 from app.api.endpoints.auth import get_current_user, require_write
 from app.services.system_log import write_log
@@ -579,6 +584,25 @@ async def delete_device(
 
     old_hostname = device.old_hostname or "-"
     new_hostname = device.new_hostname or "-"
+
+    # 清理該設備的採集快取（LatestCollectionBatch、CollectionError）
+    hostnames_to_clean = [
+        h for h in (device.new_hostname, device.old_hostname) if h
+    ]
+    if hostnames_to_clean:
+        await session.execute(
+            delete(LatestCollectionBatch).where(
+                LatestCollectionBatch.maintenance_id == maintenance_id,
+                LatestCollectionBatch.switch_hostname.in_(hostnames_to_clean),
+            )
+        )
+        await session.execute(
+            delete(CollectionError).where(
+                CollectionError.maintenance_id == maintenance_id,
+                CollectionError.switch_hostname.in_(hostnames_to_clean),
+            )
+        )
+
     await session.delete(device)
     await session.commit()
 
@@ -882,6 +906,18 @@ async def clear_all(
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """清除該歲修的所有設備對應。需要 device:write 權限。"""
+    # 先清理所有關聯的採集快取
+    await session.execute(
+        delete(LatestCollectionBatch).where(
+            LatestCollectionBatch.maintenance_id == maintenance_id,
+        )
+    )
+    await session.execute(
+        delete(CollectionError).where(
+            CollectionError.maintenance_id == maintenance_id,
+        )
+    )
+
     stmt = delete(MaintenanceDeviceList).where(
         MaintenanceDeviceList.maintenance_id == maintenance_id
     )
@@ -926,6 +962,34 @@ async def batch_delete_devices(
             "deleted_count": 0,
             "message": "沒有選中任何設備",
         }
+
+    # 先查出要刪除的設備 hostname，用於清理採集快取
+    hostname_stmt = select(
+        MaintenanceDeviceList.new_hostname,
+        MaintenanceDeviceList.old_hostname,
+    ).where(
+        MaintenanceDeviceList.maintenance_id == maintenance_id,
+        MaintenanceDeviceList.id.in_(device_ids),
+    )
+    hostname_rows = (await session.execute(hostname_stmt)).all()
+    hostnames_to_clean = list({
+        h for row in hostname_rows
+        for h in (row.new_hostname, row.old_hostname) if h
+    })
+
+    if hostnames_to_clean:
+        await session.execute(
+            delete(LatestCollectionBatch).where(
+                LatestCollectionBatch.maintenance_id == maintenance_id,
+                LatestCollectionBatch.switch_hostname.in_(hostnames_to_clean),
+            )
+        )
+        await session.execute(
+            delete(CollectionError).where(
+                CollectionError.maintenance_id == maintenance_id,
+                CollectionError.switch_hostname.in_(hostnames_to_clean),
+            )
+        )
 
     stmt = delete(MaintenanceDeviceList).where(
         MaintenanceDeviceList.maintenance_id == maintenance_id,

@@ -1,0 +1,18 @@
+{
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "minioadmin",
+          "secretKey": "minioadmin"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write"]
+    },
+    {
+      "name": "anonymous",
+      "actions": ["Read:netora-uploads"]
+    }
+  ]
+}

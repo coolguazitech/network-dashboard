@@ -71,9 +71,29 @@ class TransceiverIndicator(BaseIndicator):
         session: AsyncSession,
     ) -> IndicatorEvaluationResult:
         """評估光模塊指標。"""
+        # 設備清單為空 → 沒有驗收項目
+        device_hostnames = await self._get_active_device_hostnames(
+            session, maintenance_id,
+        )
+        if not device_hostnames:
+            return IndicatorEvaluationResult(
+                indicator_type=self.indicator_type,
+                maintenance_id=maintenance_id,
+                total_count=0, pass_count=0, fail_count=0,
+                pass_rates={
+                    "tx_power_ok": 0, "rx_power_ok": 0,
+                    "temperature_ok": 0, "voltage_ok": 0,
+                },
+                summary="無設備資料",
+            )
+
         th = self._load_thresholds(maintenance_id)
         repo = TransceiverRecordRepo(session)
-        records = await repo.get_latest_per_device(maintenance_id)
+        all_records = await repo.get_latest_per_device(maintenance_id)
+
+        # 只保留設備清單中的設備紀錄
+        active_set = set(device_hostnames)
+        records = [r for r in all_records if r.switch_hostname in active_set]
 
         total_count = 0
         pass_count = 0
@@ -175,6 +195,8 @@ class TransceiverIndicator(BaseIndicator):
                     f"Tx Power 過高: {record.tx_power} dBm "
                     f"(範圍: {th.tx_power_min}~{th.tx_power_max})"
                 )
+        else:
+            reasons.append("Tx Power 缺失")
 
         if record.rx_power is not None:
             if record.rx_power < th.rx_power_min:
@@ -187,6 +209,8 @@ class TransceiverIndicator(BaseIndicator):
                     f"Rx Power 過高: {record.rx_power} dBm "
                     f"(範圍: {th.rx_power_min}~{th.rx_power_max})"
                 )
+        else:
+            reasons.append("Rx Power 缺失")
 
         if record.temperature is not None:
             if record.temperature < th.temperature_min:
@@ -199,6 +223,8 @@ class TransceiverIndicator(BaseIndicator):
                     f"溫度過高: {record.temperature}°C "
                     f"(範圍: {th.temperature_min}~{th.temperature_max}°C)"
                 )
+        else:
+            reasons.append("溫度缺失")
 
         if record.voltage is not None:
             if record.voltage < th.voltage_min:
@@ -211,6 +237,8 @@ class TransceiverIndicator(BaseIndicator):
                     f"電壓過高: {record.voltage}V "
                     f"(範圍: {th.voltage_min}~{th.voltage_max}V)"
                 )
+        else:
+            reasons.append("電壓缺失")
 
         return reasons
 

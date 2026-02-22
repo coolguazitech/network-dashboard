@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any, Annotated
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_async_session
@@ -38,6 +38,22 @@ class ThresholdUpdateRequest(BaseModel):
     transceiver_temperature_max: float | None = None
     transceiver_voltage_min: float | None = None
     transceiver_voltage_max: float | None = None
+
+    @model_validator(mode="after")
+    def check_min_less_than_max(self) -> "ThresholdUpdateRequest":
+        pairs = [
+            ("transceiver_tx_power_min", "transceiver_tx_power_max", "TX Power"),
+            ("transceiver_rx_power_min", "transceiver_rx_power_max", "RX Power"),
+            ("transceiver_temperature_min", "transceiver_temperature_max", "溫度"),
+            ("transceiver_voltage_min", "transceiver_voltage_max", "電壓"),
+        ]
+        for min_key, max_key, label in pairs:
+            min_val = getattr(self, min_key)
+            max_val = getattr(self, max_key)
+            if min_val is not None and max_val is not None and min_val >= max_val:
+                msg = f"{label} 下限 ({min_val}) 必須小於上限 ({max_val})"
+                raise ValueError(msg)
+        return self
 
 
 @router.get("/{maintenance_id}")

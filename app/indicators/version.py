@@ -8,7 +8,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import VersionExpectation, VersionRecord
+from app.db.models import MaintenanceDeviceList, VersionExpectation, VersionRecord
 from app.indicators.base import (
     BaseIndicator,
     DisplayConfig,
@@ -126,9 +126,18 @@ class VersionIndicator(BaseIndicator):
         session: AsyncSession,
         maintenance_id: str,
     ) -> dict[str, list[str]]:
-        """從 DB 讀取版本期望。返回 hostname -> [expected_versions]。"""
+        """從 DB 讀取版本期望（僅限仍在設備清單中的設備）。"""
+        active_hostnames = (
+            select(MaintenanceDeviceList.new_hostname)
+            .where(
+                MaintenanceDeviceList.maintenance_id == maintenance_id,
+                MaintenanceDeviceList.new_hostname.isnot(None),
+            )
+        )
+
         stmt = select(VersionExpectation).where(
-            VersionExpectation.maintenance_id == maintenance_id
+            VersionExpectation.maintenance_id == maintenance_id,
+            VersionExpectation.hostname.in_(active_hostnames),
         )
         result = await session.execute(stmt)
         expectations = result.scalars().all()

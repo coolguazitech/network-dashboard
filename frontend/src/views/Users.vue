@@ -5,7 +5,7 @@
       <h1 class="text-xl font-bold text-white">使用者管理</h1>
       <button
         @click="openUserModal()"
-        class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition flex items-center gap-2"
+        class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition flex items-center gap-2"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -14,8 +14,13 @@
       </button>
     </div>
 
+    <!-- 操作訊息 -->
+    <div v-if="actionMessage" class="mb-4 px-4 py-3 rounded-lg text-sm" :class="actionMessageType === 'error' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'">
+      {{ actionMessage }}
+    </div>
+
     <!-- 待啟用帳號提示 -->
-    <div v-if="pendingUsers.length > 0" class="mb-4 p-3 bg-amber-900/30 border border-amber-700/50 rounded-lg">
+    <div v-if="pendingUsers.length > 0" class="mb-4 p-3 bg-amber-900/30 border border-amber-700/50 rounded-xl">
       <div class="flex items-center gap-2 text-amber-400 text-sm font-medium mb-2">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -26,7 +31,7 @@
         <div
           v-for="user in pendingUsers"
           :key="user.id"
-          class="flex items-center gap-2 px-2 py-1 bg-slate-800 rounded text-sm"
+          class="flex items-center gap-2 px-2 py-1 bg-slate-800 rounded-lg text-sm"
         >
           <span class="text-white">{{ user.username }}</span>
           <span class="text-slate-400 text-xs">({{ user.maintenance_id }})</span>
@@ -41,7 +46,7 @@
     </div>
 
     <!-- 使用者列表 -->
-    <div class="bg-slate-800/80 border border-slate-700 rounded-lg overflow-hidden">
+    <div class="bg-slate-800/60 backdrop-blur-sm border border-slate-700/40 rounded-xl overflow-hidden">
       <!-- 表頭 -->
       <div class="grid grid-cols-12 gap-2 px-4 py-3 bg-slate-900/50 border-b border-slate-700 text-xs text-slate-400 uppercase tracking-wide">
         <div class="col-span-1">帳號</div>
@@ -167,7 +172,7 @@
               type="text"
               :disabled="!!editingUser"
               :class="[
-                'w-full px-3 py-2 border border-slate-600 rounded text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400',
+                'w-full px-3 py-2 border border-slate-600/40 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400',
                 editingUser ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-slate-700 text-white'
               ]"
               placeholder="請輸入帳號"
@@ -190,10 +195,10 @@
             <div class="flex items-center gap-1.5 mb-1">
               <label class="text-sm text-slate-400">顯示名稱 <span class="text-red-400">*</span></label>
               <div class="relative group/dn">
-                <svg class="w-3.5 h-3.5 text-slate-500 group-hover/dn:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-[18px] h-[18px] text-slate-500 group-hover/dn:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <div class="absolute left-0 bottom-full mb-2 w-64 px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-xs text-amber-900 leading-relaxed opacity-0 invisible group-hover/dn:opacity-100 group-hover/dn:visible transition-all duration-200 z-50 pointer-events-none"
+                <div class="absolute left-0 bottom-full mb-2 w-80 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-sm text-amber-900 leading-relaxed opacity-0 invisible group-hover/dn:opacity-100 group-hover/dn:visible transition-all duration-200 z-50 pointer-events-none"
                   style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
                 >
                   此名稱將作為使用者在系統中的識別名稱，用於案件指派與操作記錄。名稱不可與其他使用者重複。
@@ -228,7 +233,7 @@
               v-model="userForm.role"
               :disabled="!!editingUser"
               :class="[
-                'w-full px-3 py-2 border border-slate-600 rounded text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400',
+                'w-full px-3 py-2 border border-slate-600/40 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400',
                 editingUser ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-slate-700 text-white'
               ]"
             >
@@ -245,7 +250,7 @@
               v-model="userForm.maintenance_id"
               :disabled="!!editingUser"
               :class="[
-                'w-full px-3 py-2 border border-slate-600 rounded text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400',
+                'w-full px-3 py-2 border border-slate-600/40 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400',
                 editingUser ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-slate-700 text-white'
               ]"
             >
@@ -273,13 +278,13 @@
             <button
               type="button"
               @click="showUserModal = false"
-              class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded transition"
+              class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition"
             >
               取消
             </button>
             <button
               type="submit"
-              class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition disabled:opacity-50"
+              class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition disabled:opacity-50"
               :disabled="saving || !isUserFormValid"
             >
               {{ saving ? '儲存中...' : '儲存' }}
@@ -321,13 +326,13 @@
           <button
             type="button"
             @click="showResetPasswordModal = false"
-            class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded transition"
+            class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition"
           >
             取消
           </button>
           <button
             @click="resetPassword"
-            class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-sm rounded transition disabled:opacity-50"
+            class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-sm rounded-lg transition disabled:opacity-50"
             :disabled="saving || !newPassword"
           >
             {{ saving ? '重設中...' : '重設密碼' }}
@@ -342,6 +347,7 @@
     <div
       v-if="showDeleteModal"
       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      @click.self="showDeleteModal = false"
     >
       <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-red-700/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-sm p-5">
         <h3 class="text-lg font-bold text-red-400 mb-4">確認刪除</h3>
@@ -352,13 +358,13 @@
         <div class="flex justify-end gap-2">
           <button
             @click="showDeleteModal = false"
-            class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded transition"
+            class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition"
           >
             取消
           </button>
           <button
             @click="deleteUser"
-            class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition disabled:opacity-50"
+            class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition disabled:opacity-50"
             :disabled="saving"
           >
             {{ saving ? '刪除中...' : '確認刪除' }}
@@ -373,16 +379,22 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import api from '@/utils/api'
+import { usePendingUsersBadge } from '@/composables/usePendingUsersBadge'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 
 dayjs.extend(utc)
+
+const { refreshPending } = usePendingUsersBadge()
 
 const loading = ref(false)
 const saving = ref(false)
 const users = ref([])
 const maintenances = ref([])
 const availableRoles = ref([])
+const actionMessage = ref('')
+const actionMessageType = ref('success')
+const modalLoading = ref(false)
 
 // 計算活躍與待啟用用戶
 const activeUsers = computed(() => users.value.filter(u => u.is_active))
@@ -415,7 +427,7 @@ const deleteTarget = ref(null)
 
 const isUserFormValid = computed(() => {
   if (editingUser.value) {
-    return true
+    return !!userForm.value.display_name?.trim()
   }
   // 新增時：需要帳號、密碼、角色
   if (!userForm.value.username || !userForm.value.password || !userForm.value.role) {
@@ -428,6 +440,12 @@ const isUserFormValid = computed(() => {
   return true
 })
 
+const showActionMessage = (msg, type = 'success') => {
+  actionMessage.value = msg
+  actionMessageType.value = type
+  setTimeout(() => { actionMessage.value = '' }, 4000)
+}
+
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
   return dayjs.utc(dateStr).local().format('YYYY-MM-DD HH:mm')
@@ -435,20 +453,20 @@ const formatDate = (dateStr) => {
 
 const getRoleLabel = (role) => {
   const labels = {
-    root: '管理員',
-    pm: 'PM',
-    guest: '訪客',
+    root: '👑 管理員',
+    pm: '📋 執秘',
+    guest: '👁️ 訪客',
   }
-  return labels[role] || role
+  return labels[role?.toLowerCase()] || role
 }
 
 const getRoleBadgeClass = (role) => {
   const classes = {
-    root: 'px-1.5 py-0.5 bg-amber-600/30 text-amber-400 text-xs rounded',
-    pm: 'px-1.5 py-0.5 bg-cyan-600/30 text-cyan-400 text-xs rounded',
-    guest: 'px-1.5 py-0.5 bg-slate-600/30 text-slate-400 text-xs rounded',
+    root: 'px-1.5 py-0.5 bg-amber-600/30 text-amber-400 text-xs rounded-md',
+    pm: 'px-1.5 py-0.5 bg-cyan-600/30 text-cyan-400 text-xs rounded-md',
+    guest: 'px-1.5 py-0.5 bg-slate-600/30 text-slate-400 text-xs rounded-md',
   }
-  return classes[role] || 'px-1.5 py-0.5 bg-slate-600/30 text-slate-400 text-xs rounded'
+  return classes[role?.toLowerCase()] || 'px-1.5 py-0.5 bg-slate-600/30 text-slate-400 text-xs rounded-md'
 }
 
 const loadUsers = async () => {
@@ -458,6 +476,7 @@ const loadUsers = async () => {
     users.value = data
   } catch (e) {
     console.error('載入使用者失敗:', e)
+    showActionMessage('載入使用者列表失敗', 'error')
   } finally {
     loading.value = false
   }
@@ -482,35 +501,51 @@ const loadAvailableRoles = async () => {
 }
 
 const openUserModal = async (user = null) => {
-  // 重新載入歲修列表，確保有最新資料
-  await loadMaintenances()
+  modalLoading.value = true
+  try {
+    // 重新載入歲修列表，確保有最新資料
+    await loadMaintenances()
 
-  editingUser.value = user
-  if (user) {
-    userForm.value = {
-      username: user.username,
-      password: '',
-      display_name: user.display_name || '',
-      email: user.email || '',
-      role: user.role,
-      maintenance_id: user.maintenance_id || '',
-      is_active: user.is_active,
+    editingUser.value = user
+    if (user) {
+      userForm.value = {
+        username: user.username,
+        password: '',
+        display_name: user.display_name || '',
+        email: user.email || '',
+        role: user.role,
+        maintenance_id: user.maintenance_id || '',
+        is_active: user.is_active,
+      }
+    } else {
+      userForm.value = {
+        username: '',
+        password: '',
+        display_name: '',
+        email: '',
+        role: 'pm',
+        maintenance_id: '',
+        is_active: true,
+      }
     }
-  } else {
-    userForm.value = {
-      username: '',
-      password: '',
-      display_name: '',
-      email: '',
-      role: 'pm',
-      maintenance_id: '',
-      is_active: true,
-    }
+    showUserModal.value = true
+  } finally {
+    modalLoading.value = false
   }
-  showUserModal.value = true
 }
 
 const saveUser = async () => {
+  // 前端檢查：每個歲修只能有一位執秘
+  if (!editingUser.value && userForm.value.role === 'pm' && userForm.value.maintenance_id) {
+    const existingPm = users.value.find(
+      u => u.role === 'pm' && u.maintenance_id === userForm.value.maintenance_id
+    )
+    if (existingPm) {
+      showActionMessage(`歲修 "${userForm.value.maintenance_id}" 已有執秘（${existingPm.display_name}），每個歲修只能有一位執秘`, 'error')
+      return
+    }
+  }
+
   saving.value = true
   try {
     if (editingUser.value) {
@@ -537,9 +572,10 @@ const saveUser = async () => {
     }
     showUserModal.value = false
     await loadUsers()
+    refreshPending()
   } catch (e) {
     const action = editingUser.value ? '更新' : '新增'
-    alert(`${action}失敗: ${e.response?.data?.detail || '未知錯誤'}`)
+    showActionMessage(`${action}失敗: ${e.response?.data?.detail || '未知錯誤'}`, 'error')
   } finally {
     saving.value = false
   }
@@ -550,8 +586,9 @@ const activateUser = async (user) => {
   try {
     await api.post(`/users/${user.id}/activate`)
     await loadUsers()
+    refreshPending()
   } catch (e) {
-    alert(`啟用失敗: ${e.response?.data?.detail || '未知錯誤'}`)
+    showActionMessage(`啟用失敗: ${e.response?.data?.detail || '未知錯誤'}`, 'error')
   } finally {
     saving.value = false
   }
@@ -571,9 +608,9 @@ const resetPassword = async () => {
       new_password: newPassword.value,
     })
     showResetPasswordModal.value = false
-    alert('密碼已重設')
+    showActionMessage('密碼已重設')
   } catch (e) {
-    alert(`重設失敗: ${e.response?.data?.detail || '未知錯誤'}`)
+    showActionMessage(`重設失敗: ${e.response?.data?.detail || '未知錯誤'}`, 'error')
   } finally {
     saving.value = false
   }
@@ -591,8 +628,9 @@ const deleteUser = async () => {
     await api.delete(`/users/${deleteTarget.value.id}`)
     showDeleteModal.value = false
     await loadUsers()
+    refreshPending()
   } catch (e) {
-    alert(`刪除失敗: ${e.response?.data?.detail || '未知錯誤'}`)
+    showActionMessage(`刪除失敗: ${e.response?.data?.detail || '未知錯誤'}`, 'error')
   } finally {
     saving.value = false
   }

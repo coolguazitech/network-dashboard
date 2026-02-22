@@ -1,18 +1,8 @@
 """Mock: \u97cc\u9ad4\u7248\u672c\u8cc7\u8a0a (get_version)\u3002"""
 from __future__ import annotations
 
-from mock_server.convergence import should_device_fail
 
-
-def generate(
-    device_type: str,
-    is_old: bool | None,
-    active_seconds: float,
-    converge_time: float,
-    **_kw: object,
-) -> str:
-    fails = should_device_fail(is_old, active_seconds, converge_time)
-
+def generate(device_type: str, fails: bool = False, **_kw: object) -> str:
     if device_type == "nxos":
         return _generate_nxos(fails)
     elif device_type == "ios":

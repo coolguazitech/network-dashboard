@@ -24,20 +24,38 @@
     </div>
 
     <!-- Tab 內容 -->
-    <div class="bg-slate-800/80 rounded border border-slate-600 p-4">
+    <div class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-600/40 p-4">
       <!-- Client 清單 Tab (歲修特定) -->
       <div v-if="activeTab === 'maclist'" class="space-y-4">
         <div class="flex justify-between items-center">
-          <h3 class="text-white font-semibold">Client 清單</h3>
+          <div class="flex items-center gap-2">
+            <h3 class="text-white font-semibold">Client 清單</h3>
+            <div class="relative group/info">
+              <svg class="w-[18px] h-[18px] text-slate-500 group-hover/info:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div class="absolute left-0 top-full mt-2 w-80 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-sm text-amber-900 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 z-50 pointer-events-none"
+                style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
+              >
+                <div class="absolute left-4 -top-[6px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-300"></div>
+                <div class="absolute left-4 -top-[5px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-50"></div>
+                <p class="mb-1 font-semibold">Client 清單說明</p>
+                <p>管理歲修範圍內的 Client（MAC/IP），匯入後可在「案件管理」頁面同步為案件，系統會自動追蹤 Ping 可達狀態。</p>
+                <p class="mt-2 font-medium">CSV 匯入格式：</p>
+                <p class="font-mono text-xs mt-0.5">mac_address, ip_address, tenant_group, description, default_assignee</p>
+                <p class="text-xs mt-0.5">未指定負責人則預設為系統管理員</p>
+              </div>
+            </div>
+          </div>
           <div class="flex gap-2">
-            <button @click="downloadMacTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
+            <button @click="downloadMacTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-lg transition">
               📄 下載範本
             </button>
-            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importMacList" />
             </label>
-            <button v-if="userCanWrite" @click="showAddMacModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="showAddMacModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition">
               ➕ 新增 Client
             </button>
           </div>
@@ -59,18 +77,18 @@
               v-model="macSearch"
               type="text"
               placeholder="搜尋 MAC、IP 或備註..."
-              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
+              class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
               @input="debouncedLoadMacList"
             />
-            <button @click="exportMacCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition">
+            <button @click="exportMacCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition">
               📤 匯出 CSV
             </button>
           </div>
 
           <!-- 批量操作 -->
-          <div v-if="selectedMacs.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
+          <div v-if="selectedMacs.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded-xl border border-cyan-700/40">
             <span class="text-sm text-cyan-300">已選 {{ selectedMacs.length }} 筆</span>
-            <button v-if="userCanWrite" @click="batchDeleteMacs" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="batchDeleteMacs" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition">
               🗑️ 批量刪除
             </button>
             <button @click="clearSelection" class="px-2 py-1.5 text-slate-400 hover:text-white text-sm">
@@ -79,12 +97,12 @@
           </div>
 
           <!-- Client 列表 -->
-          <div ref="clientScrollContainer" class="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <div ref="clientScrollContainer" class="overflow-x-auto max-h-[600px] overflow-y-auto">
             <table class="min-w-full text-sm">
               <thead class="bg-slate-900/60 sticky top-0">
                 <tr>
                   <th class="px-2 py-2 text-center">
-                    <input type="checkbox" v-model="selectAll" @change="toggleSelectAll" class="rounded border-slate-500" />
+                    <input type="checkbox" v-model="isAllMacSelected" class="rounded border-slate-500" />
                   </th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">MAC 地址</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">IP 地址</th>
@@ -102,7 +120,7 @@
                   <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ mac.mac_address }}</td>
                   <td class="px-3 py-2 font-mono text-slate-300 text-xs">
                     <span
-                      class="inline-block w-2 h-2 rounded-full mr-3 align-middle"
+                      class="inline-block rounded-full mr-3 align-middle" style="width: 11px; height: 11px"
                       :class="mac.last_ping_reachable === true
                         ? 'ping-dot-green ping-glow-green'
                         : mac.last_ping_reachable === false
@@ -128,26 +146,40 @@
             </table>
           </div>
 
-          <!-- 提示 -->
-          <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：mac_address,ip_address,tenant_group,description,default_assignee（未指定負責人則預設為系統管理員）
-          </p>
         </div>
       </div>
 
       <!-- 設備清單 Tab (歲修特定) -->
       <div v-if="activeTab === 'devices'" class="space-y-4">
         <div class="flex justify-between items-center">
-          <h3 class="text-white font-semibold">設備清單與對應</h3>
+          <div class="flex items-center gap-2">
+            <h3 class="text-white font-semibold">設備清單與對應</h3>
+            <div class="relative group/info">
+              <svg class="w-[18px] h-[18px] text-slate-500 group-hover/info:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div class="absolute left-0 top-full mt-2 w-80 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-sm text-amber-900 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 z-50 pointer-events-none"
+                style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
+              >
+                <div class="absolute left-4 -top-[6px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-300"></div>
+                <div class="absolute left-4 -top-[5px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-50"></div>
+                <p class="mb-1 font-semibold">設備清單說明</p>
+                <p>管理歲修範圍內的新舊設備對應關係。新設備用於各項指標驗收（Transceiver、Version、Uplink 等），舊設備用於資料比對參考。</p>
+                <p class="mt-2 font-medium">CSV 匯入格式：</p>
+                <p class="font-mono text-xs mt-0.5">old_hostname, old_ip_address, old_vendor, new_hostname, new_ip_address, new_vendor, tenant_group, description</p>
+                <p class="text-xs mt-0.5">舊/新設備各三欄需同時填寫或同時留空，至少填一側</p>
+              </div>
+            </div>
+          </div>
           <div class="flex gap-2 items-center">
-            <button @click="downloadDeviceTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
+            <button @click="downloadDeviceTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-lg transition">
               📄 下載範本
             </button>
-            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importDeviceList" />
             </label>
-            <button v-if="userCanWrite" @click="showAddDeviceModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="showAddDeviceModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition">
               ➕ 新增設備
             </button>
           </div>
@@ -160,11 +192,11 @@
         <div v-else>
           <!-- 統計卡片 -->
           <div class="grid grid-cols-3 gap-3 mb-4">
-            <div class="bg-slate-900/60 rounded p-3 text-center card-stagger" style="animation-delay: 0ms">
+            <div class="bg-slate-900/60 rounded-xl p-3 text-center card-stagger" style="animation-delay: 0ms">
               <div class="text-2xl font-bold text-slate-200">{{ deviceStats.total || 0 }}</div>
               <div class="text-xs text-slate-400">全部設備</div>
             </div>
-            <div class="bg-slate-900/60 rounded p-3 text-center card-stagger" style="animation-delay: 80ms">
+            <div class="bg-slate-900/60 rounded-xl p-3 text-center card-stagger" style="animation-delay: 80ms">
               <div class="text-2xl font-bold text-amber-400">{{ deviceStats.old_count || 0 }}</div>
               <div class="text-xs text-slate-400 mb-1">舊設備</div>
               <div class="flex justify-center gap-3 text-xs">
@@ -173,7 +205,7 @@
                 <span v-if="deviceStats.old_unchecked" class="text-slate-500">未檢測 {{ deviceStats.old_unchecked }}</span>
               </div>
             </div>
-            <div class="bg-slate-900/60 rounded p-3 text-center card-stagger" style="animation-delay: 160ms">
+            <div class="bg-slate-900/60 rounded-xl p-3 text-center card-stagger" style="animation-delay: 160ms">
               <div class="text-2xl font-bold text-cyan-400">{{ deviceStats.new_count || 0 }}</div>
               <div class="text-xs text-slate-400 mb-1">新設備</div>
               <div class="flex justify-center gap-3 text-xs">
@@ -190,18 +222,18 @@
               v-model="deviceSearch"
               type="text"
               placeholder="搜尋 hostname、IP 或備註..."
-              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
+              class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
               @input="debouncedLoadDeviceList"
             />
-            <button @click="exportDeviceCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition">
+            <button @click="exportDeviceCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition">
               📤 匯出 CSV
             </button>
           </div>
 
           <!-- 批量操作 -->
-          <div v-if="selectedDevices.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
+          <div v-if="selectedDevices.length > 0" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded-xl border border-cyan-700/40">
             <span class="text-sm text-cyan-300">已選 {{ selectedDevices.length }} 筆</span>
-            <button v-if="userCanWrite" @click="batchDeleteDevices" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="batchDeleteDevices" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition">
               🗑️ 批量刪除
             </button>
             <button @click="clearDeviceSelection" class="px-2 py-1 text-slate-400 hover:text-white text-sm">
@@ -210,12 +242,12 @@
           </div>
 
           <!-- 設備列表 -->
-          <div ref="deviceScrollContainer" class="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <div ref="deviceScrollContainer" class="overflow-x-auto max-h-[600px] overflow-y-auto">
             <table class="min-w-full text-sm">
               <thead class="bg-slate-900/60 sticky top-0">
                 <tr>
                   <th class="px-2 py-2 text-center">
-                    <input type="checkbox" v-model="deviceSelectAll" @change="toggleDeviceSelectAll" class="rounded border-slate-500" />
+                    <input type="checkbox" v-model="isAllDeviceSelected" class="rounded border-slate-500" />
                   </th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="3">舊設備</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="3">新設備</th>
@@ -245,7 +277,7 @@
                   <td class="px-2 py-2 font-mono text-slate-400 text-xs">
                     <span
                       v-if="device.old_hostname"
-                      class="inline-block w-2 h-2 rounded-full mr-3 align-middle"
+                      class="inline-block rounded-full mr-3 align-middle" style="width: 11px; height: 11px"
                       :class="getReachability(device.old_hostname) === true
                         ? 'ping-dot-green ping-glow-green'
                         : getReachability(device.old_hostname) === false
@@ -257,7 +289,7 @@
                   <td class="px-2 py-2 font-mono text-slate-400 text-xs">
                     <span
                       v-if="device.new_hostname"
-                      class="inline-block w-2 h-2 rounded-full mr-3 align-middle"
+                      class="inline-block rounded-full mr-3 align-middle" style="width: 11px; height: 11px"
                       :class="getReachability(device.new_hostname) === true
                         ? 'ping-dot-green ping-glow-green'
                         : getReachability(device.new_hostname) === false
@@ -285,10 +317,6 @@
             </table>
           </div>
 
-          <!-- 提示 -->
-          <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,tenant_group,description（舊/新設備各三欄必須同時填寫或同時留空，至少需要填一側；tenant_group: F18/F6/AP/F14/F12）
-          </p>
         </div>
       </div>
     </div>
@@ -308,7 +336,7 @@
                 placeholder="AA:BB:CC:DD:EE:FF"
                 :disabled="editingClient"
                 :class="[
-                  'w-full px-3 py-2 border rounded font-mono uppercase text-sm',
+                  'w-full px-3 py-2 border rounded-lg font-mono uppercase text-sm',
                   editingClient
                     ? 'bg-slate-800 border-slate-700 text-slate-400 cursor-not-allowed'
                     : 'bg-slate-900 border-slate-600 text-slate-200 placeholder-slate-500'
@@ -322,7 +350,7 @@
                 v-model="newMac.ip_address"
                 type="text"
                 placeholder="192.168.1.100"
-                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 font-mono text-sm"
+                class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 font-mono text-sm"
               />
             </div>
           </div>
@@ -330,7 +358,7 @@
             <label class="block text-sm text-slate-400 mb-1">Tenant Group <span class="text-red-400">*</span></label>
             <select
               v-model="newMac.tenant_group"
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 text-sm"
             >
               <option v-for="tg in tenantGroupOptions" :key="tg" :value="tg">{{ tg }}</option>
             </select>
@@ -342,14 +370,14 @@
               v-model="newMac.description"
               type="text"
               placeholder="例如：1號機台"
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm"
             />
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">預設負責人（選填）</label>
             <select
               v-model="newMac.default_assignee"
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 text-sm"
             >
               <option value="">不指定（預設為系統管理員）</option>
               <option v-for="name in filteredDisplayNames" :key="name" :value="name">{{ name }}</option>
@@ -358,10 +386,10 @@
           </div>
         </div>
         <div class="flex justify-end gap-2 mt-6">
-          <button @click="closeClientModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">
+          <button @click="closeClientModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded-lg">
             取消
           </button>
-          <button @click="saveClient" :disabled="!newMac.mac_address || !newMac.ip_address" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
+          <button @click="saveClient" :disabled="!newMac.mac_address || !newMac.ip_address" class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
             {{ editingClient ? '儲存' : '新增' }}
           </button>
         </div>
@@ -382,15 +410,15 @@
             <h4 class="text-sm font-medium text-red-400 border-b border-slate-600 pb-1">舊設備 (OLD) <span class="text-slate-500 font-normal">- 選填</span></h4>
             <div>
               <label class="block text-xs text-slate-400 mb-1">Hostname</label>
-              <input v-model="newDevice.old_hostname" type="text" placeholder="OLD-SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+              <input v-model="newDevice.old_hostname" type="text" placeholder="OLD-SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">IP 位址</label>
-              <input v-model="newDevice.old_ip_address" type="text" placeholder="10.1.1.1" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+              <input v-model="newDevice.old_ip_address" type="text" placeholder="10.1.1.1" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">Device Type</label>
-              <select v-model="newDevice.old_vendor" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
+              <select v-model="newDevice.old_vendor" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 text-sm">
                 <option value="">-- 不選 --</option>
                 <option value="HPE">HPE</option>
                 <option value="Cisco-IOS">Cisco-IOS</option>
@@ -404,15 +432,15 @@
             <h4 class="text-sm font-medium text-green-400 border-b border-slate-600 pb-1">新設備 (NEW) <span class="text-slate-500 font-normal">- 選填</span></h4>
             <div>
               <label class="block text-xs text-slate-400 mb-1">Hostname</label>
-              <input v-model="newDevice.new_hostname" type="text" placeholder="NEW-SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+              <input v-model="newDevice.new_hostname" type="text" placeholder="NEW-SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">IP 位址</label>
-              <input v-model="newDevice.new_ip_address" type="text" placeholder="10.1.1.101" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+              <input v-model="newDevice.new_ip_address" type="text" placeholder="10.1.1.101" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">Device Type</label>
-              <select v-model="newDevice.new_vendor" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
+              <select v-model="newDevice.new_vendor" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 text-sm">
                 <option value="">-- 不選 --</option>
                 <option value="HPE">HPE</option>
                 <option value="Cisco-IOS">Cisco-IOS</option>
@@ -427,21 +455,21 @@
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-xs text-slate-400 mb-1">Tenant Group <span class="text-red-400">*</span></label>
-              <select v-model="newDevice.tenant_group" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 text-sm">
+              <select v-model="newDevice.tenant_group" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 text-sm">
                 <option v-for="tg in tenantGroupOptions" :key="tg" :value="tg">{{ tg }}</option>
               </select>
               <p class="text-xs text-slate-500 mt-1">用於 GNMS Ping API</p>
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">備註（選填）</label>
-              <input v-model="newDevice.description" type="text" placeholder="例如：1F 機房" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+              <input v-model="newDevice.description" type="text" placeholder="例如：1F 機房" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
             </div>
           </div>
         </div>
 
         <div class="flex justify-end gap-2 mt-6">
-          <button @click="closeDeviceModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">取消</button>
-          <button @click="saveDevice" :disabled="!canAddDevice" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
+          <button @click="closeDeviceModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded-lg">取消</button>
+          <button @click="saveDevice" :disabled="!canAddDevice" class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
             {{ editingDevice ? '儲存' : '新增' }}
           </button>
         </div>
@@ -464,15 +492,15 @@
 
         <!-- 統計摘要 -->
         <div class="grid grid-cols-3 gap-3 mb-4">
-          <div class="bg-green-900/30 rounded p-3 text-center">
+          <div class="bg-green-900/30 rounded-xl p-3 text-center">
             <div class="text-2xl font-bold text-green-400">{{ importResultModal.imported }}</div>
             <div class="text-xs text-slate-400">成功匯入</div>
           </div>
-          <div class="bg-slate-700/50 rounded p-3 text-center">
+          <div class="bg-slate-700/50 rounded-xl p-3 text-center">
             <div class="text-2xl font-bold text-slate-400">{{ importResultModal.skipped }}</div>
             <div class="text-xs text-slate-400">{{ importResultModal.middleLabel || '略過（重複）' }}</div>
           </div>
-          <div class="bg-red-900/30 rounded p-3 text-center">
+          <div class="bg-red-900/30 rounded-xl p-3 text-center">
             <div class="text-2xl font-bold text-red-400">{{ importResultModal.totalErrors }}</div>
             <div class="text-xs text-slate-400">錯誤</div>
           </div>
@@ -482,11 +510,11 @@
         <div v-if="importResultModal.errors.length > 0" class="flex-1 min-h-0">
           <div class="flex justify-between items-center mb-2">
             <h4 class="text-sm font-medium text-red-400">❌ 錯誤詳情（共 {{ importResultModal.totalErrors }} 筆）</h4>
-            <button @click="downloadErrorReport" class="px-2 py-1 text-xs bg-slate-600 hover:bg-slate-500 text-white rounded transition">
+            <button @click="downloadErrorReport" class="px-2 py-1 text-xs bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition">
               📥 下載錯誤報告
             </button>
           </div>
-          <div class="bg-slate-900/60 border border-slate-600 rounded overflow-y-auto max-h-[300px]">
+          <div class="bg-slate-900/60 border border-slate-600/40 rounded-xl overflow-y-auto max-h-[300px]">
             <table class="w-full text-sm">
               <thead class="bg-slate-800 sticky top-0">
                 <tr>
@@ -511,7 +539,7 @@
         </div>
 
         <div class="flex justify-end mt-4">
-          <button @click="closeImportResultModal" class="px-4 py-2 bg-slate-600 text-white rounded hover:bg-slate-500">
+          <button @click="closeImportResultModal" class="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-500">
             關閉
           </button>
         </div>
@@ -565,9 +593,9 @@ export default {
       deviceFilterMapping: '',
       deviceSearchTimeout: null,
       selectedDevices: [],
-      deviceSelectAll: false,
       reachabilityInterval: null,  // 自動測試可達性 interval ID (每10秒)
       reachabilityStatus: {},  // hostname -> { is_reachable, success_rate, last_check_at }
+      clientPingInterval: null,  // Client 清單 Ping 狀態輪詢 interval ID (每15秒)
 
       // Client 清單 (原 MAC 清單)
       macList: [],
@@ -583,7 +611,6 @@ export default {
       userDisplayNames: [],
       macSearchTimeout: null,
       selectedMacs: [],
-      selectAll: false,
 
       // Modal 控制
       showAddDeviceModal: false,
@@ -619,6 +646,14 @@ export default {
       // 過濾掉「系統管理員」，因為已在預設選項中標示
       return this.userDisplayNames.filter(n => n !== '系統管理員');
     },
+    isAllMacSelected: {
+      get() { return this.macList.length > 0 && this.selectedMacs.length === this.macList.length; },
+      set(val) { this.selectedMacs = val ? this.macList.map(m => m.id) : []; },
+    },
+    isAllDeviceSelected: {
+      get() { return this.deviceList.length > 0 && this.selectedDevices.length === this.deviceList.length; },
+      set(val) { this.selectedDevices = val ? this.deviceList.map(d => d.id) : []; },
+    },
     canAddDevice() {
       const d = this.newDevice;
       const oldH = d.old_hostname?.trim();
@@ -640,6 +675,7 @@ export default {
   watch: {
     selectedMaintenanceId(newId) {
       this.stopReachabilityPolling();
+      this.stopClientPingPolling();
       if (newId) {
         this.loadMaintenanceData();
       }
@@ -648,8 +684,13 @@ export default {
       localStorage.setItem('devices_active_tab', newTab);
       if (newTab === 'devices') {
         this.startReachabilityPolling();
+        this.stopClientPingPolling();
+      } else if (newTab === 'maclist') {
+        this.stopReachabilityPolling();
+        this.startClientPingPolling();
       } else {
         this.stopReachabilityPolling();
+        this.stopClientPingPolling();
       }
     },
     'deviceList.length'(newLen) {
@@ -674,6 +715,9 @@ export default {
   },
   beforeUnmount() {
     this.stopReachabilityPolling();
+    this.stopClientPingPolling();
+    clearTimeout(this.macSearchTimeout);
+    clearTimeout(this.deviceSearchTimeout);
   },
   methods: {
     async loadMaintenanceData() {
@@ -692,9 +736,12 @@ export default {
 
         if (this.activeTab === 'devices' && this.deviceList.length > 0) {
           this.startReachabilityPolling();
+        } else if (this.activeTab === 'maclist' && this.macList.length > 0) {
+          this.startClientPingPolling();
         }
       } catch (e) {
         console.error('載入歲修數據失敗:', e);
+        this.showMessage('載入歲修數據失敗', 'error');
       } finally {
         this.loading = false;
       }
@@ -737,6 +784,7 @@ export default {
         });
       } catch (e) {
         console.error('載入 MAC 清單失敗:', e);
+        this.showMessage('載入 MAC 清單失敗', 'error');
       } finally {
         this.macLoading = false;
       }
@@ -811,6 +859,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,,`;
       link.href = URL.createObjectURL(blob);
       link.download = 'client_list_template.csv';
       link.click();
+      URL.revokeObjectURL(link.href);
     },
 
     async importMacList(event) {
@@ -962,17 +1011,8 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,,`;
     },
 
     // ========== 批量選擇 ==========
-    toggleSelectAll() {
-      if (this.selectAll) {
-        this.selectedMacs = this.macList.map(m => m.id);
-      } else {
-        this.selectedMacs = [];
-      }
-    },
-
     clearSelection() {
       this.selectedMacs = [];
-      this.selectAll = false;
     },
 
     async batchDeleteMacs() {
@@ -1002,7 +1042,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,,`;
     async exportMacCsv() {
       const params = new URLSearchParams();
       if (this.macSearch) {
-        params.append('search', this.macSearch);
+        params.append('search', this.sanitizeSearchInput(this.macSearch));
       }
       await downloadFile(
         `/mac-list/${this.selectedMaintenanceId}/export-csv?${params}`,
@@ -1043,6 +1083,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,,`;
         });
       } catch (e) {
         console.error('載入設備清單失敗:', e);
+        this.showMessage('載入設備清單失敗', 'error');
       } finally {
         this.deviceLoading = false;
       }
@@ -1091,6 +1132,7 @@ OLD-SW-004,10.1.1.4,Cisco-NXOS,,,,,只填舊設備`;
       link.href = URL.createObjectURL(blob);
       link.download = 'device_mapping_template.csv';
       link.click();
+      URL.revokeObjectURL(link.href);
     },
 
     async importDeviceList(event) {
@@ -1280,17 +1322,26 @@ OLD-SW-004,10.1.1.4,Cisco-NXOS,,,,,只填舊設備`;
       }
     },
 
-    toggleDeviceSelectAll() {
-      if (this.deviceSelectAll) {
-        this.selectedDevices = this.deviceList.map(d => d.id);
-      } else {
-        this.selectedDevices = [];
+    // 啟動 Client 清單 Ping 狀態輪詢（每 15 秒）
+    startClientPingPolling() {
+      if (this.clientPingInterval) return;
+      if (this.macList.length === 0) return;
+
+      this.clientPingInterval = setInterval(() => {
+        this.loadMacList();
+      }, 15000);
+    },
+
+    // 停止 Client 清單 Ping 狀態輪詢
+    stopClientPingPolling() {
+      if (this.clientPingInterval) {
+        clearInterval(this.clientPingInterval);
+        this.clientPingInterval = null;
       }
     },
 
     clearDeviceSelection() {
       this.selectedDevices = [];
-      this.deviceSelectAll = false;
     },
 
     async batchDeleteDevices() {
@@ -1319,7 +1370,7 @@ OLD-SW-004,10.1.1.4,Cisco-NXOS,,,,,只填舊設備`;
     async exportDeviceCsv() {
       const params = new URLSearchParams();
       if (this.deviceSearch) {
-        params.append('search', this.deviceSearch);
+        params.append('search', this.sanitizeSearchInput(this.deviceSearch));
       }
       await downloadFile(
         `/maintenance-devices/${this.selectedMaintenanceId}/export-csv?${params}`,

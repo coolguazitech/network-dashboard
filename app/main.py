@@ -112,6 +112,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting application...")
     await init_db()
 
+    # Ensure root account exists (first boot)
+    from app.services.auth_service import AuthService
+    await AuthService.create_root_if_not_exists()
+
     # Ensure MinIO bucket exists
     from app.services.storage import ensure_bucket
     try:
@@ -263,6 +267,7 @@ def create_app() -> FastAPI:
         maintenance_devices,
         meals,
         reports,
+        switches,
         system_logs,
         thresholds,
         uploads,
@@ -284,6 +289,7 @@ def create_app() -> FastAPI:
     app.include_router(mac_list.router, prefix=prefix, tags=["MAC List"])
     app.include_router(meals.router, prefix=prefix, tags=["Meals"])
     app.include_router(reports.router, prefix=prefix, tags=["Reports"])
+    app.include_router(switches.router, prefix=prefix, tags=["Switches"])
     app.include_router(system_logs.router, prefix=prefix, tags=["System Logs"])
     app.include_router(users.router, prefix=prefix, tags=["Users"])
     app.include_router(uploads.router, prefix=prefix, tags=["Uploads"])

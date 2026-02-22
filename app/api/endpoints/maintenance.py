@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.base import get_async_session
 from app.api.endpoints.auth import require_root, require_write, get_current_user, check_maintenance_access
 from app.core.enums import UserRole
+from app.services.system_log import write_log
 from typing import Annotated
 from sqlalchemy import text
 
@@ -47,7 +48,6 @@ from app.db.models import (
     # Client
     ClientRecord,
     ClientComparison,
-    SeverityOverride,
     ClientCategory,
     ClientCategoryMember,
     # Maintenance Lists
@@ -214,7 +214,6 @@ async def create_maintenance(
     await session.commit()
     await session.refresh(config)
 
-    from app.services.system_log import write_log
     await write_log(
         level="INFO",
         source="api",
@@ -270,6 +269,8 @@ async def toggle_maintenance_active(
             )
         config.last_activated_at = None
         config.is_active = False
+
+        # DB-based per-MAC hash 偵測，無需清除 in-memory cache
     else:
         # 恢復：記錄啟用時間
         config.last_activated_at = now
@@ -279,7 +280,6 @@ async def toggle_maintenance_active(
     await session.refresh(config)
 
     # 寫入系統日誌
-    from app.services.system_log import write_log
     action = "恢復採集" if config.is_active else "暫停採集"
     await write_log(
         level="info",
@@ -428,6 +428,14 @@ async def delete_maintenance(
     deleted_counts["cases"] = result.rowcount
 
     # === 5. 刪除 Client 相關 ===
+    from app.db.models import LatestClientRecord
+    result = await session.execute(
+        delete(LatestClientRecord).where(
+            LatestClientRecord.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["latest_client_records"] = result.rowcount
+
     result = await session.execute(
         delete(ClientRecord).where(
             ClientRecord.maintenance_id == maintenance_id
@@ -441,13 +449,6 @@ async def delete_maintenance(
         )
     )
     deleted_counts["client_comparisons"] = result.rowcount
-
-    result = await session.execute(
-        delete(SeverityOverride).where(
-            SeverityOverride.maintenance_id == maintenance_id
-        )
-    )
-    deleted_counts["severity_overrides"] = result.rowcount
 
     # 先刪除分類成員（FK 依賴 client_categories）
     # 取得該歲修的所有分類 ID
@@ -560,7 +561,6 @@ async def delete_maintenance(
 
     await session.commit()
 
-    from app.services.system_log import write_log
     total_deleted = sum(deleted_counts.values())
     await write_log(
         level="WARNING",
@@ -605,7 +605,15 @@ async def create_checkpoint(
     session.add(db_checkpoint)
     await session.commit()
     await session.refresh(db_checkpoint)
-    
+
+    await write_log(
+        level="INFO",
+        source=_user.get("username", "unknown"),
+        summary=f"新增 Checkpoint「{checkpoint.name}」",
+        module="maintenance",
+        maintenance_id=checkpoint.maintenance_id,
+    )
+
     return db_checkpoint.__dict__
 
 
@@ -642,10 +650,21 @@ async def delete_checkpoint(
     
     if not checkpoint:
         raise HTTPException(status_code=404, detail="Checkpoint not found")
-    
+
+    cp_name = checkpoint.name
+    cp_mid = checkpoint.maintenance_id
+
     await session.delete(checkpoint)
     await session.commit()
-    
+
+    await write_log(
+        level="WARNING",
+        source=_user.get("username", "unknown"),
+        summary=f"刪除 Checkpoint「{cp_name}」",
+        module="maintenance",
+        maintenance_id=cp_mid,
+    )
+
     return {"message": "Checkpoint deleted successfully"}
 
 
@@ -716,6 +735,14 @@ async def create_reference_client(
     await session.commit()
     await session.refresh(db_client)
 
+    await write_log(
+        level="INFO",
+        source=_user.get("username", "unknown"),
+        summary=f"新增不斷電機台: {db_client.mac_address}",
+        module="maintenance",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "id": db_client.id,
         "maintenance_id": db_client.maintenance_id,
@@ -747,8 +774,18 @@ async def delete_reference_client(
     if not client:
         raise HTTPException(status_code=404, detail="Reference client not found")
 
+    deleted_mac = client.mac_address
+
     client.is_active = False
     await session.commit()
+
+    await write_log(
+        level="WARNING",
+        source=_user.get("username", "unknown"),
+        summary=f"刪除不斷電機台: {deleted_mac}",
+        module="maintenance",
+        maintenance_id=maintenance_id,
+    )
 
     return {"message": "Reference client deleted successfully"}
 
@@ -798,27 +835,35 @@ async def update_maintenance_config(
     
     if config_update.anchor_time is not None:
         config.anchor_time = config_update.anchor_time
-    
+
     if config_update.config_data is not None:
         config.config_data = config_update.config_data
-    
+
     await session.commit()
     await session.refresh(config)
+
+    await write_log(
+        level="INFO",
+        source=_user.get("username", "unknown"),
+        summary=f"更新歲修配置",
+        module="maintenance",
+        maintenance_id=maintenance_id,
+    )
 
     return config.__dict__
 
 
-@router.post("/{maintenance_id}/reset-convergence")
-async def reset_convergence_timer(
+@router.post("/{maintenance_id}/reset-timer")
+async def reset_active_timer(
     maintenance_id: str,
     _user: Annotated[dict[str, Any], Depends(require_write())],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """
-    重置歲修的收斂計時器。
+    重置歲修的活躍計時器。
 
     將 active_seconds_accumulated 歸零，並重設 last_activated_at。
-    Mock API Server 會根據累計活躍時間計算收斂進度。
+    Mock API Server 會根據累計活躍時間決定故障出現時機。
     """
     from datetime import datetime, timezone
 
@@ -840,9 +885,17 @@ async def reset_convergence_timer(
         config.last_activated_at = now_utc
     await session.commit()
 
+    await write_log(
+        level="WARNING",
+        source=_user.get("username", "unknown"),
+        summary="重置活躍計時器",
+        module="maintenance",
+        maintenance_id=maintenance_id,
+    )
+
     return {
         "success": True,
-        "message": "收斂計時器已重置",
+        "message": "活躍計時器已重置",
         "maintenance_id": maintenance_id,
         "active_seconds_accumulated": 0,
     }

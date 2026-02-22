@@ -12,17 +12,17 @@
     </div>
 
     <!-- 載入中 -->
-    <div v-if="loading" class="rounded-lg border border-slate-700/30 p-10 text-center">
+    <div v-if="loading" class="rounded-xl border border-slate-700/30 p-10 text-center">
       <div class="animate-pulse text-slate-500 text-sm">載入中...</div>
     </div>
 
     <!-- 無數據 -->
-    <div v-else-if="!switches || switches.length === 0" class="rounded-lg border border-slate-700/30 p-12 text-center">
+    <div v-else-if="!switches || switches.length === 0" class="rounded-xl border border-slate-700/30 p-12 text-center">
       <p class="text-slate-500 text-sm">暫無設備資料</p>
     </div>
 
     <!-- 設備列表 -->
-    <div v-else class="bg-slate-800/50 rounded-lg border border-slate-700/30 overflow-hidden">
+    <div v-else class="bg-slate-800/50 rounded-xl border border-slate-700/30 overflow-hidden">
       <div class="overflow-x-auto">
         <table class="min-w-full">
           <thead class="bg-slate-900/60 sticky top-0">
@@ -33,7 +33,7 @@
               <th class="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">平台</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">站點</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">狀態</th>
-              <th class="px-4 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">操作</th>
+              <th v-if="canWrite" class="px-4 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">操作</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-700/30">
@@ -107,7 +107,7 @@
               </div>
               <div>
                 <label class="form-label">IP 位址 <span class="text-red-400">*</span></label>
-                <input v-model="formData.ip_address" type="text" required pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$" class="form-input" placeholder="192.168.1.1" />
+                <input v-model="formData.ip_address" type="text" required pattern="^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$" class="form-input" placeholder="192.168.1.1" />
               </div>
               <div>
                 <label class="form-label">廠商 <span class="text-red-400">*</span></label>
@@ -165,7 +165,7 @@
               <button type="button" @click="closeModal" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">
                 取消
               </button>
-              <button type="submit" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition shadow-sm shadow-cyan-500/20">
+              <button type="submit" :disabled="saving" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition shadow-sm shadow-cyan-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
                 {{ isEditMode ? '更新' : '新增' }}
               </button>
             </div>
@@ -192,7 +192,7 @@
             <button @click="cancelDelete" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">
               取消
             </button>
-            <button @click="deleteSwitch" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition">
+            <button @click="deleteSwitch" :disabled="saving" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
               確認刪除
             </button>
           </div>
@@ -217,6 +217,7 @@ export default {
     return {
       switches: [],
       loading: false,
+      saving: false,
       showModal: false,
       showDeleteConfirm: false,
       isEditMode: false,
@@ -291,6 +292,7 @@ export default {
       }
     },
     async saveSwitch() {
+      this.saving = true
       try {
         const url = this.isEditMode
           ? `/switches/${this.formData.id}`
@@ -299,15 +301,18 @@ export default {
         if (this.isEditMode) {
           await api.put(url, this.formData)
         } else {
-          await api.post(url, this.formData)
+          const { id, ...payload } = this.formData
+          await api.post(url, payload)
         }
 
-        this.showMessage(this.isEditMode ? '設備更新成功' : '設備新增成功', 'success')
+        await this.loadSwitches()
         this.closeModal()
-        this.loadSwitches()
+        this.showMessage(this.isEditMode ? '設備更新成功' : '設備新增成功', 'success')
       } catch (error) {
         const detail = error.response?.data?.detail || '未知錯誤'
         this.showMessage(`操作失敗: ${detail}`, 'error')
+      } finally {
+        this.saving = false
       }
     },
     confirmDelete(sw) {
@@ -319,14 +324,17 @@ export default {
       this.showDeleteConfirm = false
     },
     async deleteSwitch() {
+      this.saving = true
       try {
         await api.delete(`/switches/${this.deleteTarget.id}`)
-        this.showMessage('設備刪除成功', 'success')
+        await this.loadSwitches()
         this.cancelDelete()
-        this.loadSwitches()
+        this.showMessage('設備刪除成功', 'success')
       } catch (error) {
         const detail = error.response?.data?.detail || '未知錯誤'
         this.showMessage(`刪除失敗: ${detail}`, 'error')
+      } finally {
+        this.saving = false
       }
     }
   }

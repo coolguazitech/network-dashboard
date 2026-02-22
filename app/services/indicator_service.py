@@ -183,14 +183,14 @@ class IndicatorService:
         計算單一指標的顯示狀態。
 
         業務規則：
+        - system-error: 採集異常（紫色）— 有 CollectionError
         - no-data: 無資料
-        - system-error: 有失敗且至少一個是系統異常（紫色）
         - error: 有失敗且通過率 < 80%（紅色）
         - warning: 有失敗但通過率 >= 80%（黃色）
         - success: 全部通過（綠色）
         """
         if total == 0:
-            return "no-data"
+            return "system-error" if ce_count > 0 else "no-data"
         if fail > 0 and ce_count > 0:
             return "system-error"
         if fail == 0:

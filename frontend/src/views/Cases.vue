@@ -2,21 +2,39 @@
   <div class="px-3 py-3">
     <!-- 頁面標題 -->
     <div class="flex justify-between items-center mb-3">
-      <div class="flex items-baseline gap-3">
+      <div class="flex items-center gap-2">
         <h1 class="text-xl font-bold text-white">案件管理</h1>
+        <div class="relative group/info2">
+          <svg class="w-[18px] h-[18px] text-slate-500 group-hover/info2:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div class="absolute left-0 top-full mt-2 w-80 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-sm text-amber-900 leading-relaxed opacity-0 invisible group-hover/info2:opacity-100 group-hover/info2:visible transition-all duration-200 z-50 pointer-events-none"
+            style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
+          >
+            <div class="absolute left-4 -top-[6px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-300"></div>
+            <div class="absolute left-4 -top-[5px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-50"></div>
+            <p class="mb-1 font-semibold">案件管理說明</p>
+            <p>系統會對 Client 清單中的 MAC 進行 Ping 檢測，不可達的 MAC 會被建立案件進行追蹤。</p>
+            <p class="mt-1.5">Ping 可達且未在「處理中」或「待討論」的案件會自動結案；Ping 不可達時無法手動標記已結案。</p>
+          </div>
+        </div>
         <span v-if="stats.active" class="text-xs text-slate-500">
           {{ stats.active }} 件進行中
         </span>
       </div>
       <div class="flex items-center gap-2">
         <!-- Info 氣泡 -->
-        <div v-if="userCanWrite" class="relative group">
-          <span class="w-5 h-5 rounded-full bg-slate-800 border border-slate-700/50 text-slate-500 text-[10px] flex items-center justify-center cursor-help select-none hover:text-slate-400 transition">?</span>
-          <div class="absolute right-0 top-8 w-64 p-3 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl text-xs text-slate-400 leading-relaxed opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-            <p class="mb-1 font-medium text-slate-300">同步案件說明</p>
-            <p>匯入 MAC 清單後，點擊「同步案件」會為<b class="text-cyan-400">每個 MAC</b> 自動建立案件。</p>
-            <p class="mt-1.5">Ping 可達且未在處理中的案件會自動結案；Ping 不可達時無法手動標記已結案。</p>
-            <div class="absolute -top-1.5 right-3 w-3 h-3 bg-slate-800 border-l border-t border-slate-700 rotate-45"></div>
+        <div v-if="userCanWrite" class="relative group/info">
+          <svg class="w-[18px] h-[18px] text-slate-500 group-hover/info:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div class="absolute right-0 top-full mt-2 w-80 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-sm text-amber-900 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 z-50 pointer-events-none"
+            style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
+          >
+            <div class="absolute right-4 -top-[6px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-300"></div>
+            <div class="absolute right-4 -top-[5px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-50"></div>
+            <p class="mb-1 font-semibold">同步案件說明</p>
+            <p>匯入 MAC 清單後，點擊「同步案件」會為每個 MAC 自動建立案件。</p>
           </div>
         </div>
         <button
@@ -84,7 +102,7 @@
           v-model="searchQuery"
           type="text"
           placeholder="搜尋 MAC / IP..."
-          class="flex-1 min-w-0 px-3 py-1.5 bg-slate-900/50 border border-slate-700/40 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:border-cyan-500/40 focus:outline-none transition"
+          class="flex-1 min-w-0 px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-400 transition"
           @input="debouncedLoadCases"
         />
 
@@ -118,8 +136,9 @@
 
         <button
           @click="toggleMyFilter"
+          :disabled="!currentDisplayName"
           class="px-3 py-1.5 text-xs rounded-lg transition border flex-shrink-0"
-          :class="filterMine ? 'bg-cyan-600 border-cyan-500/60 text-white' : 'bg-slate-900/50 border-slate-700/40 text-slate-400 hover:text-slate-200'"
+          :class="!currentDisplayName ? 'bg-slate-900/50 border-slate-700/40 text-slate-600 cursor-default' : filterMine ? 'bg-cyan-600 border-cyan-500/60 text-white' : 'bg-slate-900/50 border-slate-700/40 text-slate-400 hover:text-slate-200'"
         >
           我的案件
         </button>
@@ -141,7 +160,7 @@
               ? 'bg-slate-800/80 shadow-lg shadow-cyan-500/5'
               : 'hover:bg-slate-800/70 hover:shadow-md hover:shadow-black/10',
             statusBorderClass(c.status),
-            isMyPendingCase(c) ? 'ring-1 ring-blue-400/70 case-pending-glow' : ''
+            isMyPendingCase(c) ? 'ring-1 ring-blue-400/50' : ''
           ]"
           :style="{ animationDelay: ci * 30 + 'ms' }"
         >
@@ -151,7 +170,7 @@
             <div class="flex items-center gap-3">
               <!-- Ping -->
               <span
-                class="w-2 h-2 rounded-full flex-shrink-0"
+                class="inline-block rounded-full flex-shrink-0" style="width: 11px; height: 11px"
                 :class="c.last_ping_reachable === true
                   ? 'ping-dot-green ping-glow-green'
                   : c.last_ping_reachable === false
@@ -170,17 +189,19 @@
               <!-- 右側操作群組 -->
               <div class="flex items-center gap-2 flex-shrink-0">
                 <!-- 指派人 -->
-                <div @click.stop>
-                  <select
-                    v-if="canAssignCase(c)"
-                    :value="c.assignee || ''"
-                    @change.stop="inlineSetAssignee(c, $event.target.value)"
-                    class="px-2 py-0.5 bg-slate-900/50 border border-slate-700/40 rounded text-xs text-slate-300 max-w-[100px] cursor-pointer hover:border-slate-500 transition"
-                  >
-                    <option v-if="!c.assignee" value="" disabled>未指派</option>
-                    <option v-for="name in userList" :key="name" :value="name">{{ name }}</option>
-                  </select>
-                  <span v-else class="text-xs text-slate-400">{{ c.assignee || '未指派' }}</span>
+                <div @click.stop class="flex items-center gap-1 w-[160px] justify-end">
+                  <template v-if="canAssignCase(c)">
+                    <span class="text-sm text-slate-400 flex-shrink-0">指派給</span>
+                    <select
+                      :value="c.assignee || ''"
+                      @change.stop="inlineSetAssignee(c, $event.target.value)"
+                      class="px-2 py-0.5 bg-slate-900/50 border border-slate-700/40 rounded text-sm text-slate-400 min-w-0 cursor-pointer hover:border-slate-500 transition"
+                    >
+                      <option value="">（未指派）</option>
+                      <option v-for="name in userList" :key="name" :value="name">{{ name }}</option>
+                    </select>
+                  </template>
+                  <span v-else class="text-sm text-slate-400"><span class="flex-shrink-0">指派給</span> {{ c.assignee || '—' }}</span>
                 </div>
 
                 <!-- 分隔 -->
@@ -190,7 +211,7 @@
                 <button
                   v-if="isMyPendingCase(c)"
                   @click.stop="acceptCase(c)"
-                  class="px-2.5 py-0.5 text-xs rounded font-semibold bg-blue-500 hover:bg-blue-400 text-white transition-all case-accept-btn whitespace-nowrap"
+                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-blue-500 hover:bg-blue-400 text-white transition-all case-accept-btn whitespace-nowrap"
                 >
                   接受
                 </button>
@@ -199,7 +220,7 @@
                 <button
                   v-if="isMyResolvedCase(c)"
                   @click.stop="reopenCase(c)"
-                  class="px-2.5 py-0.5 text-xs rounded font-semibold bg-amber-500/80 hover:bg-amber-500 text-white transition-all case-reopen-btn whitespace-nowrap"
+                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-amber-500/80 hover:bg-amber-500 text-white transition-all case-reopen-btn whitespace-nowrap"
                 >
                   重啟
                 </button>
@@ -207,7 +228,7 @@
                 <!-- 狀態文字（無按鈕時顯示） -->
                 <span
                   v-if="!isMyPendingCase(c) && !isMyResolvedCase(c)"
-                  class="text-[11px] font-medium whitespace-nowrap"
+                  class="text-sm font-medium whitespace-nowrap"
                   :class="statusTextClass(c.status)"
                 >{{ statusLabel(c.status) }}</span>
 
@@ -227,7 +248,7 @@
                 <button
                   v-for="tag in c.change_tags"
                   :key="tag.attribute"
-                  class="px-2 py-0.5 text-xs rounded border transition-all cursor-pointer hover:-translate-y-px hover:shadow-sm active:translate-y-0"
+                  class="px-2 py-0.5 text-sm rounded border transition-all cursor-pointer hover:-translate-y-px hover:shadow-sm active:translate-y-0"
                   :class="tag.has_change
                     ? 'bg-red-500/15 text-red-300 border-red-500/30 hover:bg-red-500/25 hover:shadow-red-500/10'
                     : 'bg-emerald-500/10 text-emerald-300/80 border-emerald-500/20 hover:bg-emerald-500/20 hover:shadow-emerald-500/10'"
@@ -257,9 +278,10 @@
               <div v-if="detailLoading" class="text-center py-8 text-slate-400 animate-pulse">載入案件詳情...</div>
 
               <div v-else-if="caseDetail" class="px-5 py-4 space-y-4">
+
                 <!-- 處理狀態 -->
                 <div>
-                  <label class="text-[11px] text-slate-500 uppercase tracking-wider mb-1.5 block">處理狀態</label>
+                  <label class="text-sm text-slate-500 uppercase tracking-wider mb-1.5 block">處理狀態</label>
                   <div class="flex rounded-lg overflow-hidden border border-slate-700 w-fit">
                     <button
                       v-for="opt in getStatusActionsForCase(c)"
@@ -267,7 +289,7 @@
                       @click="inlineSetStatus(c, opt.value)"
                       :disabled="!canEditCase(c) || (opt.value === 'RESOLVED' && c.last_ping_reachable !== true)"
                       :title="opt.value === 'RESOLVED' && c.last_ping_reachable !== true ? 'Ping 不可達時無法標記為已結案' : ''"
-                      class="px-3 py-1.5 text-xs transition border-r border-slate-700 last:border-r-0"
+                      class="px-3 py-1.5 text-sm transition border-r border-slate-700 last:border-r-0"
                       :class="c.status === opt.value
                         ? opt.activeClass
                         : (canEditCase(c) && !(opt.value === 'RESOLVED' && c.last_ping_reachable !== true))
@@ -279,57 +301,73 @@
                   </div>
                 </div>
 
+                <!-- 採集異常 banner -->
+                <div v-if="caseDetail.collection_errors?.length"
+                     class="bg-purple-900/20 border border-purple-500/30 rounded-lg px-4 py-3">
+                  <div class="flex items-center gap-2 text-purple-300 text-sm font-medium mb-1">
+                    <span>⚠</span>
+                    <span>採集異常</span>
+                  </div>
+                  <div class="text-purple-400/80 text-xs space-y-0.5">
+                    <div v-for="err in caseDetail.collection_errors" :key="err.collection_type + err.switch_hostname">
+                      {{ err.collection_type }} ({{ err.switch_hostname }})
+                      <span class="text-purple-500/60 ml-1">{{ err.occurred_at ? formatTime(err.occurred_at) : '' }}</span>
+                    </div>
+                  </div>
+                  <div class="text-purple-500/60 text-xs mt-1">上述 API 採集失敗，部分欄位可能不完整</div>
+                </div>
+
                 <!-- 最新快照 -->
                 <div v-if="caseDetail.latest_snapshot">
-                  <label class="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">最新快照</label>
-                  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 text-sm">
+                  <label class="text-sm text-slate-500 uppercase tracking-wider mb-2 block">最新快照</label>
+                  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                     <div class="bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
-                      <span class="text-slate-500 text-[11px]">交換機</span>
-                      <div class="text-slate-200 font-mono text-xs mt-0.5">{{ caseDetail.latest_snapshot.switch_hostname || '—' }}</div>
+                      <span class="text-slate-500 text-sm">交換機</span>
+                      <div class="text-slate-200 font-mono text-sm mt-0.5">{{ caseDetail.latest_snapshot.switch_hostname || '—' }}</div>
                     </div>
                     <div class="bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
-                      <span class="text-slate-500 text-[11px]">介面</span>
-                      <div class="text-slate-200 font-mono text-xs mt-0.5">{{ caseDetail.latest_snapshot.interface_name || '—' }}</div>
+                      <span class="text-slate-500 text-sm">介面</span>
+                      <div class="text-slate-200 font-mono text-sm mt-0.5">{{ caseDetail.latest_snapshot.interface_name || '—' }}</div>
                     </div>
                     <div class="bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
-                      <span class="text-slate-500 text-[11px]">速率</span>
-                      <div class="text-slate-200 text-xs mt-0.5">{{ caseDetail.latest_snapshot.speed || '—' }}</div>
+                      <span class="text-slate-500 text-sm">速率</span>
+                      <div class="font-mono text-sm mt-0.5" :class="caseDetail.latest_snapshot.speed ? 'text-slate-200' : 'text-slate-500'">{{ caseDetail.latest_snapshot.speed || '—' }}</div>
                     </div>
                     <div class="bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
-                      <span class="text-slate-500 text-[11px]">雙工</span>
-                      <div class="text-slate-200 text-xs mt-0.5">{{ caseDetail.latest_snapshot.duplex || '—' }}</div>
+                      <span class="text-slate-500 text-sm">雙工</span>
+                      <div class="font-mono text-sm mt-0.5" :class="caseDetail.latest_snapshot.duplex ? 'text-slate-200' : 'text-slate-500'">{{ caseDetail.latest_snapshot.duplex || '—' }}</div>
                     </div>
                     <div class="bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
-                      <span class="text-slate-500 text-[11px]">連線狀態</span>
-                      <div class="text-xs mt-0.5" :class="caseDetail.latest_snapshot.link_status === 'up' ? 'text-green-400' : caseDetail.latest_snapshot.link_status === 'down' ? 'text-red-400' : 'text-slate-200'">
+                      <span class="text-slate-500 text-sm">連線狀態</span>
+                      <div class="font-mono text-sm mt-0.5" :class="caseDetail.latest_snapshot.link_status === 'up' ? 'text-green-400' : caseDetail.latest_snapshot.link_status === 'down' ? 'text-red-400' : 'text-slate-500'">
                         {{ caseDetail.latest_snapshot.link_status || '—' }}
                       </div>
                     </div>
                     <div class="bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
-                      <span class="text-slate-500 text-[11px]">VLAN</span>
-                      <div class="text-slate-200 text-xs mt-0.5">{{ caseDetail.latest_snapshot.vlan_id ?? '—' }}</div>
+                      <span class="text-slate-500 text-sm">VLAN</span>
+                      <div class="font-mono text-sm mt-0.5" :class="caseDetail.latest_snapshot.vlan_id != null ? 'text-slate-200' : 'text-slate-500'">{{ caseDetail.latest_snapshot.vlan_id ?? '—' }}</div>
                     </div>
                     <div class="bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
-                      <span class="text-slate-500 text-[11px]">Ping</span>
-                      <div class="text-xs mt-0.5" :class="caseDetail.latest_snapshot.ping_reachable === true ? 'text-green-400' : caseDetail.latest_snapshot.ping_reachable === false ? 'text-red-400' : 'text-slate-500'">
+                      <span class="text-slate-500 text-sm">Ping</span>
+                      <div class="font-mono text-sm mt-0.5" :class="caseDetail.latest_snapshot.ping_reachable === true ? 'text-green-400' : caseDetail.latest_snapshot.ping_reachable === false ? 'text-red-400' : 'text-slate-500'">
                         {{ caseDetail.latest_snapshot.ping_reachable === true ? '可達' : caseDetail.latest_snapshot.ping_reachable === false ? '不可達' : '—' }}
                       </div>
                     </div>
                     <div class="bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
-                      <span class="text-slate-500 text-[11px]">ACL</span>
-                      <div class="text-xs mt-0.5 font-mono" :class="caseDetail.latest_snapshot.acl_rules_applied ? 'text-slate-200' : 'text-slate-500'">
+                      <span class="text-slate-500 text-sm">ACL</span>
+                      <div class="font-mono text-sm mt-0.5" :class="caseDetail.latest_snapshot.acl_rules_applied ? 'text-slate-200' : 'text-slate-500'">
                         {{ caseDetail.latest_snapshot.acl_rules_applied || '—' }}
                       </div>
                     </div>
                   </div>
-                  <div v-if="caseDetail.latest_snapshot.collected_at" class="text-[11px] text-slate-600 mt-1.5 text-right">
+                  <div v-if="caseDetail.latest_snapshot.collected_at" class="text-sm text-slate-600 mt-1.5 text-right">
                     採集時間：{{ formatTime(caseDetail.latest_snapshot.collected_at) }}
                   </div>
                 </div>
 
                 <!-- 查案紀錄 -->
                 <div>
-                  <label class="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">查案紀錄</label>
+                  <label class="text-sm text-slate-500 uppercase tracking-wider mb-2 block">查案紀錄</label>
                   <div class="space-y-2 max-h-[280px] overflow-y-auto pr-1">
                     <div
                       v-for="note in caseDetail.notes"
@@ -342,14 +380,14 @@
                           <button
                             v-if="canEditNote(note)"
                             @click="startEditNote(note)"
-                            class="text-[11px] text-slate-500 hover:text-cyan-400 transition"
+                            class="text-sm text-slate-500 hover:text-cyan-400 transition"
                           >編輯</button>
                           <button
                             v-if="canDeleteNote(note)"
                             @click="deleteNote(note)"
-                            class="text-[11px] text-slate-500 hover:text-red-400 transition"
+                            class="text-sm text-slate-500 hover:text-red-400 transition"
                           >刪除</button>
-                          <span class="text-[11px] text-slate-500">{{ formatTime(note.created_at) }}</span>
+                          <span class="text-sm text-slate-500">{{ formatTime(note.created_at) }}</span>
                         </div>
                       </div>
                       <!-- 編輯模式 -->
@@ -362,8 +400,8 @@
                           @keydown.escape="cancelEditNote"
                         ></textarea>
                         <div class="flex justify-end gap-2 mt-1.5">
-                          <button @click="cancelEditNote" class="px-3 py-1 text-xs text-slate-400 hover:text-slate-200 transition">取消</button>
-                          <button @click="saveEditNote(note)" :disabled="!editingNoteContent.trim()" class="px-3 py-1 text-xs bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded transition">儲存</button>
+                          <button @click="cancelEditNote" class="px-3 py-1 text-sm text-slate-400 hover:text-slate-200 transition">取消</button>
+                          <button @click="saveEditNote(note)" :disabled="!editingNoteContent.trim()" class="px-3 py-1 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded transition">儲存</button>
                         </div>
                       </div>
                       <!-- 顯示模式 -->
@@ -426,6 +464,11 @@
                   </div>
                 </div>
               </div>
+
+              <div v-else class="px-6 py-8 text-center text-slate-400">
+                <p>載入案件詳情失敗</p>
+                <button class="mt-2 text-sm text-blue-400 hover:text-blue-300" @click="toggleExpand(cases.find(c => c.id === expandedId))">重試</button>
+              </div>
             </div>
           </transition>
         </div>
@@ -442,7 +485,7 @@
             : 'bg-slate-900/50 border-slate-700/40 text-slate-400 hover:bg-slate-800 hover:text-slate-200'"
         >上一頁</button>
 
-        <template v-for="p in paginationRange" :key="p">
+        <template v-for="(p, idx) in paginationRange" :key="typeof p === 'string' ? p + idx : p">
           <span v-if="p === '...'" class="text-slate-600 text-xs px-1">...</span>
           <button
             v-else
@@ -594,10 +637,11 @@
 import api from '@/utils/api'
 import { canWrite, currentUser, isRoot } from '@/utils/auth'
 import { useToast } from '@/composables/useToast'
+import { refreshCaseBadge } from '@/composables/useCaseBadge'
 
 const STATUS_CONFIG = {
   UNASSIGNED: { label: '未指派', class: 'bg-slate-700/50 text-slate-300' },
-  ASSIGNED: { label: '已指派', class: 'bg-blue-500/15 text-blue-300' },
+  ASSIGNED: { label: '新案件', class: 'bg-blue-500/15 text-blue-300' },
   IN_PROGRESS: { label: '處理中', class: 'bg-amber-500/15 text-amber-300' },
   DISCUSSING: { label: '待討論', class: 'bg-purple-500/15 text-purple-300' },
   RESOLVED: { label: '已結案', class: 'bg-emerald-500/15 text-emerald-300' },
@@ -674,7 +718,7 @@ export default {
       return [
         { value: 'ALL', label: '全部' },
         { value: '', label: '未結案' },
-        { value: 'ASSIGNED', label: '已指派' },
+        { value: 'ASSIGNED', label: '新案件' },
         { value: 'IN_PROGRESS', label: '處理中' },
         { value: 'DISCUSSING', label: '待討論' },
         { value: 'RESOLVED', label: '已結案' },
@@ -697,7 +741,7 @@ export default {
     statusBreakdown() {
       const s = this.stats
       return [
-        { key: 'ASSIGNED', label: '已指派', value: s.assigned || 0, color: 'text-blue-400', borderActive: 'border-blue-500/60 ring-1 ring-blue-500/30 shadow-lg shadow-blue-500/10', borderDefault: 'border-blue-500/15 hover:border-blue-500/30 hover:shadow-lg hover:shadow-blue-500/5' },
+        { key: 'ASSIGNED', label: '新案件', value: s.assigned || 0, color: 'text-blue-400', borderActive: 'border-blue-500/60 ring-1 ring-blue-500/30 shadow-lg shadow-blue-500/10', borderDefault: 'border-blue-500/15 hover:border-blue-500/30 hover:shadow-lg hover:shadow-blue-500/5' },
         { key: 'IN_PROGRESS', label: '處理中', value: s.in_progress || 0, color: 'text-amber-400', borderActive: 'border-amber-500/60 ring-1 ring-amber-500/30 shadow-lg shadow-amber-500/10', borderDefault: 'border-amber-500/15 hover:border-amber-500/30 hover:shadow-lg hover:shadow-amber-500/5' },
         { key: 'DISCUSSING', label: '待討論', value: s.discussing || 0, color: 'text-purple-400', borderActive: 'border-purple-500/60 ring-1 ring-purple-500/30 shadow-lg shadow-purple-500/10', borderDefault: 'border-purple-500/15 hover:border-purple-500/30 hover:shadow-lg hover:shadow-purple-500/5' },
       ]
@@ -739,6 +783,7 @@ export default {
     }
     // 15 秒自動刷新
     this.refreshTimer = setInterval(() => {
+      if (document.hidden) return
       if (this.selectedMaintenanceId && !this.loading) {
         this.loadStats()
         this.silentRefreshCases()
@@ -803,7 +848,7 @@ export default {
       if (this.filterPing !== '') {
         params.ping_reachable = this.filterPing === 'true'
       }
-      if (this.filterMine) params.assignee = this.currentDisplayName
+      if (this.filterMine && this.currentDisplayName) params.assignee = this.currentDisplayName
       return params
     },
 
@@ -825,6 +870,12 @@ export default {
     },
 
     async silentRefreshCases() {
+      // Skip if user is editing inline
+      const activeEl = document.activeElement
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'SELECT' || activeEl.tagName === 'TEXTAREA')) {
+        const caseList = this.$refs.caseListRef || this.$el
+        if (caseList && caseList.contains(activeEl)) return
+      }
       if (!this.selectedMaintenanceId) return
       try {
         const params = this._buildCaseParams()
@@ -887,6 +938,7 @@ export default {
 
       try {
         const { data } = await api.get(`/cases/${this.selectedMaintenanceId}/${caseId}`)
+        if (this.expandedId !== caseId) return  // user switched to a different case
         this.caseDetail = data.case
         // Update inline change_tags from detail (freshly computed)
         if (data.case?.change_tags) {
@@ -945,13 +997,13 @@ export default {
     },
 
     async acceptCase(c) {
-      await this.updateCase(c, { status: 'IN_PROGRESS' })
-      this.showMessage('已接受案件', 'success')
+      const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
+      if (ok) this.showMessage('已接受案件，案件將移至「處理中」', 'success')
     },
 
     async reopenCase(c) {
-      await this.updateCase(c, { status: 'IN_PROGRESS' })
-      this.showMessage('案件已重啟', 'success')
+      const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
+      if (ok) this.showMessage('案件已重啟，案件將移至「處理中」', 'success')
     },
 
     getStatusActionsForCase(c) {
@@ -1019,12 +1071,15 @@ export default {
           this.cases[idx] = { ...this.cases[idx], ...data.case }
         }
         this.loadStats()
+        refreshCaseBadge()
+        return true
       } catch (e) {
         const msg = e.response?.data?.detail || '更新失敗'
         this.showMessage(msg, 'error')
         this.editSummary = c.summary || ''
         this.editStatus = c.status
         this.editAssignee = c.assignee || ''
+        return false
       }
     },
 
@@ -1101,6 +1156,7 @@ export default {
     },
 
     async deleteNote(note) {
+      if (this.confirmModal?.visible) return
       const confirmed = await this.showConfirm('確定要刪除此筆記？')
       if (!confirmed) return
 
@@ -1194,7 +1250,14 @@ export default {
     },
 
     previewImage(url) {
-      window.open(url, '_blank')
+      try {
+        const parsed = new URL(url, window.location.origin)
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          window.open(parsed.href, '_blank')
+        }
+      } catch {
+        // invalid URL, ignore
+      }
     },
 
     // ── 時間線 Modal ──────────────────────────────────
@@ -1288,7 +1351,7 @@ export default {
     },
     formatTime(isoString) {
       if (!isoString) return '—'
-      const s = isoString.endsWith('Z') || isoString.includes('+') ? isoString : isoString + 'Z'
+      const s = isoString.endsWith('Z') || isoString.includes('+') || /T\d{2}:\d{2}:\d{2}[+-]/.test(isoString) ? isoString : isoString + 'Z'
       const d = new Date(s)
       const mm = String(d.getMonth() + 1).padStart(2, '0')
       const dd = String(d.getDate()).padStart(2, '0')
@@ -1301,37 +1364,22 @@ export default {
 </script>
 
 <style scoped>
-/* 待接受案件呼吸光暈 */
-.case-pending-glow {
-  animation: case-glow 2s ease-in-out infinite;
-  background-color: rgba(59, 130, 246, 0.04);
-}
-@keyframes case-glow {
-  0%, 100% {
-    box-shadow: 0 0 4px 1px rgba(59, 130, 246, 0.1), inset 0 0 0 0 rgba(59, 130, 246, 0);
-  }
-  50% {
-    box-shadow: 0 0 20px 6px rgba(59, 130, 246, 0.3), inset 0 0 12px 0 rgba(59, 130, 246, 0.06);
-    background-color: rgba(59, 130, 246, 0.07);
-  }
-}
-
-/* 接受按鈕微動 */
+/* 接受按鈕光暈脈動 */
 .case-accept-btn {
   animation: accept-pulse 1.5s ease-in-out infinite;
 }
 @keyframes accept-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); }
-  50% { box-shadow: 0 0 8px 2px rgba(59, 130, 246, 0.3); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5), 0 0 0 0 rgba(59, 130, 246, 0); }
+  50% { box-shadow: 0 0 10px 3px rgba(59, 130, 246, 0.35), 0 0 18px 5px rgba(59, 130, 246, 0.1); }
 }
 
-/* 重啟按鈕微動 */
+/* 重啟按鈕光暈脈動 */
 .case-reopen-btn {
   animation: reopen-pulse 1.5s ease-in-out infinite;
 }
 @keyframes reopen-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
-  50% { box-shadow: 0 0 8px 2px rgba(245, 158, 11, 0.3); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5), 0 0 0 0 rgba(245, 158, 11, 0); }
+  50% { box-shadow: 0 0 10px 3px rgba(245, 158, 11, 0.35), 0 0 18px 5px rgba(245, 158, 11, 0.1); }
 }
 
 /* accordion */

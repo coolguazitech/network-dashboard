@@ -335,13 +335,30 @@ class SchedulerService:
                 )
 
                 # 2. Sync cases + update ping + auto-resolve + change flags
-                async with get_session_context() as session:
-                    case_svc = CaseService()
-                    await case_svc.sync_cases(mid, session)
-                    await case_svc.update_ping_status(mid, session)
-                    await case_svc.auto_reopen_unreachable(mid, session)
-                    await case_svc.auto_resolve_reachable(mid, session)
-                    await case_svc.update_change_flags(mid, session)
+                #    含 deadlock 重試（與 client_ping 並行更新 cases 表時可能衝突）
+                import asyncio as _asyncio
+                from sqlalchemy.exc import OperationalError as _OpErr
+
+                max_retries = 3
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        async with get_session_context() as session:
+                            case_svc = CaseService()
+                            await case_svc.sync_cases(mid, session)
+                            await case_svc.update_ping_status(mid, session)
+                            await case_svc.auto_reopen_unreachable(mid, session)
+                            await case_svc.auto_resolve_reachable(mid, session)
+                            await case_svc.update_change_flags(mid, session)
+                        break  # 成功，跳出重試
+                    except _OpErr as oe:
+                        if "1213" in str(oe) and attempt < max_retries:
+                            logger.warning(
+                                "client_collection %s: deadlock on attempt %d/%d, retrying...",
+                                mid, attempt, max_retries,
+                            )
+                            await _asyncio.sleep(0.3 * attempt)
+                        else:
+                            raise
 
             except Exception as e:
                 logger.error(
@@ -366,161 +383,309 @@ class SchedulerService:
             len(maintenance_ids), elapsed,
         )
 
-    # ── GNMS Ping (Client IP Ping) ───────────────────────────
+    # ── Device Ping ─────────────────────────────────────────────
 
-    def add_gnms_ping_job(self, interval_seconds: int = 60) -> str:
-        """
-        Add a scheduled gnms_ping job for client IP pinging.
-
-        Unlike standard collection jobs, gnms_ping:
-        - Reads client IPs from MaintenanceMacList
-        - Sends all IPs in one batch request
-        - Stores results as PingRecord with collection_type="gnms_ping"
-        """
-        job_id = "gnms_ping"
-
+    def add_device_ping_job(self, interval_seconds: int = 30) -> str:
+        """設備 IP Ping 獨立排程。"""
+        job_id = "device_ping"
         self.scheduler.add_job(
-            self._run_gnms_ping_collection,
+            self._run_device_ping,
             trigger=IntervalTrigger(seconds=interval_seconds),
             id=job_id,
             replace_existing=True,
         )
-        logger.info(
-            "Added gnms_ping job every %ds", interval_seconds,
-        )
+        logger.info("Added device ping job every %ds", interval_seconds)
         return job_id
 
-    async def _run_gnms_ping_collection(self) -> None:
+    async def _run_device_ping(self) -> None:
         """
-        Ping all client IPs for active maintenances.
-
-        Flow:
-        1. Get all client IPs from MaintenanceMacList
-        2. Call gnms_ping fetcher with switch_ips param
-        3. Parse CSV response into PingResultData
-        4. Save via ClientPingRecordRepo
+        設備 Ping：按 tenant_group 分組 batch-ping，存入 PingRecordRepo。
         """
         t0 = _time.monotonic()
-        logger.info("Running gnms_ping client collection")
+        logger.info("Running device ping")
 
         maintenance_ids = await self._get_active_maintenance_ids()
         if not maintenance_ids:
-            logger.debug("No active maintenances, skipping gnms_ping")
             return
 
-        from app.core.enums import DeviceType
+        from app.core.config import settings
+        from app.core.enums import TenantGroup
         from app.db.base import get_session_context
-        from app.db.models import MaintenanceMacList
-        from app.fetchers.base import FetchContext
-        from app.fetchers.registry import fetcher_registry
+        from app.db.models import MaintenanceDeviceList
         from app.repositories.typed_records import get_typed_repo
 
         import httpx
         from sqlalchemy import select
 
-        fetcher = fetcher_registry.get("gnms_ping")
-        if fetcher is None:
-            logger.warning("gnms_ping fetcher not registered, skipping")
+        ping_cfg = settings.gnmsping
+        if not ping_cfg.base_urls:
+            logger.warning("No GNMSPING base_urls configured, skipping device ping")
             return
 
-        async with httpx.AsyncClient() as http:
+        async with httpx.AsyncClient(timeout=ping_cfg.timeout) as http:
             for mid in maintenance_ids:
                 try:
                     async with get_session_context() as session:
-                        # 1. Get all client IPs
-                        stmt = select(MaintenanceMacList).where(
-                            MaintenanceMacList.maintenance_id == mid,
-                            MaintenanceMacList.ip_address != None,  # noqa: E711
+                        dev_stmt = select(MaintenanceDeviceList).where(
+                            MaintenanceDeviceList.maintenance_id == mid,
                         )
-                        result = await session.execute(stmt)
-                        mac_entries = result.scalars().all()
+                        dev_result = await session.execute(dev_stmt)
+                        devices = dev_result.scalars().all()
 
-                        client_ips = [
-                            m.ip_address for m in mac_entries
-                            if m.ip_address and m.ip_address.strip()
-                        ]
+                        # 按 tenant_group 分組 device IP
+                        groups: dict[TenantGroup, dict[str, str]] = {}
+                        for d in devices:
+                            if not (d.new_hostname and d.new_ip_address):
+                                continue
+                            tg = d.tenant_group or TenantGroup.F18
+                            ip_map = groups.setdefault(tg, {})
+                            ip_map[d.new_ip_address] = d.new_hostname
+                            if (d.old_hostname and d.old_ip_address
+                                    and d.old_ip_address != d.new_ip_address):
+                                ip_map[d.old_ip_address] = d.old_hostname
 
-                        if not client_ips:
-                            logger.debug(
-                                "gnms_ping: no client IPs for %s", mid,
-                            )
+                        if not groups:
                             continue
 
-                        # Use tenant_group from first MAC entry
-                        tenant_group = mac_entries[0].tenant_group
+                        for tg, device_ip_map in groups.items():
+                            if not device_ip_map:
+                                continue
 
-                        # 2. Fetch — pass all IPs as comma-separated string
-                        ctx = FetchContext(
-                            switch_ip="0.0.0.0",
-                            switch_hostname="__CLIENT_PING__",
-                            device_type=DeviceType.HPE,
-                            tenant_group=tenant_group,
-                            maintenance_id=mid,
-                            params={"switch_ips": ",".join(client_ips)},
-                            http=http,
-                        )
-                        fetch_result = await fetcher.fetch(ctx)
-
-                        if not fetch_result.success:
-                            logger.error(
-                                "gnms_ping fetch failed for %s: %s",
-                                mid, fetch_result.error,
+                            base_url = (
+                                ping_cfg.base_urls.get(tg.value)
+                                or ping_cfg.base_urls.get(tg.value.lower())
                             )
-                            continue
+                            if not base_url:
+                                continue
 
-                        # 3. Parse CSV response
-                        parsed_items = self._parse_gnms_ping_csv(
-                            fetch_result.raw_output,
-                        )
+                            url = base_url.rstrip("/") + ping_cfg.endpoint
+                            try:
+                                resp = await http.get(
+                                    url,
+                                    params={
+                                        "switch_ips": ",".join(sorted(device_ip_map)),
+                                        "maintenance_id": mid,
+                                    },
+                                )
+                                resp.raise_for_status()
+                            except Exception as fetch_err:
+                                logger.error(
+                                    "device_ping fetch failed for %s/%s: %s",
+                                    mid, tg.value, fetch_err,
+                                )
+                                continue
 
-                        # 4. Save via typed repo
-                        typed_repo = get_typed_repo("gnms_ping", session)
-                        batch = await typed_repo.save_batch(
-                            switch_hostname="__CLIENT_PING__",
-                            raw_data=fetch_result.raw_output,
-                            parsed_items=parsed_items,
-                            maintenance_id=mid,
-                        )
+                            parsed_items = self._parse_ping_csv(resp.text)
+                            ip_to_result = {i.target: i for i in parsed_items}
 
-                        if batch:
+                            ping_repo = get_typed_repo("ping_batch", session)
+                            for ip, hostname in device_ip_map.items():
+                                result_item = ip_to_result.get(ip)
+                                if result_item is None:
+                                    continue
+                                await ping_repo.save_batch(
+                                    switch_hostname=hostname,
+                                    raw_data=resp.text,
+                                    parsed_items=[result_item],
+                                    maintenance_id=mid,
+                                )
+
                             logger.info(
-                                "gnms_ping for %s: %d IPs (new batch)",
-                                mid, len(parsed_items),
-                            )
-                        else:
-                            logger.debug(
-                                "gnms_ping for %s: unchanged", mid,
+                                "device_ping %s/%s: %d IPs",
+                                mid, tg.value, len(device_ip_map),
                             )
 
                 except Exception as e:
-                    logger.error(
-                        "gnms_ping failed for %s: %s", mid, e,
-                    )
-                    from app.services.system_log import (
-                        write_log,
-                        format_error_detail,
-                    )
+                    logger.error("device_ping failed for %s: %s", mid, e)
+                    from app.services.system_log import write_log, format_error_detail
                     await write_log(
                         level="ERROR",
                         source="scheduler",
-                        summary=f"Client Ping 失敗 ({type(e).__name__}): {mid}",
-                        detail=format_error_detail(
-                            exc=e,
-                            context={"歲修": mid},
-                        ),
-                        module="gnms_ping",
+                        summary=f"設備 Ping 失敗 ({type(e).__name__}): {mid}",
+                        detail=format_error_detail(exc=e, context={"歲修": mid}),
+                        module="device_ping",
                         maintenance_id=mid,
                     )
 
         elapsed = _time.monotonic() - t0
-        logger.info(
-            "gnms_ping cycle done: %d maintenances, %.2fs",
-            len(maintenance_ids), elapsed,
+        logger.info("device_ping cycle done: %d maintenances, %.2fs",
+                     len(maintenance_ids), elapsed)
+
+    # ── Client Ping ──────────────────────────────────────────────
+
+    def add_client_ping_job(self, interval_seconds: int = 30) -> str:
+        """Client IP Ping 獨立排程，完成後立即更新 Case 燈號。"""
+        job_id = "client_ping"
+        self.scheduler.add_job(
+            self._run_client_ping,
+            trigger=IntervalTrigger(seconds=interval_seconds),
+            id=job_id,
+            replace_existing=True,
         )
+        logger.info("Added client ping job every %ds", interval_seconds)
+        return job_id
+
+    async def _run_client_ping(self) -> None:
+        """
+        Client Ping：按 tenant_group 分組 batch-ping，存入 ClientPingRecordRepo，
+        並立即更新 Case.last_ping_reachable + 自動結案/重開。
+        """
+        t0 = _time.monotonic()
+        logger.info("Running client ping")
+
+        maintenance_ids = await self._get_active_maintenance_ids()
+        if not maintenance_ids:
+            return
+
+        from app.core.config import settings
+        from app.core.enums import TenantGroup
+        from app.db.base import get_session_context
+        from app.db.models import MaintenanceMacList
+        from app.repositories.typed_records import get_typed_repo
+        from app.services.case_service import CaseService
+
+        import httpx
+        from sqlalchemy import select
+
+        ping_cfg = settings.gnmsping
+        if not ping_cfg.base_urls:
+            logger.warning("No GNMSPING base_urls configured, skipping client ping")
+            return
+
+        async with httpx.AsyncClient(timeout=ping_cfg.timeout) as http:
+            for mid in maintenance_ids:
+                try:
+                    # 收集所有 tenant 的 ping 結果，匯總後一次更新 Case
+                    all_ping_map: dict[str, bool] = {}
+                    all_ip_to_mac: dict[str, str] = {}
+
+                    async with get_session_context() as session:
+                        mac_stmt = select(MaintenanceMacList).where(
+                            MaintenanceMacList.maintenance_id == mid,
+                            MaintenanceMacList.ip_address != None,  # noqa: E711
+                        )
+                        mac_result = await session.execute(mac_stmt)
+                        mac_entries = mac_result.scalars().all()
+
+                        # 建立 ip_to_mac 映射 + 按 tenant_group 分組
+                        groups: dict[TenantGroup, set[str]] = {}
+                        for m in mac_entries:
+                            if not (m.ip_address and m.ip_address.strip()):
+                                continue
+                            tg = m.tenant_group or TenantGroup.F18
+                            groups.setdefault(tg, set()).add(m.ip_address)
+                            all_ip_to_mac[m.ip_address] = m.mac_address
+
+                        if not groups:
+                            continue
+
+                        for tg, client_ips in groups.items():
+                            if not client_ips:
+                                continue
+
+                            base_url = (
+                                ping_cfg.base_urls.get(tg.value)
+                                or ping_cfg.base_urls.get(tg.value.lower())
+                            )
+                            if not base_url:
+                                logger.warning(
+                                    "No GNMSPING base_url for tenant %s, "
+                                    "skipping %d client IPs",
+                                    tg.value, len(client_ips),
+                                )
+                                continue
+
+                            url = base_url.rstrip("/") + ping_cfg.endpoint
+                            try:
+                                resp = await http.get(
+                                    url,
+                                    params={
+                                        "switch_ips": ",".join(sorted(client_ips)),
+                                        "maintenance_id": mid,
+                                    },
+                                )
+                                resp.raise_for_status()
+                            except Exception as fetch_err:
+                                logger.error(
+                                    "client_ping fetch failed for %s/%s: %s",
+                                    mid, tg.value, fetch_err,
+                                )
+                                continue
+
+                            parsed_items = self._parse_ping_csv(resp.text)
+                            ip_to_result = {i.target: i for i in parsed_items}
+
+                            # 存入 ClientPingRecordRepo
+                            client_results = [
+                                ip_to_result[ip]
+                                for ip in client_ips
+                                if ip in ip_to_result
+                            ]
+                            if client_results:
+                                client_repo = get_typed_repo("gnms_ping", session)
+                                await client_repo.save_batch(
+                                    switch_hostname=f"__CLIENT_PING_{tg.value}__",
+                                    raw_data=resp.text,
+                                    parsed_items=client_results,
+                                    maintenance_id=mid,
+                                )
+
+                            # 收集 ping 結果
+                            for ip in client_ips:
+                                r = ip_to_result.get(ip)
+                                if r is not None:
+                                    all_ping_map[ip] = r.is_reachable
+
+                            logger.info(
+                                "client_ping %s/%s: %d IPs",
+                                mid, tg.value, len(client_results),
+                            )
+
+                        # 立即更新 Case 燈號 + 自動結案/重開（含 deadlock 重試）
+                        if all_ping_map:
+                            import asyncio as _asyncio
+                            from sqlalchemy.exc import OperationalError as _OpErr
+
+                            max_retries = 3
+                            for attempt in range(1, max_retries + 1):
+                                try:
+                                    case_svc = CaseService()
+                                    await case_svc.update_ping_status_direct(
+                                        mid, all_ping_map, all_ip_to_mac, session,
+                                    )
+                                    await case_svc.auto_reopen_unreachable(mid, session)
+                                    await case_svc.auto_resolve_reachable(mid, session)
+                                    break  # 成功，跳出重試
+                                except _OpErr as oe:
+                                    if "1213" in str(oe) and attempt < max_retries:
+                                        logger.warning(
+                                            "client_ping %s: deadlock on attempt %d/%d, retrying...",
+                                            mid, attempt, max_retries,
+                                        )
+                                        await session.rollback()
+                                        await _asyncio.sleep(0.3 * attempt)
+                                    else:
+                                        raise
+
+                except Exception as e:
+                    logger.error("client_ping failed for %s: %s", mid, e)
+                    from app.services.system_log import write_log, format_error_detail
+                    await write_log(
+                        level="ERROR",
+                        source="scheduler",
+                        summary=f"Client Ping 失敗 ({type(e).__name__}): {mid}",
+                        detail=format_error_detail(exc=e, context={"歲修": mid}),
+                        module="client_ping",
+                        maintenance_id=mid,
+                    )
+
+        elapsed = _time.monotonic() - t0
+        logger.info("client_ping cycle done: %d maintenances, %.2fs",
+                     len(maintenance_ids), elapsed)
 
     @staticmethod
-    def _parse_gnms_ping_csv(raw_output: str) -> list:
-        """Parse gnms_ping CSV response into PingResultData list."""
+    def _parse_ping_csv(raw_output: str) -> list:
+        """Parse ping CSV response into PingResultData list."""
         from app.parsers.protocols import PingResultData
 
         results = []
@@ -625,17 +790,17 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
     """
     scheduler = get_scheduler_service()
 
-    # gnms_ping 使用自訂 job（非標準 per-device 採集）
-    _CUSTOM_JOBS = {"gnms_ping"}
-    gnms_ping_interval = 60
+    # gnms_ping / ping_batch 由獨立的 device_ping + client_ping 處理
+    _CUSTOM_JOBS = {"gnms_ping", "ping_batch"}
+    ping_interval = 30
+    for config in job_configs:
+        if config["name"] in _CUSTOM_JOBS:
+            ping_interval = config.get("interval", 30)
 
     # 收集需要標準 per-device 採集的 job（排除自訂 job）
     standard_jobs = [
         c for c in job_configs if c["name"] not in _CUSTOM_JOBS
     ]
-    for config in job_configs:
-        if config["name"] in _CUSTOM_JOBS:
-            gnms_ping_interval = config.get("interval", 60)
 
     # 計算錯開間距：interval ÷ job 數（至少 1s），避免全部同時觸發
     if standard_jobs:
@@ -652,8 +817,9 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
             initial_delay=idx * stagger_step,
         )
 
-    # 加入 gnms_ping 任務（client IP ping）
-    scheduler.add_gnms_ping_job(interval_seconds=gnms_ping_interval)
+    # 加入獨立的設備 Ping + Client Ping 任務
+    scheduler.add_device_ping_job(interval_seconds=ping_interval)
+    scheduler.add_client_ping_job(interval_seconds=ping_interval)
 
     # 加入 client collection 任務（每 120 秒）
     scheduler.add_client_collection_job(interval_seconds=120)

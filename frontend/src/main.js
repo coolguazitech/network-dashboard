@@ -87,6 +87,7 @@ const routes = [
     component: () => import('./views/SystemLogs.vue'),
     meta: { requiresAuth: true, requiresRoot: true },
   },
+  { path: '/:pathMatch(.*)*', name: 'NotFound', redirect: '/' },
 ]
 
 const router = createRouter({
@@ -97,10 +98,10 @@ const router = createRouter({
 // 路由守衛
 router.beforeEach(async (to, from, next) => {
   // 初始化認證狀態（只在第一次載入時）
-  if (!router._authInitialized) {
-    await initAuth()
-    router._authInitialized = true
+  if (!router._authInitPromise) {
+    router._authInitPromise = initAuth().catch(() => {})
   }
+  await router._authInitPromise
 
   // 需要登入的頁面
   if (to.meta.requiresAuth && !isAuthenticated.value) {

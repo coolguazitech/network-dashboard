@@ -14,7 +14,7 @@ class TestMacTablePipeline:
         from mock_server.generators.mac_table import generate
         from app.parsers.plugins.get_mac_table_hpe_dna_parser import GetMacTableHpeDnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetMacTableHpeDnaParser()
         results = parser.parse(raw)
 
@@ -29,7 +29,7 @@ class TestMacTablePipeline:
         from mock_server.generators.mac_table import generate
         from app.parsers.plugins.get_mac_table_ios_dna_parser import GetMacTableIosDnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetMacTableIosDnaParser()
         results = parser.parse(raw)
 
@@ -42,7 +42,7 @@ class TestMacTablePipeline:
         from mock_server.generators.mac_table import generate
         from app.parsers.plugins.get_mac_table_nxos_dna_parser import GetMacTableNxosDnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetMacTableNxosDnaParser()
         results = parser.parse(raw)
 
@@ -56,7 +56,7 @@ class TestMacTablePipeline:
         from mock_server.generators.mac_table import generate
         from app.parsers.plugins.get_mac_table_hpe_dna_parser import GetMacTableHpeDnaParser
 
-        raw = generate("hpe", False, 0, 600)  # new device, not converged
+        raw = generate("hpe", fails=True)
         parser = GetMacTableHpeDnaParser()
         results = parser.parse(raw)
         assert results == []
@@ -70,7 +70,7 @@ class TestMacTablePipeline:
             {"mac_address": f"AA:BB:CC:DD:EE:{i:02X}"}
             for i in range(1, 20)
         ]
-        raw = generate("hpe", None, 600, 600, switch_ip="10.0.0.1", mac_list=mac_list)
+        raw = generate("hpe", switch_ip="10.0.0.1", mac_list=mac_list)
         parser = GetMacTableHpeDnaParser()
         results = parser.parse(raw)
 
@@ -85,7 +85,7 @@ class TestInterfaceStatusPipeline:
         from mock_server.generators.interface_status import generate
         from app.parsers.plugins.get_interface_status_hpe_dna_parser import GetInterfaceStatusHpeDnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetInterfaceStatusHpeDnaParser()
         results = parser.parse(raw)
 
@@ -97,7 +97,7 @@ class TestInterfaceStatusPipeline:
         from mock_server.generators.interface_status import generate
         from app.parsers.plugins.get_interface_status_ios_dna_parser import GetInterfaceStatusIosDnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetInterfaceStatusIosDnaParser()
         results = parser.parse(raw)
 
@@ -107,18 +107,18 @@ class TestInterfaceStatusPipeline:
         from mock_server.generators.interface_status import generate
         from app.parsers.plugins.get_interface_status_nxos_dna_parser import GetInterfaceStatusNxosDnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetInterfaceStatusNxosDnaParser()
         results = parser.parse(raw)
 
         assert len(results) >= 10
 
     def test_hpe_fail_mode(self):
-        """Old device after switch point → some interfaces DOWN."""
+        """Failed device → some interfaces DOWN."""
         from mock_server.generators.interface_status import generate
         from app.parsers.plugins.get_interface_status_hpe_dna_parser import GetInterfaceStatusHpeDnaParser
 
-        raw = generate("hpe", True, 300, 600)
+        raw = generate("hpe", fails=True)
         parser = GetInterfaceStatusHpeDnaParser()
         results = parser.parse(raw)
 
@@ -131,7 +131,7 @@ class TestFanPipeline:
         from mock_server.generators.fan import generate
         from app.parsers.plugins.get_fan_hpe_dna_parser import GetFanHpeDnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetFanHpeDnaParser()
         results = parser.parse(raw)
 
@@ -144,7 +144,7 @@ class TestFanPipeline:
         from mock_server.generators.fan import generate
         from app.parsers.plugins.get_fan_ios_dna_parser import GetFanIosDnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetFanIosDnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -153,7 +153,7 @@ class TestFanPipeline:
         from mock_server.generators.fan import generate
         from app.parsers.plugins.get_fan_nxos_dna_parser import GetFanNxosDnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetFanNxosDnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -164,7 +164,7 @@ class TestVersionPipeline:
         from mock_server.generators.version import generate
         from app.parsers.plugins.get_version_hpe_dna_parser import GetVersionHpeDnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetVersionHpeDnaParser()
         results = parser.parse(raw)
 
@@ -175,7 +175,7 @@ class TestVersionPipeline:
         from mock_server.generators.version import generate
         from app.parsers.plugins.get_version_ios_dna_parser import GetVersionIosDnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetVersionIosDnaParser()
         results = parser.parse(raw)
 
@@ -186,7 +186,7 @@ class TestVersionPipeline:
         from mock_server.generators.version import generate
         from app.parsers.plugins.get_version_nxos_dna_parser import GetVersionNxosDnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetVersionNxosDnaParser()
         results = parser.parse(raw)
 
@@ -199,7 +199,7 @@ class TestPowerPipeline:
         from mock_server.generators.power import generate
         from app.parsers.plugins.get_power_hpe_dna_parser import GetPowerHpeDnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetPowerHpeDnaParser()
         results = parser.parse(raw)
 
@@ -212,7 +212,7 @@ class TestPowerPipeline:
         from mock_server.generators.power import generate
         from app.parsers.plugins.get_power_ios_dna_parser import GetPowerIosDnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetPowerIosDnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -221,7 +221,7 @@ class TestPowerPipeline:
         from mock_server.generators.power import generate
         from app.parsers.plugins.get_power_nxos_dna_parser import GetPowerNxosDnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetPowerNxosDnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -232,7 +232,7 @@ class TestErrorCountPipeline:
         from mock_server.generators.error_count import generate
         from app.parsers.plugins.get_error_count_hpe_fna_parser import GetErrorCountHpeFnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetErrorCountHpeFnaParser()
         results = parser.parse(raw)
 
@@ -245,7 +245,7 @@ class TestErrorCountPipeline:
         from mock_server.generators.error_count import generate
         from app.parsers.plugins.get_error_count_ios_fna_parser import GetErrorCountIosFnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetErrorCountIosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -254,7 +254,7 @@ class TestErrorCountPipeline:
         from mock_server.generators.error_count import generate
         from app.parsers.plugins.get_error_count_nxos_fna_parser import GetErrorCountNxosFnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetErrorCountNxosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -265,7 +265,7 @@ class TestUplinkPipeline:
         from mock_server.generators.uplink import generate
         from app.parsers.plugins.get_uplink_hpe_fna_parser import GetUplinkHpeFnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetUplinkHpeFnaParser()
         results = parser.parse(raw)
 
@@ -278,7 +278,7 @@ class TestUplinkPipeline:
         from mock_server.generators.uplink import generate
         from app.parsers.plugins.get_uplink_ios_fna_parser import GetUplinkIosFnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetUplinkIosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -287,7 +287,7 @@ class TestUplinkPipeline:
         from mock_server.generators.uplink import generate
         from app.parsers.plugins.get_uplink_nxos_fna_parser import GetUplinkNxosFnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetUplinkNxosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -298,7 +298,7 @@ class TestChannelGroupPipeline:
         from mock_server.generators.channel_group import generate
         from app.parsers.plugins.get_channel_group_hpe_fna_parser import GetChannelGroupHpeFnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetChannelGroupHpeFnaParser()
         results = parser.parse(raw)
 
@@ -311,7 +311,7 @@ class TestChannelGroupPipeline:
         from mock_server.generators.channel_group import generate
         from app.parsers.plugins.get_channel_group_ios_fna_parser import GetChannelGroupIosFnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetChannelGroupIosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -320,7 +320,7 @@ class TestChannelGroupPipeline:
         from mock_server.generators.channel_group import generate
         from app.parsers.plugins.get_channel_group_nxos_fna_parser import GetChannelGroupNxosFnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetChannelGroupNxosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -332,7 +332,7 @@ class TestGbicDetailsPipeline:
         from mock_server.generators.gbic_details import generate
         from app.parsers.plugins.get_gbic_details_hpe_fna_parser import GetGbicDetailsHpeFnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetGbicDetailsHpeFnaParser()
         results = parser.parse(raw)
 
@@ -345,7 +345,7 @@ class TestGbicDetailsPipeline:
         from mock_server.generators.gbic_details import generate
         from app.parsers.plugins.get_gbic_details_ios_fna_parser import GetGbicDetailsIosFnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetGbicDetailsIosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -354,7 +354,7 @@ class TestGbicDetailsPipeline:
         from mock_server.generators.gbic_details import generate
         from app.parsers.plugins.get_gbic_details_nxos_fna_parser import GetGbicDetailsNxosFnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetGbicDetailsNxosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -366,7 +366,7 @@ class TestStaticAclPipeline:
         from mock_server.generators.static_acl import generate
         from app.parsers.plugins.get_static_acl_hpe_fna_parser import GetStaticAclHpeFnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetStaticAclHpeFnaParser()
         results = parser.parse(raw)
 
@@ -378,7 +378,7 @@ class TestStaticAclPipeline:
         from mock_server.generators.static_acl import generate
         from app.parsers.plugins.get_static_acl_ios_fna_parser import GetStaticAclIosFnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetStaticAclIosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -387,7 +387,7 @@ class TestStaticAclPipeline:
         from mock_server.generators.static_acl import generate
         from app.parsers.plugins.get_static_acl_nxos_fna_parser import GetStaticAclNxosFnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetStaticAclNxosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -398,7 +398,7 @@ class TestDynamicAclPipeline:
         from mock_server.generators.dynamic_acl import generate
         from app.parsers.plugins.get_dynamic_acl_hpe_fna_parser import GetDynamicAclHpeFnaParser
 
-        raw = generate("hpe", None, 600, 600)
+        raw = generate("hpe")
         parser = GetDynamicAclHpeFnaParser()
         results = parser.parse(raw)
 
@@ -408,7 +408,7 @@ class TestDynamicAclPipeline:
         from mock_server.generators.dynamic_acl import generate
         from app.parsers.plugins.get_dynamic_acl_ios_fna_parser import GetDynamicAclIosFnaParser
 
-        raw = generate("ios", None, 600, 600)
+        raw = generate("ios")
         parser = GetDynamicAclIosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -417,7 +417,7 @@ class TestDynamicAclPipeline:
         from mock_server.generators.dynamic_acl import generate
         from app.parsers.plugins.get_dynamic_acl_nxos_fna_parser import GetDynamicAclNxosFnaParser
 
-        raw = generate("nxos", None, 600, 600)
+        raw = generate("nxos")
         parser = GetDynamicAclNxosFnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
@@ -428,7 +428,7 @@ class TestPingBatchPipeline:
         from mock_server.generators.ping_batch import generate
         from app.parsers.plugins.ping_batch_parser import PingBatchParser
 
-        raw = generate("hpe", None, 600, 600, switch_ip="10.0.0.1")
+        raw = generate("hpe", switch_ip="10.0.0.1")
         parser = PingBatchParser()
         results = parser.parse(raw)
 

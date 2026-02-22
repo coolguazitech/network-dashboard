@@ -81,14 +81,11 @@ fetchers:
     description: "Interface 狀態（速率/雙工）"
 
   # ---------------------------------------------------------------------------
-  # GNMSPING (2): ICMP 連通性測試
+  # GNMSPING: ICMP 連通性測試（統一批次 Ping）
+  # 不走標準 ConfiguredFetcher，由 scheduler 按 tenant_group 分組 batch ping
+  # base_url 設定在 GNMSPING__BASE_URLS__{TENANT} env vars
   # ---------------------------------------------------------------------------
-  ping_batch:
-    source: GNMSPING
-    interval: 60
-    description: "設備連通性 (ICMP Ping)"
-
   gnms_ping:
     source: GNMSPING
-    interval: 60
-    description: "Client IP Ping"
+    interval: 30
+    description: "Ping（設備 / Client IP 獨立排程，按 tenant_group 分組）"

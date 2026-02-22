@@ -68,10 +68,14 @@
               <router-link
                 v-if="isRoot"
                 to="/users"
-                class="nav-link"
+                class="nav-link relative"
                 :class="{ active: route.path === '/users' }"
               >
                 使用者
+                <span
+                  v-if="pendingUsersCount > 0"
+                  class="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold text-white bg-red-500 rounded-full leading-none shadow-lg shadow-red-500/40 animate-badge-pop"
+                >{{ pendingUsersCount > 99 ? '99+' : pendingUsersCount }}</span>
               </router-link>
               <router-link
                 v-if="isRoot"
@@ -89,7 +93,7 @@
               v-model="selectedMaintenanceId"
               @change="onMaintenanceIdChange"
               :disabled="!isRoot"
-              class="px-2 py-1 text-sm bg-slate-700 border border-slate-600 text-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-cyan-500 max-w-[160px] truncate disabled:opacity-60 disabled:cursor-not-allowed"
+              class="px-2 py-1 text-sm bg-slate-700 border border-slate-600 text-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 max-w-[160px] truncate disabled:opacity-60 disabled:cursor-not-allowed"
               :title="isRoot ? '選擇歲修' : '您只能查看被指派的歲修'"
             >
               <option value="">選擇歲修</option>
@@ -104,7 +108,7 @@
             <button
               v-if="isRoot"
               @click="showMaintenanceModal = true"
-              class="text-slate-400 hover:text-cyan-400 p-1.5 rounded hover:bg-slate-700 transition"
+              class="text-slate-400 hover:text-cyan-400 p-1.5 rounded-lg hover:bg-slate-700 transition"
               title="管理歲修"
             >
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -120,7 +124,7 @@
             <div class="relative user-menu-container">
               <button
                 @click.stop="showUserMenu = !showUserMenu"
-                class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-700/50 transition"
+                class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-700/50 transition"
               >
                 <div class="w-7 h-7 rounded-full bg-cyan-600 flex items-center justify-center text-white text-xs font-medium">
                   {{ displayName.charAt(0).toUpperCase() }}
@@ -187,24 +191,24 @@
         </div>
         
         <!-- 新增歲修表單 -->
-        <div class="bg-slate-900/50 rounded p-3 mb-4">
+        <div class="bg-slate-900/50 rounded-xl p-3 mb-4">
           <h4 class="text-sm font-medium text-slate-300 mb-2">新增歲修</h4>
           <div class="flex gap-2">
             <input 
               v-model="newMaintenance.id" 
               type="text" 
               placeholder="歲修 ID（例如：2026Q1）"
-              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
             />
             <input 
               v-model="newMaintenance.name" 
               type="text" 
               placeholder="名稱（選填）"
-              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
             />
             <button 
               @click="createMaintenance" 
-              class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition"
+              class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition"
               :disabled="!newMaintenance.id"
             >
               ➕ 新增
@@ -291,7 +295,7 @@
         </table>
         
         <!-- 警告 -->
-        <div class="bg-amber-900/30 border border-amber-700/50 rounded p-2 mt-4 text-xs">
+        <div class="bg-amber-900/30 border border-amber-700/50 rounded-xl p-2 mt-4 text-xs">
           <p class="text-amber-400">⚠️ 刪除歲修將同時刪除所有相關資料，此操作無法復原！</p>
         </div>
       </div>
@@ -307,7 +311,7 @@
       <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-red-700/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-md p-5">
         <h3 class="text-lg font-bold text-red-400 mb-4">⚠️ 刪除歲修確認</h3>
         
-        <div class="bg-red-900/30 border border-red-700/50 rounded p-3 mb-4">
+        <div class="bg-red-900/30 border border-red-700/50 rounded-xl p-3 mb-4">
           <p class="text-red-300 text-sm">
             即將刪除歲修：<span class="font-mono font-bold text-red-200">{{ deleteTarget?.id }}</span>
           </p>
@@ -322,18 +326,18 @@
           <input 
             v-model="deleteConfirmInput" 
             type="text" 
-            class="w-full px-3 py-2 bg-slate-900 border border-red-600 rounded text-white text-sm font-mono focus:outline-none focus:ring-1 focus:ring-red-400"
+            class="w-full px-3 py-2 bg-slate-900 border border-red-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-1 focus:ring-red-400"
             @keyup.enter="confirmDelete"
           />
         </div>
         
         <div class="flex justify-end gap-2">
-          <button @click="cancelDelete" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded transition">
+          <button @click="cancelDelete" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">
             取消
           </button>
           <button 
             @click="confirmDelete" 
-            class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
             :disabled="deleteConfirmInput !== deleteTarget?.id"
           >
             確認刪除
@@ -358,6 +362,7 @@ import MeteorShower from '@/components/MeteorShower.vue'
 import ToastContainer from '@/components/ToastContainer.vue'
 import { isAuthenticated, currentUser, isRoot, logout as authLogout } from '@/utils/auth'
 import { useCaseBadge } from '@/composables/useCaseBadge'
+import { usePendingUsersBadge } from '@/composables/usePendingUsersBadge'
 import api from '@/utils/api'
 
 dayjs.extend(utc)
@@ -390,6 +395,7 @@ const maintenanceList = ref([])
 
 // 案件徽章（指派給我的待接受案件數）
 const { badgeCount: caseBadgeCount } = useCaseBadge(selectedMaintenanceId)
+const { pendingCount: pendingUsersCount } = usePendingUsersBadge()
 
 // 歲修管理 Modal
 const showMaintenanceModal = ref(false)
@@ -579,7 +585,7 @@ onMounted(async () => {
 
 <style>
 .nav-link {
-  @apply inline-flex items-center px-3 py-1.5 rounded text-sm font-medium text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 transition-all duration-200;
+  @apply inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 transition-all duration-200;
 }
 
 .nav-link.active {

@@ -29,20 +29,22 @@ services:
       DB_NAME: netora
       DB_USER: admin
       DB_PASSWORD: admin
-      # MinIO
-      MINIO__ENDPOINT: minio:9000
+      # S3 Object Storage (SeaweedFS)
+      MINIO__ENDPOINT: seaweedfs:8333
       MINIO__ACCESS_KEY: minioadmin
       MINIO__SECRET_KEY: minioadmin
       MINIO__BUCKET: netora-uploads
       MINIO__SECURE: "false"
-      MINIO__PUBLIC_URL: http://localhost:9000
+      MINIO__PUBLIC_URL: http://localhost:8333
       # 開發模式
       APP_DEBUG: "true"
       APP_ENV: development
 
-  # MariaDB 資料庫
+  # MariaDB 資料庫（patched gosu, zero CRITICAL CVE）
   db:
-    image: mariadb:10.11
+    build:
+      context: ..
+      dockerfile: docker/mariadb/Dockerfile
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: admin
@@ -83,24 +85,25 @@ services:
     networks:
       - dev_network
 
-  # MinIO（S3-compatible 物件儲存，案件圖片上傳用）
-  minio:
-    image: minio/minio:latest
+  # SeaweedFS S3-compatible Object Storage（案件圖片上傳用）
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.13
     restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+    command: >-
+      server -s3 -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3.json
+      -ip=localhost -ip.bind=0.0.0.0
+      -dir=/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "8333:8333"
     volumes:
-      - minio-data:/data
+      - s3-data:/data
+      - ../config/seaweedfs_s3.json:/etc/seaweedfs/s3.json:ro
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
+      test: ["CMD", "wget", "-qO-", "http://localhost:8333/healthz"]
+      interval: 15s
       timeout: 5s
-      retries: 5
+      retries: 3
       start_period: 10s
     networks:
       - dev_network
@@ -123,7 +126,7 @@ services:
 
 volumes:
   db-data:
-  minio-data:
+  s3-data:
   venv-volume:
   node-modules-volume:
 

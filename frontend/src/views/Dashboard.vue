@@ -1,16 +1,16 @@
 <template>
-  <div class="px-3 py-3">
+  <div class="px-6 py-5">
     <!-- 頁面標題 + 摘要 + 餐點狀態 -->
-    <div class="flex justify-between items-start mb-3">
+    <div class="flex justify-between items-start mb-5">
       <div class="flex items-start gap-4">
         <div>
-          <h1 class="text-xl font-bold text-white">指標總覽</h1>
+          <h1 class="text-2xl font-bold text-white">指標總覽</h1>
         </div>
         <!-- 匯出報告按鈕 -->
         <div v-if="selectedMaintenanceId" class="relative">
           <button
             @click="showExportMenu = !showExportMenu"
-            class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-sm font-medium transition flex items-center gap-1"
+            class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium transition flex items-center gap-1"
           >
             📄 匯出報告 <span class="text-xs">▼</span>
           </button>
@@ -38,33 +38,35 @@
       </div>
       <!-- 整體通過率 -->
       <div class="text-right" v-if="selectedMaintenanceId">
-        <div class="text-3xl font-black mb-0.5 tabular-nums" :class="overallStatusColor">
+        <div class="text-4xl font-black mb-0.5 tabular-nums" :class="overallStatusColor">
           {{ animatedOverallRate }}%
         </div>
-        <p class="text-xs text-slate-400">整體通過率</p>
+        <p class="text-sm text-slate-400">整體通過率</p>
       </div>
     </div>
 
     <!-- 整體進度條 -->
-    <div v-if="selectedMaintenanceId" class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-700/30 p-3 mb-3 shadow-sm">
-      <div class="flex justify-between text-xs mb-1.5">
-        <span class="text-slate-300 font-medium">驗收進度</span>
-        <span class="text-slate-400 tabular-nums">
+    <div v-if="selectedMaintenanceId" class="bg-gradient-to-r from-slate-800/80 via-slate-750/70 to-slate-800/80 backdrop-blur-sm rounded-xl border border-indigo-500/20 p-5 mb-5 shadow-lg shadow-indigo-500/5">
+      <div class="flex justify-between items-baseline mb-3">
+        <span class="text-lg text-white font-bold tracking-wide">驗收進度</span>
+        <span class="text-base text-slate-300 font-semibold tabular-nums">
           {{ animatedPassCount }} / {{ animatedTotalCount }} 項目通過
         </span>
       </div>
-      <div class="w-full bg-slate-700/50 rounded-full h-2.5 overflow-hidden">
+      <div class="w-full bg-slate-700/60 rounded-full h-3 overflow-hidden">
         <div
-          class="h-2.5 rounded-full bar-animate"
-          :class="getProgressBarColor(summary.overall)"
-          :style="{ width: summary.overall.pass_rate + '%' }"
-          style="box-shadow: 0 0 12px rgba(0, 210, 255, 0.2)"
+          class="h-3 rounded-full bar-shimmer"
+          :style="{
+            width: summary.overall.pass_rate + '%',
+            background: getProgressBarGradient(summary.overall),
+            boxShadow: getProgressBarGlow(summary.overall),
+          }"
         ></div>
       </div>
     </div>
 
     <!-- 指標卡片 -->
-    <div class="grid grid-cols-4 gap-2 mb-3">
+    <div class="grid grid-cols-4 gap-3 mb-5">
       <div
         v-for="([type, indicator], idx) in sortedIndicators"
         :key="type"
@@ -77,77 +79,76 @@
           selectedIndicator === type ? 'border-cyan-500/60 ring-1 ring-cyan-500/30 shadow-lg shadow-cyan-500/10' : 'border-slate-600/40'
         ]"
       >
-        <div class="px-3 py-2">
-          <!-- 頂部：圖標 + 標題 + 閾值設定 -->
-          <div class="flex justify-between items-center mb-1.5">
-            <div class="flex items-center gap-1.5">
-              <span class="text-lg">{{ getIcon(type) }}</span>
-              <span class="text-white font-semibold text-sm">{{ getTitle(type) }}</span>
-              <!-- 指標說明 tooltip -->
-              <div class="relative group/info" @click.stop>
-                <svg class="w-3.5 h-3.5 text-slate-500 group-hover/info:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div class="absolute left-0 bottom-full mb-2 w-80 px-3.5 py-2.5 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-xs text-amber-900 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 z-50 pointer-events-none"
-                  style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
-                >
-                  {{ getDescription(type) }}
-                  <div class="absolute left-4 top-full w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-transparent border-t-amber-300"></div>
-                  <div class="absolute left-4 top-full -mt-px w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-transparent border-t-amber-50"></div>
-                </div>
-              </div>
-              <button
-                v-if="hasThresholdConfig(type) && canWrite"
-                @click.stop="openThresholdModal(type)"
-                class="text-slate-500 hover:text-cyan-400 transition p-0.5"
-                title="閾值設定"
+        <div class="relative px-3 py-2">
+          <!-- 右上角設定按鈕 -->
+          <button
+            v-if="hasThresholdConfig(type) && canWrite"
+            @click.stop="openThresholdModal(type)"
+            class="absolute top-1.5 right-1.5 text-slate-500 hover:text-cyan-400 transition p-1"
+            title="閾值設定"
+          >
+            <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+          <!-- 頂部：標題行 -->
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-lg">{{ getIcon(type) }}</span>
+            <span class="text-white font-bold text-sm tracking-wide">{{ getTitle(type) }}</span>
+            <!-- 指標說明 tooltip -->
+            <div class="relative group/info" @click.stop>
+              <svg class="w-[18px] h-[18px] text-slate-500 group-hover/info:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div
+                class="absolute bottom-full mb-2 w-80 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-sm text-amber-900 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 z-50 pointer-events-none"
+                :class="idx % 4 >= 2 ? 'right-0' : 'left-0'"
+                style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
               >
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              </button>
-            </div>
-            <span v-if="indicator.fail_count > 0 && indicator.collection_errors > 0" class="text-xs px-1.5 py-0.5 bg-purple-900/50 text-purple-400 rounded font-medium">
-              {{ indicator.fail_count }} 未通過 ({{ indicator.collection_errors }} 異常)
-            </span>
-            <span v-else-if="indicator.total_count === 0" class="text-xs px-1.5 py-0.5 bg-slate-700/50 text-slate-400 rounded font-medium">
-              — 無資料
-            </span>
-            <span v-else-if="indicator.fail_count > 0" class="text-xs px-1.5 py-0.5 bg-red-900/50 text-red-400 rounded font-medium">
-              {{ indicator.fail_count }} 失敗
-            </span>
-            <span v-else class="text-xs px-1.5 py-0.5 bg-green-900/50 text-green-400 rounded font-medium">
-              ✓ 通過
-            </span>
-          </div>
-          
-          <!-- 通過率 -->
-          <div class="flex items-end justify-between">
-            <div class="text-2xl font-black" :class="getPassRateColor(indicator)">
-              {{ indicator.total_count === 0 ? '—' : Math.floor(indicator.pass_rate) + '%' }}
-            </div>
-            <div class="text-right text-xs text-slate-400">
-              {{ indicator.pass_count }}/{{ indicator.total_count }}
+                {{ getDescription(type) }}
+                <div class="absolute top-full w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-transparent border-t-amber-300" :class="idx % 4 >= 2 ? 'right-4' : 'left-4'"></div>
+                <div class="absolute top-full -mt-px w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-transparent border-t-amber-50" :class="idx % 4 >= 2 ? 'right-4' : 'left-4'"></div>
+              </div>
             </div>
           </div>
 
-          <!-- 迷你進度條（無資料時隱藏） -->
-          <div v-if="indicator.total_count > 0" class="mt-1.5 w-full bg-slate-700 rounded-full h-1 overflow-hidden">
-            <div
-              class="h-1 rounded-full bar-animate"
-              :class="getProgressBarColor(indicator)"
-              :style="{ width: indicator.pass_rate + '%', animationDelay: (idx * 80 + 200) + 'ms' }"
-            ></div>
+          <!-- 左側資訊 + 右側環形圖 -->
+          <div class="flex items-center justify-between">
+            <div class="flex flex-col gap-1">
+              <span class="text-sm text-slate-400 font-medium tabular-nums">{{ indicator.pass_count }} / {{ indicator.total_count }} 通過</span>
+              <span v-if="indicator.fail_count > 0 && indicator.collection_errors > 0" class="text-xs px-2 py-0.5 bg-purple-900/50 text-purple-400 rounded-full font-medium w-fit">{{ indicator.fail_count }} 未通過</span>
+              <span v-else-if="indicator.total_count === 0" class="text-xs px-2 py-0.5 bg-slate-700/50 text-slate-400 rounded-full font-medium w-fit">無資料</span>
+              <span v-else-if="indicator.fail_count > 0" class="text-xs px-2 py-0.5 bg-red-900/50 text-red-400 rounded-full font-medium w-fit">{{ indicator.fail_count }} 失敗</span>
+              <span v-else class="text-xs px-2 py-0.5 bg-green-900/50 text-green-400 rounded-full font-medium w-fit">✓ 通過</span>
+            </div>
+            <div class="relative w-14 h-14 flex-shrink-0">
+              <svg class="w-14 h-14 -rotate-90" viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r="15" fill="none" stroke-width="3.5" class="stroke-slate-700/60"/>
+                <circle
+                  v-if="indicator.total_count > 0"
+                  cx="18" cy="18" r="15" fill="none" stroke-width="3.5" stroke-linecap="round"
+                  :class="getRingStroke(indicator)"
+                  :stroke-dasharray="94.25"
+                  :stroke-dashoffset="94.25 - (94.25 * indicator.pass_rate / 100)"
+                  class="ring-progress"
+                  :style="{ animationDelay: (idx * 80 + 200) + 'ms' }"
+                />
+              </svg>
+              <div class="absolute inset-0 flex items-center justify-center">
+                <span class="text-sm font-bold tabular-nums" :class="getPassRateColor(indicator)">
+                  {{ indicator.total_count === 0 ? '—' : Math.floor(indicator.pass_rate) + '%' }}
+                </span>
+              </div>
+            </div>
           </div>
-          <div v-else class="mt-1.5 h-1"></div>
         </div>
       </div>
     </div>
 
     <!-- 詳細清單 -->
-    <div class="bg-slate-800/80 rounded border border-slate-600 p-3">
+    <div class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-600/40 p-5">
       <div class="flex justify-between items-center mb-3">
         <h3 class="text-base font-bold text-white flex items-center gap-2">
           <span>{{ getIcon(selectedIndicator) }}</span>
@@ -163,92 +164,53 @@
       </div>
 
       <!-- 無資料 -->
-      <div v-if="!selectedIndicatorData || selectedIndicatorData.total_count === 0" class="text-center py-8 text-slate-400 bg-slate-900/40 rounded">
+      <div v-if="!selectedIndicatorData || selectedIndicatorData.total_count === 0" class="text-center py-8 text-slate-400 bg-slate-900/40 rounded-xl">
         <div class="text-4xl mb-2">📭</div>
         <p>尚無資料</p>
       </div>
 
       <template v-else-if="indicatorDetails">
-        <!-- 失敗表格 -->
-        <div v-if="indicatorDetails.failures && indicatorDetails.failures.length > 0" class="overflow-x-auto mb-3">
-          <div class="flex items-center gap-2 mb-2">
+        <!-- 有失敗項目：只列出失敗清單 -->
+        <div v-if="indicatorDetails.failures && indicatorDetails.failures.length > 0">
+          <div class="flex items-center gap-2 mb-3">
             <span class="text-red-400 font-semibold text-sm">❌ 未通過項目 ({{ indicatorDetails.failures.length }})</span>
           </div>
-          <table class="min-w-full text-sm">
-            <thead class="bg-slate-900/60">
-              <tr>
-                <th class="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">設備</th>
-                <th class="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">
-                  {{ getColumnTitle(selectedIndicator) }}
-                </th>
-                <th class="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">問題描述</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-700">
-              <tr
+          <div class="max-h-[600px] overflow-y-auto">
+            <div class="grid grid-cols-2 gap-3">
+              <div
                 v-for="(failure, idx) in indicatorDetails.failures"
                 :key="idx"
-                class="hover:bg-slate-700/50 transition"
+                class="bg-slate-900/50 rounded-lg px-4 py-3 border border-slate-700/50 hover:border-slate-600 transition"
               >
-                <td class="px-4 py-2.5 whitespace-nowrap font-mono text-slate-200">
-                  {{ failure.device }}
-                </td>
-                <td class="px-4 py-2.5 whitespace-nowrap text-slate-300">
-                  {{ getInterfaceName(failure) }}
-                </td>
-                <td class="px-4 py-2.5" :class="failure.is_system_error ? 'text-purple-400' : 'text-red-400'">
+                <div class="flex items-center justify-between mb-1.5">
+                  <span class="font-mono text-sm text-slate-200 font-medium">{{ failure.device }}</span>
+                  <span class="text-sm text-slate-400">{{ getInterfaceName(failure) }}</span>
+                </div>
+                <div class="text-sm" :class="failure.is_system_error ? 'text-purple-400' : 'text-red-400'">
                   {{ failure.reason }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <!-- 通過項目表格 -->
-        <div v-if="indicatorDetails.passes && indicatorDetails.passes.length > 0" class="overflow-x-auto">
-          <div class="flex items-center gap-2 mb-2">
-            <span class="text-green-400 font-semibold text-sm">✅ 通過項目 (前 {{ indicatorDetails.passes.length }} 筆，共 {{ indicatorDetails.pass_count }} 筆通過)</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <table class="min-w-full text-sm">
-            <thead class="bg-slate-900/60">
-              <tr>
-                <th class="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">設備</th>
-                <th class="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">
-                  {{ getColumnTitle(selectedIndicator) }}
-                </th>
-                <th class="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">通過描述</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-700">
-              <tr
-                v-for="(pass_item, idx) in indicatorDetails.passes"
-                :key="'pass-' + idx"
-                class="hover:bg-slate-700/50 transition"
-              >
-                <td class="px-4 py-2.5 whitespace-nowrap font-mono text-slate-200">
-                  {{ pass_item.device }}
-                </td>
-                <td class="px-4 py-2.5 whitespace-nowrap text-slate-300">
-                  {{ getInterfaceName(pass_item) }}
-                </td>
-                <td class="px-4 py-2.5 text-green-400">
-                  {{ pass_item.reason }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
         </div>
 
-        <!-- 全部通過但無 passes 細節 -->
-        <div v-if="(!indicatorDetails.failures || indicatorDetails.failures.length === 0) && (!indicatorDetails.passes || indicatorDetails.passes.length === 0)" class="text-center py-8 text-slate-400 bg-slate-900/40 rounded">
+        <!-- 全部通過 -->
+        <div v-else class="text-center py-8 text-slate-400 bg-slate-900/40 rounded-xl">
           <div class="text-4xl mb-2">✅</div>
-          <p>無失敗項目 - 所有檢查都通過了！</p>
+          <p class="text-green-400 font-medium">全部通過</p>
         </div>
       </template>
     </div>
 
+    <!-- 連線錯誤提示 -->
+    <div v-if="fetchError" class="bg-red-900/30 backdrop-blur-sm rounded-xl border border-red-600/40 p-8 text-center mb-5">
+      <div class="text-5xl mb-3">⚠️</div>
+      <p class="text-red-400 text-lg font-medium">{{ fetchError }}</p>
+      <button @click="fetchSummary()" class="mt-3 px-4 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm transition">重試</button>
+    </div>
+
     <!-- 無數據提示 -->
-    <div v-if="!selectedMaintenanceId" class="bg-slate-800/80 rounded border border-slate-600 p-8 text-center">
+    <div v-if="!selectedMaintenanceId" class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-600/40 p-8 text-center">
       <div class="text-5xl mb-3">📊</div>
       <p class="text-slate-400 text-lg">請先在頂部選擇歲修 ID</p>
     </div>
@@ -278,7 +240,7 @@
                 step="0.1"
                 v-model.number="thresholdForm[field.key]"
                 :placeholder="'預設: ' + getDefaultValue(field.key)"
-                class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white focus:ring-1 focus:ring-cyan-400 focus:border-cyan-400 outline-none"
+                class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-sm text-white focus:ring-1 focus:ring-cyan-400 focus:border-cyan-400 outline-none"
               />
               <button
                 v-if="thresholdForm[field.key] !== null && thresholdForm[field.key] !== ''"
@@ -303,14 +265,14 @@
           <div class="flex gap-2">
             <button
               @click="showThresholdModal = false"
-              class="px-4 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm transition"
+              class="px-4 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm transition"
             >
               取消
             </button>
             <button
               @click="saveThresholds"
               :disabled="savingThresholds"
-              class="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded text-sm font-medium transition"
+              class="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg text-sm font-medium transition"
             >
               {{ savingThresholds ? '儲存中...' : '儲存' }}
             </button>
@@ -337,9 +299,13 @@ import { ref, computed, onMounted, inject, watch, onUnmounted } from 'vue'
 import api, { downloadFile } from '@/utils/api'
 import { canWrite } from '@/utils/auth'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
+import { useToast } from '@/composables/useToast'
+
+const { showMessage } = useToast()
 
 const loading = ref(false)
 const showExportMenu = ref(false)
+const fetchError = ref(null)
 
 // ── 閾值設定 ──
 const showThresholdModal = ref(false)
@@ -415,6 +381,24 @@ const openThresholdModal = async (type) => {
 }
 
 const saveThresholds = async () => {
+  // 前端驗證 min < max
+  const minMaxPairs = [
+    ['transceiver_tx_power_min', 'transceiver_tx_power_max', 'TX Power'],
+    ['transceiver_rx_power_min', 'transceiver_rx_power_max', 'RX Power'],
+    ['transceiver_temperature_min', 'transceiver_temperature_max', '溫度'],
+    ['transceiver_voltage_min', 'transceiver_voltage_max', '電壓'],
+  ]
+  for (const [minKey, maxKey, label] of minMaxPairs) {
+    const minVal = thresholdForm.value[minKey]
+    const maxVal = thresholdForm.value[maxKey]
+    if (minVal != null && minVal !== '' && maxVal != null && maxVal !== '') {
+      if (Number(minVal) >= Number(maxVal)) {
+        showMessage(`${label} 下限必須小於上限`, 'error')
+        return
+      }
+    }
+  }
+
   savingThresholds.value = true
   try {
     const updates = {}
@@ -429,6 +413,7 @@ const saveThresholds = async () => {
     await fetchSummary()
   } catch (error) {
     console.error('Failed to save thresholds:', error)
+    showMessage('閾值儲存失敗', 'error')
   } finally {
     savingThresholds.value = false
   }
@@ -456,6 +441,7 @@ const resetThresholds = async () => {
     await fetchSummary()
   } catch (error) {
     console.error('Failed to reset thresholds:', error)
+    showMessage('閾值重置失敗', 'error')
   } finally {
     savingThresholds.value = false
   }
@@ -508,14 +494,14 @@ const overallStatusColor = computed(() => _overallStatusColors[summary.value.ove
 
 const getTitle = (type) => {
   const titles = {
-    transceiver: '光模塊驗收',
-    version: '版本驗收',
-    uplink: 'Uplink 驗收',
-    port_channel: 'Port Channel 驗收',
-    power: 'Power 驗收',
-    fan: 'Fan 狀態驗收',
-    error_count: 'Error Count 驗收',
-    ping: 'Ping 連通性驗收',
+    transceiver: 'TRANSCEIVER',
+    version: 'VERSION',
+    uplink: 'UPLINK',
+    port_channel: 'PORT CHANNEL',
+    power: 'POWER',
+    fan: 'FAN',
+    error_count: 'ERROR COUNT',
+    ping: 'PING SWITCH',
   }
   return titles[type] || type
 }
@@ -561,11 +547,33 @@ const _progressBarColors = {
   'system-error': 'bg-purple-500', 'no-data': 'bg-slate-600',
   'success': 'bg-green-500', 'warning': 'bg-yellow-500', 'error': 'bg-red-500',
 }
+const _ringStrokeColors = {
+  'system-error': 'stroke-purple-500', 'no-data': 'stroke-slate-600',
+  'success': 'stroke-green-500', 'warning': 'stroke-yellow-500', 'error': 'stroke-red-500',
+}
+
+const _progressBarGradients = {
+  'success': 'linear-gradient(90deg, #059669, #10b981, #34d399)',
+  'warning': 'linear-gradient(90deg, #d97706, #f59e0b, #fbbf24)',
+  'error': 'linear-gradient(90deg, #dc2626, #ef4444, #f87171)',
+  'system-error': 'linear-gradient(90deg, #7e22ce, #a855f7, #c084fc)',
+  'no-data': 'linear-gradient(90deg, #475569, #64748b)',
+}
+const _progressBarGlows = {
+  'success': '0 0 12px rgba(16, 185, 129, 0.4), 0 0 4px rgba(52, 211, 153, 0.2)',
+  'warning': '0 0 12px rgba(245, 158, 11, 0.4), 0 0 4px rgba(251, 191, 36, 0.2)',
+  'error': '0 0 12px rgba(239, 68, 68, 0.4), 0 0 4px rgba(248, 113, 113, 0.2)',
+  'system-error': '0 0 12px rgba(168, 85, 247, 0.4), 0 0 4px rgba(192, 132, 252, 0.2)',
+  'no-data': 'none',
+}
+const getProgressBarGradient = (indicator) => _progressBarGradients[indicator.status] || _progressBarGradients['no-data']
+const getProgressBarGlow = (indicator) => _progressBarGlows[indicator.status] || 'none'
 
 const getIndicatorStatus = (indicator) => indicator.status || 'no-data'
 const getCardBgColor = (indicator) => _cardBgColors[indicator.status] || 'bg-slate-800/80'
 const getPassRateColor = (indicator) => _passRateColors[indicator.status] || 'text-slate-400'
 const getProgressBarColor = (indicator) => _progressBarColors[indicator.status] || 'bg-slate-600'
+const getRingStroke = (indicator) => _ringStrokeColors[indicator.status] || 'stroke-slate-600'
 
 const getColumnTitle = (type) => {
   const titles = {
@@ -591,26 +599,31 @@ const getInterfaceName = (item) => {
   return item.interface || item.device || '-'
 }
 
-// 獲取 Dashboard 摘要
-const fetchSummary = async () => {
+// 獲取 Dashboard 摘要（silent=true 時不顯示全螢幕 loading，用於 polling）
+const fetchSummary = async (silent = false) => {
   if (!selectedMaintenanceId.value) return
-  
-  loading.value = true
+
+  if (!silent) loading.value = true
   try {
     const response = await api.get(`/dashboard/maintenance/${selectedMaintenanceId.value}/summary`)
+    const isFirstLoad = !summary.value.indicators || Object.keys(summary.value.indicators).length === 0
     summary.value = response.data
-    
-    // 默認選擇有系統異常或失敗的指標
-    for (const [type, data] of Object.entries(summary.value.indicators)) {
-      if ((data.collection_errors || 0) > 0 || data.fail_count > 0) {
-        selectedIndicator.value = type
-        break
+    fetchError.value = null
+
+    // 只在首次載入或切換歲修時自動選擇失敗指標，polling 不覆蓋使用者選擇
+    if (!silent || isFirstLoad) {
+      for (const [type, data] of Object.entries(summary.value.indicators)) {
+        if ((data.collection_errors || 0) > 0 || data.fail_count > 0) {
+          selectedIndicator.value = type
+          break
+        }
       }
     }
-    
+
     await fetchIndicatorDetails(selectedIndicator.value)
   } catch (error) {
     console.error('Failed to fetch summary:', error)
+    fetchError.value = '無法連線伺服器'
   } finally {
     loading.value = false
   }
@@ -707,16 +720,28 @@ const sortedIndicators = computed(() => {
   return Object.entries(summary.value.indicators)
 })
 
-// ── 自動刷新（每 30 秒） ──
+// ── 自動刷新 ──
 let pollTimer = null
+const pollingIntervalMs = ref(30000)
+
+const fetchPollingConfig = async () => {
+  try {
+    const response = await api.get('/dashboard/config/frontend')
+    const seconds = response.data.polling_interval_seconds
+    if (seconds && seconds > 0) {
+      pollingIntervalMs.value = seconds * 1000
+    }
+  } catch (error) {
+    console.error('Failed to fetch polling config, using default 30s')
+  }
+}
 
 const startPolling = () => {
   stopPolling()
   if (!selectedMaintenanceId.value) return
   pollTimer = setInterval(() => {
-    // 靜默刷新：不設 loading，避免閃爍
-    fetchSummary()
-  }, 30000)
+    fetchSummary(true)
+  }, pollingIntervalMs.value)
 }
 
 const stopPolling = () => {
@@ -735,7 +760,8 @@ watch(selectedMaintenanceId, (newId) => {
   }
 })
 
-onMounted(() => {
+onMounted(async () => {
+  await fetchPollingConfig()
   if (selectedMaintenanceId.value) {
     fetchSummary()
     startPolling()

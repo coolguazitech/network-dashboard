@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import random
 
-from mock_server.convergence import should_device_fail
-
 TX_NORMAL = -2.0
 RX_NORMAL = -5.0
 TEMP_NORMAL = 38.0
@@ -14,14 +12,7 @@ RX_BAD = -22.0
 TEMP_BAD = 65.0
 
 
-def generate(
-    device_type: str,
-    is_old: bool | None,
-    active_seconds: float,
-    converge_time: float,
-) -> str:
-    fails = should_device_fail(is_old, active_seconds, converge_time)
-
+def generate(device_type: str, fails: bool = False, **_kw: object) -> str:
     if device_type == "nxos":
         return _generate_nxos(fails)
     elif device_type == "ios":

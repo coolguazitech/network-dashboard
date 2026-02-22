@@ -8,7 +8,14 @@ const USER_KEY = 'auth_user'
 
 // 認證狀態
 const token = ref(localStorage.getItem(TOKEN_KEY) || null)
-const user = ref(JSON.parse(localStorage.getItem(USER_KEY) || 'null'))
+let _parsedUser = null
+try {
+  _parsedUser = JSON.parse(localStorage.getItem(USER_KEY) || 'null')
+} catch (e) {
+  _parsedUser = null
+  localStorage.removeItem(USER_KEY)
+}
+const user = ref(_parsedUser)
 
 /**
  * 是否已登入
@@ -40,7 +47,14 @@ export const canWrite = computed(() => {
 
 /**
  * 檢查是否有指定權限（向後相容，現在基於角色）
- * @param {string} permission - 權限名稱
+ *
+ * NOTE: The current RBAC model is role-based only. The `permission` parameter
+ * is accepted for API compatibility but is not used in the check. Access is
+ * determined solely by role: ROOT and PM receive full access; all other roles
+ * (e.g. GUEST) are read-only and this function returns false. When granular
+ * permission checking is needed in the future, implement it here.
+ *
+ * @param {string} permission - 權限名稱（currently unused — role-based only）
  * @returns {boolean}
  */
 export function hasPermission(permission) {
@@ -107,6 +121,24 @@ export function logout() {
   user.value = null
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
+}
+
+// 防止多個 401 同時觸發重複登出+跳轉
+let _loggingOut = false
+
+/**
+ * 登出並跳轉至登入頁（帶去重保護）。
+ * 多個併發 401 只會觸發一次跳轉。
+ */
+export function logoutAndRedirect() {
+  if (_loggingOut) return
+  _loggingOut = true
+  logout()
+  if (!window.location.pathname.includes('/login')) {
+    window.location.href = '/login'
+  }
+  // 跳轉後重設旗標（若跳轉未發生，例如已在 /login）
+  setTimeout(() => { _loggingOut = false }, 2000)
 }
 
 /**
@@ -185,13 +217,9 @@ export async function authFetch(url, options = {}) {
 
   const res = await fetch(url, { ...options, headers })
 
-  // 若 401 則自動登出
+  // 若 401 則自動登出（透過 logoutAndRedirect 去重）
   if (res.status === 401) {
-    logout()
-    // 避免在登入頁面無限重定向
-    if (!window.location.pathname.includes('/login')) {
-      window.location.href = '/login'
-    }
+    logoutAndRedirect()
   }
 
   return res

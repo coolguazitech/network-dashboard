@@ -31,45 +31,6 @@ def get_engine() -> Engine:
     return _engine
 
 
-def get_device_role(
-    maintenance_id: str, switch_ip: str
-) -> bool | None:
-    """
-    \u67e5\u8a62\u8a2d\u5099\u662f\u820a\u7684\u9084\u662f\u65b0\u7684\u3002
-
-    Returns:
-        True  = \u820a\u8a2d\u5099\uff08is_old\uff09
-        False = \u65b0\u8a2d\u5099
-        None  = \u627e\u4e0d\u5230\u6216\u7121\u6cd5\u5224\u65b7
-    """
-    engine = get_engine()
-    with engine.connect() as conn:
-        row = conn.execute(
-            text(
-                "SELECT old_ip_address, new_ip_address "
-                "FROM maintenance_device_list "
-                "WHERE maintenance_id = :mid "
-                "AND (old_ip_address = :ip OR new_ip_address = :ip) "
-                "LIMIT 1"
-            ),
-            {"mid": maintenance_id, "ip": switch_ip},
-        ).fetchone()
-
-    if row is None:
-        return None
-
-    old_ip, new_ip = row[0], row[1]
-
-    # IP \u5728 old_ip_address \u2192 \u820a\u8a2d\u5099
-    if switch_ip == old_ip and switch_ip != new_ip:
-        return True
-    # IP \u5728 new_ip_address \u2192 \u65b0\u8a2d\u5099
-    if switch_ip == new_ip and switch_ip != old_ip:
-        return False
-    # IP \u540c\u6642\u51fa\u73fe\u5728\u5169\u6b04\uff08\u672a\u66f4\u63db\uff09\u2192 \u59cb\u7d42\u53ef\u9054
-    return None
-
-
 def get_active_seconds(maintenance_id: str) -> float:
     """
     \u53d6\u5f97\u6b72\u4fee\u7d2f\u8a08\u6d3b\u8e8d\u79d2\u6578\u3002

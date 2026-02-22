@@ -10,7 +10,10 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import MaintenanceDeviceList
 
 
 
@@ -95,6 +98,19 @@ class BaseIndicator(ABC):
     """
 
     indicator_type: str
+
+    @staticmethod
+    async def _get_active_device_hostnames(
+        session: AsyncSession,
+        maintenance_id: str,
+    ) -> list[str]:
+        """取得目前在設備清單中的新設備 hostname 列表（指標分母來源）。"""
+        stmt = select(MaintenanceDeviceList.new_hostname).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id,
+            MaintenanceDeviceList.new_hostname.isnot(None),
+        )
+        result = await session.execute(stmt)
+        return [row[0] for row in result.all()]
 
     @abstractmethod
     async def evaluate(

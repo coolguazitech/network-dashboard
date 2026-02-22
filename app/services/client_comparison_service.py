@@ -6,10 +6,8 @@ Client comparison service.
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,54 +25,11 @@ class ClientComparisonService:
     - 拓樸角色（access/trunk/uplink）
     - 連接的交換機和埠口
     - 連接速率、雙工模式
-    - ACL 規則
     - Ping 可達性和延遲
     """
     
     def __init__(self):
-        """初始化並載入配置。"""
-        self._load_config()
         self._reference_clients_cache = None
-    
-    def _load_config(self):
-        """從 YAML 配置文件載入嚴重程度定義。"""
-        config_path = Path(__file__).parent.parent.parent / "config" / "client_comparison.yaml"
-        
-        # 預設值（如果配置文件不存在）
-        default_config = {
-            "critical_fields": [
-                "switch_hostname",
-                "interface_name",
-                "link_status",
-                "ping_reachable",
-                "acl_passes",
-            ],
-            "warning_fields": [
-                "speed",
-                "duplex",
-                "vlan_id",
-            ],
-            "ping_latency_threshold_ms": 10.0,
-        }
-        
-        try:
-            if config_path.exists():
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f)
-                    self.CRITICAL_FIELDS = set(config.get("critical_fields", default_config["critical_fields"]))
-                    self.WARNING_FIELDS = set(config.get("warning_fields", default_config["warning_fields"]))
-                    self.PING_LATENCY_THRESHOLD = config.get("ping_latency_threshold_ms", default_config["ping_latency_threshold_ms"])
-            else:
-                # 使用預設值
-                self.CRITICAL_FIELDS = set(default_config["critical_fields"])
-                self.WARNING_FIELDS = set(default_config["warning_fields"])
-                self.PING_LATENCY_THRESHOLD = default_config["ping_latency_threshold_ms"]
-        except Exception as e:
-            print(f"Warning: Failed to load client comparison config: {e}")
-            # 發生錯誤時使用預設值
-            self.CRITICAL_FIELDS = set(default_config["critical_fields"])
-            self.WARNING_FIELDS = set(default_config["warning_fields"])
-            self.PING_LATENCY_THRESHOLD = default_config["ping_latency_threshold_ms"]
     
     async def generate_comparisons(
         self,
@@ -151,7 +106,7 @@ class ClientComparisonService:
             if mac_upper not in new_by_mac:
                 new_by_mac[mac_upper] = record
 
-        # 4. 載入設備對應（用於 severity 計算）
+        # 4. 載入設備對應
         dev_stmt = select(MaintenanceDeviceList).where(
             MaintenanceDeviceList.maintenance_id == maintenance_id
         )
@@ -185,7 +140,6 @@ class ClientComparisonService:
                 comparison.old_duplex = old_record.duplex
                 comparison.old_link_status = old_record.link_status
                 comparison.old_ping_reachable = old_record.ping_reachable
-                comparison.old_acl_passes = old_record.acl_passes
 
             # 添加 NEW（新設備）數據
             # 直接使用 ClientRecord 判斷是否有數據
@@ -199,7 +153,6 @@ class ClientComparisonService:
                 comparison.new_duplex = new_record.duplex
                 comparison.new_link_status = new_record.link_status
                 comparison.new_ping_reachable = new_record.ping_reachable
-                comparison.new_acl_passes = new_record.acl_passes
 
             # 使用 _compare_records 處理單邊未偵測情況
             comparison = self._compare_records(comparison, device_mappings)
@@ -297,7 +250,6 @@ class ClientComparisonService:
                 comparison.old_duplex = old_record.duplex
                 comparison.old_link_status = old_record.link_status
                 comparison.old_ping_reachable = old_record.ping_reachable
-                comparison.old_acl_passes = old_record.acl_passes
 
             if new_record:
                 comparison.new_ip_address = new_record.ip_address
@@ -308,7 +260,6 @@ class ClientComparisonService:
                 comparison.new_duplex = new_record.duplex
                 comparison.new_link_status = new_record.link_status
                 comparison.new_ping_reachable = new_record.ping_reachable
-                comparison.new_acl_passes = new_record.acl_passes
 
             comparison = self._compare_records(comparison, device_mappings)
             comparisons.append(comparison)
@@ -397,7 +348,6 @@ class ClientComparisonService:
             ("old_duplex", "new_duplex", "duplex"),
             ("old_link_status", "new_link_status", "link_status"),
             ("old_ping_reachable", "new_ping_reachable", "ping_reachable"),
-            ("old_acl_passes", "new_acl_passes", "acl_passes"),
             ("old_ip_address", "new_ip_address", "ip_address"),
         ]
 
@@ -448,7 +398,7 @@ class ClientComparisonService:
             # 檢查是否有實際變化（忽略 None 值的比較）
             if old_value != new_value:
                 # 對於布林值，只有都不為 None 時才比較
-                if field_name in ("ping_reachable", "acl_passes"):
+                if field_name in ("ping_reachable",):
                     if old_value is not None and new_value is not None and old_value != new_value:
                         differences[field_name] = {
                             "old": old_value,
@@ -463,88 +413,6 @@ class ClientComparisonService:
 
         return differences
     
-    def _calculate_severity(
-        self,
-        differences: dict[str, Any],
-        device_mappings: dict[str, str] | None = None,
-    ) -> str:
-        """基於差異類型計算嚴重程度。
-
-        邏輯：
-        1. 狀態惡化（True→False）→ critical
-        2. 狀態改善（False→True）→ warning（好事但仍需注意）
-        3. 設備變化 + 符合對應 → info（正常）
-        4. 設備變化 + 不符合對應 → warning（警告）
-        5. port 有變化 → warning（警告）
-        6. 其他 warning 欄位（speed, duplex, vlan）→ warning
-        """
-        diff_keys = set(differences.keys())
-        device_mappings = device_mappings or {}
-
-        # 1. 檢查布林狀態欄位（ping_reachable, link_status, acl_passes）
-        # 惡化（True→False）= critical，改善（False→True）= warning
-        status_fields = {"ping_reachable", "acl_passes"}
-        has_degradation = False
-        has_improvement = False
-
-        for field in status_fields:
-            if field in differences:
-                change = differences[field]
-                old_val = change.get("old")
-                new_val = change.get("new")
-                # True → False 是惡化（重大問題）
-                if old_val is True and new_val is False:
-                    has_degradation = True
-                # False → True 是改善（警告/注意）
-                elif old_val is False and new_val is True:
-                    has_improvement = True
-
-        # link_status 特殊處理（up → down = 惡化，down → up = 改善）
-        if "link_status" in differences:
-            change = differences["link_status"]
-            old_val = str(change.get("old", "")).lower()
-            new_val = str(change.get("new", "")).lower()
-            if old_val == "up" and new_val == "down":
-                has_degradation = True
-            elif old_val == "down" and new_val == "up":
-                has_improvement = True
-
-        if has_degradation:
-            return "critical"
-        if has_improvement:
-            return "warning"
-        
-        switch_change = differences.get("switch_hostname")
-        interface_change = differences.get("interface_name")
-        
-        # 2. 檢查設備變化
-        if switch_change:
-            old_switch = switch_change.get("old", "")
-            new_switch = switch_change.get("new", "")
-            # 使用小寫 key 來查詢設備對應（因為字典 key 是小寫）
-            expected_new = device_mappings.get(old_switch.lower() if old_switch else "")
-            
-            # 設備變化 + 符合對應 → 正常（比較時忽略大小寫）
-            if expected_new and expected_new.lower() == (new_switch.lower() if new_switch else ""):
-                # 檢查其他 warning 欄位
-                other_diffs = diff_keys - {"switch_hostname", "interface_name"}
-                if other_diffs & self.WARNING_FIELDS:
-                    return "warning"
-                return "info"
-            
-            # 設備變化 + 不符合對應 → 警告
-            return "warning"
-        
-        # 3. 設備沒變但 port 變化 → 警告
-        if interface_change:
-            return "warning"
-        
-        # 4. 其他 warning 欄位（speed, duplex, vlan）
-        if diff_keys & self.WARNING_FIELDS:
-            return "warning"
-        
-        return "info"
-    
     def _generate_notes(
         self,
         comparison: ClientComparison,
@@ -552,20 +420,12 @@ class ClientComparisonService:
     ) -> str:
         """生成比較結果的註釋。"""
         notes = []
-        
+
         for field_name, change_info in differences.items():
-            if field_name in self.CRITICAL_FIELDS:
-                prefix = "⚠️ CRITICAL: "
-            elif field_name in self.WARNING_FIELDS:
-                prefix = "⚠️ WARNING: "
-            else:
-                prefix = "ℹ️ INFO: "
-            
             old_val = change_info.get("old")
             new_val = change_info.get("new")
-            
-            notes.append(f"{prefix}{field_name}: {old_val} → {new_val}")
-        
+            notes.append(f"{field_name}: {old_val} → {new_val}")
+
         return " | ".join(notes) if notes else "未檢測到變化"
     
     async def save_comparisons(
@@ -596,18 +456,17 @@ class ClientComparisonService:
         maintenance_id: str,
         session: AsyncSession,
         search_text: str | None = None,
-        severity: str | None = None,
         changed_only: bool = False,
         before_time: str | None = None,
     ) -> list[ClientComparison]:
         """
         查詢比較結果。
-        
-        支持按 MAC 地址、IP 地址、嚴重程度和是否變化進行篩選。
+
+        支持按 MAC 地址、IP 地址和是否變化進行篩選。
         如果提供 before_time，則動態生成比較結果而非查詢資料庫。
         """
         from sqlalchemy import or_
-        
+
         # 如果提供了 before_time，動態生成比較結果
         if before_time:
             from datetime import datetime
@@ -624,7 +483,7 @@ class ClientComparisonService:
             )
             latest_result = await session.execute(latest_stmt)
             latest_time = latest_result.scalar()
-            
+
             # 生成比較結果
             comparisons = await self._generate_comparisons_at_time(
                 maintenance_id=maintenance_id,
@@ -632,7 +491,7 @@ class ClientComparisonService:
                 after_time=latest_time,
                 session=session,
             )
-            
+
             # 套用篩選
             if search_text:
                 search_lower = search_text.lower()
@@ -642,20 +501,17 @@ class ClientComparisonService:
                     or (c.old_ip_address and search_lower in c.old_ip_address.lower())
                     or (c.new_ip_address and search_lower in c.new_ip_address.lower())
                 ]
-            
-            if severity:
-                comparisons = [c for c in comparisons if c.severity == severity]
-            
+
             if changed_only:
                 comparisons = [c for c in comparisons if c.is_changed]
-            
+
             return comparisons
-        
+
         # 否則查詢資料庫中保存的比較結果
         stmt = select(ClientComparison).where(
             ClientComparison.maintenance_id == maintenance_id
         )
-        
+
         if search_text:
             # 搜尋 MAC 地址或 IP 地址（OLD 或 NEW 階段）
             search_pattern = f"%{search_text}%"
@@ -666,15 +522,12 @@ class ClientComparisonService:
                     ClientComparison.new_ip_address.ilike(search_pattern),
                 )
             )
-        
-        if severity:
-            stmt = stmt.where(ClientComparison.severity == severity)
-        
+
         if changed_only:
             stmt = stmt.where(ClientComparison.is_changed == True)
-        
+
         stmt = stmt.order_by(ClientComparison.collected_at.desc())
-        
+
         result = await session.execute(stmt)
         return result.scalars().all()
     
@@ -688,22 +541,21 @@ class ClientComparisonService:
             maintenance_id=maintenance_id,
             session=session,
         )
-        
+
         total = len(comparisons)
         unchanged = sum(1 for c in comparisons if not c.is_changed)
         changed = sum(1 for c in comparisons if c.is_changed)
-        critical = sum(1 for c in comparisons if c.severity == "critical")
-        warning = sum(1 for c in comparisons if c.severity == "warning")
-        
+        undetected = sum(
+            1 for c in comparisons if c.severity == "undetected"
+        )
+
         return {
             "total": total,
             "unchanged": unchanged,
             "changed": changed,
+            "undetected": undetected,
             "unchanged_rate": (unchanged / total * 100) if total > 0 else 0,
             "changed_rate": (changed / total * 100) if total > 0 else 0,
-            "critical": critical,
-            "warning": warning,
-            "info": total - critical - warning - unchanged,
         }
 
     async def _generate_comparisons_at_time(
@@ -830,8 +682,7 @@ class ClientComparisonService:
                 comparison.old_duplex = before_record.duplex
                 comparison.old_link_status = before_record.link_status
                 comparison.old_ping_reachable = before_record.ping_reachable
-                comparison.old_acl_passes = before_record.acl_passes
-            
+
             # 添加 AFTER 資料
             # 直接使用 ClientRecord 判斷是否有數據
             # 如果 switch_hostname 為 None，代表該 MAC 未被偵測到（None 記錄）
@@ -844,8 +695,7 @@ class ClientComparisonService:
                 comparison.new_duplex = after_record.duplex
                 comparison.new_link_status = after_record.link_status
                 comparison.new_ping_reachable = after_record.ping_reachable
-                comparison.new_acl_passes = after_record.acl_passes
-            
+
             # 比較差異（傳入設備對應）
             comparison = self._compare_records(comparison, device_mappings)
             comparisons.append(comparison)
@@ -977,7 +827,6 @@ class ClientComparisonService:
                 comparison.old_duplex = checkpoint_record.duplex
                 comparison.old_link_status = checkpoint_record.link_status
                 comparison.old_ping_reachable = checkpoint_record.ping_reachable
-                comparison.old_acl_passes = checkpoint_record.acl_passes
 
             # 添加 Current 資料
             # 直接使用 ClientRecord 判斷是否有數據
@@ -991,7 +840,6 @@ class ClientComparisonService:
                 comparison.new_duplex = current_record.duplex
                 comparison.new_link_status = current_record.link_status
                 comparison.new_ping_reachable = current_record.ping_reachable
-                comparison.new_acl_passes = current_record.acl_passes
 
             # 比較差異
             comparison = self._compare_records(comparison, device_mappings)
@@ -1131,7 +979,6 @@ class ClientComparisonService:
                     comparison.old_duplex = checkpoint_record.duplex
                     comparison.old_link_status = checkpoint_record.link_status
                     comparison.old_ping_reachable = checkpoint_record.ping_reachable
-                    comparison.old_acl_passes = checkpoint_record.acl_passes
 
                 # 直接使用 ClientRecord 判斷是否有數據
                 # 如果 switch_hostname 為 None，代表該 MAC 未被偵測到（None 記錄）
@@ -1144,7 +991,6 @@ class ClientComparisonService:
                     comparison.new_duplex = current_record.duplex
                     comparison.new_link_status = current_record.link_status
                     comparison.new_ping_reachable = current_record.ping_reachable
-                    comparison.new_acl_passes = current_record.acl_passes
 
                 comparison = self._compare_records(comparison, device_mappings)
                 comparisons.append(comparison)
@@ -1165,23 +1011,22 @@ class ClientComparisonService:
         comparison: ClientComparison,
         device_mappings: dict[str, str] | None = None,
     ) -> ClientComparison:
-        """給定一筆比較記錄，填充差異、嚴重度與備註。
-        
+        """給定一筆比較記錄，填充差異與備註。
+
         處理單邊未偵測的情況：
-        - OLD有值 → NEW未偵測 = critical（設備消失了！）
-        - OLD未偵測 → NEW有值 = warning（新出現的設備）
-        - 兩邊都未偵測 = undetected（灰色標記，不計入異常）
-        
+        - 兩邊都未偵測 → is_changed=False（undetected 標記）
+        - OLD有值 → NEW未偵測 → is_changed=True（設備消失）
+        - OLD未偵測 → NEW有值 → is_changed=True（新出現設備）
+        - 兩邊都有值 → 比較差異
+
         Args:
             comparison: 比較記錄
             device_mappings: 設備對應 {old_hostname: new_hostname}
         """
-        device_mappings = device_mappings or {}
-        
         # 檢查是否單邊未偵測
         old_detected = self._has_any_data(comparison, 'old')
         new_detected = self._has_any_data(comparison, 'new')
-        
+
         # 情況1：兩邊都未偵測
         if not old_detected and not new_detected:
             comparison.is_changed = False
@@ -1189,42 +1034,34 @@ class ClientComparisonService:
             comparison.differences = {}
             comparison.notes = "兩個時間點都未偵測到"
             return comparison
-        
-        # 情況2：OLD有值，NEW未偵測 → 重大問題（設備消失）
+
+        # 情況2：OLD有值，NEW未偵測（設備消失）
         if old_detected and not new_detected:
             comparison.is_changed = True
-            comparison.severity = "critical"
             comparison.differences = {
                 "_status": {"old": "已偵測", "new": "未偵測"}
             }
-            comparison.notes = "🔴 重大：NEW 階段未偵測到該設備"
+            comparison.notes = "NEW 階段未偵測到該設備"
             return comparison
-        
-        # 情況3：OLD未偵測，NEW有值 → 警告（新出現）
+
+        # 情況3：OLD未偵測，NEW有值（新出現）
         if not old_detected and new_detected:
             comparison.is_changed = True
-            comparison.severity = "warning"
             comparison.differences = {
                 "_status": {"old": "未偵測", "new": "已偵測"}
             }
-            comparison.notes = "🟡 警告：OLD 階段未偵測到該設備"
+            comparison.notes = "OLD 階段未偵測到該設備"
             return comparison
-        
+
         # 情況4：兩邊都有值，正常比較差異
         differences = self._find_differences(comparison)
         comparison.differences = differences
 
         if differences:
             comparison.is_changed = True
-            # 傳入設備對應來判斷嚴重度
-            comparison.severity = self._calculate_severity(
-                differences,
-                device_mappings,
-            )
             comparison.notes = self._generate_notes(comparison, differences)
         else:
             comparison.is_changed = False
-            comparison.severity = "info"
             comparison.notes = "未檢測到變化"
 
         return comparison
@@ -1245,34 +1082,3 @@ class ClientComparisonService:
             if value is not None and value != "":
                 return True
         return False
-
-
-async def cleanup_old_client_records(
-    maintenance_id: str,
-    retention_days: int,
-    session: AsyncSession,
-) -> int:
-    """
-    清理超過保留期限的 ClientRecord。
-
-    Args:
-        maintenance_id: 歲修 ID
-        retention_days: 保留天數
-        session: DB session
-
-    Returns:
-        刪除的記錄數量
-    """
-    from datetime import timedelta, timezone
-    from sqlalchemy import delete
-
-    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
-
-    stmt = delete(ClientRecord).where(
-        ClientRecord.maintenance_id == maintenance_id,
-        ClientRecord.collected_at < cutoff,
-    )
-    result = await session.execute(stmt)
-    await session.commit()
-
-    return result.rowcount or 0

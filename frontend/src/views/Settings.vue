@@ -24,20 +24,37 @@
     </div>
 
     <!-- Tab 內容 -->
-    <div class="bg-slate-800/80 rounded border border-slate-600 p-4">
+    <div class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-600/40 p-4">
       <!-- Uplink 期望 Tab (歲修特定) -->
       <div v-if="activeTab === 'uplink'" class="space-y-4">
         <div class="flex justify-between items-center">
-          <h3 class="text-white font-semibold">Uplink 期望</h3>
+          <div class="flex items-center gap-2">
+            <h3 class="text-white font-semibold">Uplink 期望</h3>
+            <div class="relative group/info">
+              <svg class="w-[18px] h-[18px] text-slate-500 group-hover/info:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div class="absolute left-0 top-full mt-2 w-80 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-sm text-amber-900 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 z-50 pointer-events-none"
+                style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
+              >
+                <div class="absolute left-4 -top-[6px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-300"></div>
+                <div class="absolute left-4 -top-[5px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-50"></div>
+                <p class="mb-1 font-semibold">Uplink 期望說明</p>
+                <p>設定每台新設備的上聯鄰居期望，用於驗收時比對 CDP/LLDP 鄰居資訊。本地設備與鄰居設備都必須來自設備清單中的「新設備」。</p>
+                <p class="mt-2 font-medium">CSV 匯入格式：</p>
+                <p class="font-mono text-xs mt-0.5">hostname*, local_interface*, expected_neighbor*, expected_interface*, description</p>
+              </div>
+            </div>
+          </div>
           <div class="flex gap-2">
-            <button @click="downloadUplinkTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
+            <button @click="downloadUplinkTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-lg transition">
               📄 下載範本
             </button>
-            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importUplinkList" />
             </label>
-            <button v-if="userCanWrite" @click="openAddUplink" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="openAddUplink" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition">
               ➕ 新增期望
             </button>
           </div>
@@ -54,18 +71,18 @@
               v-model="uplinkSearch"
               type="text"
               placeholder="搜尋設備或鄰居..."
-              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
-              @input="loadUplinkList"
+              class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+              @input="debouncedLoadUplinkList"
             />
-            <button @click="exportUplinkCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition">
+            <button @click="exportUplinkCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition">
               📤 匯出 CSV
             </button>
           </div>
 
           <!-- 批量操作 -->
-          <div v-if="selectedUplinks.length > 0 && userCanWrite" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
+          <div v-if="selectedUplinks.length > 0 && userCanWrite" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded-xl border border-cyan-700/40">
             <span class="text-sm text-cyan-300">已選 {{ selectedUplinks.length }} 筆</span>
-            <button @click="batchDeleteUplinks" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
+            <button @click="batchDeleteUplinks" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition">
               🗑️ 批量刪除
             </button>
             <button @click="clearUplinkSelection" class="px-2 py-1 text-slate-400 hover:text-white text-sm">
@@ -73,7 +90,7 @@
             </button>
           </div>
 
-          <div ref="uplinkScrollContainer" class="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <div ref="uplinkScrollContainer" class="overflow-x-auto max-h-[600px] overflow-y-auto">
             <table class="min-w-full text-sm">
               <thead class="bg-slate-900/60 sticky top-0">
                 <tr>
@@ -85,7 +102,7 @@
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">預期鄰居</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">鄰居介面</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">備註</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
+                  <th v-if="userCanWrite" class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-700">
@@ -104,31 +121,46 @@
                   </td>
                 </tr>
                 <tr v-if="uplinkExpectations.length === 0">
-                  <td colspan="6" class="px-4 py-8 text-center text-slate-500">尚無 Uplink 期望</td>
+                  <td colspan="7" class="px-4 py-8 text-center text-slate-500">尚無 Uplink 期望</td>
                 </tr>
               </tbody>
             </table>
           </div>
           
-          <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：hostname*,local_interface*,expected_neighbor*,expected_interface*,description（* 為必填）
-          </p>
         </div>
       </div>
 
-      <!-- 版本期望 Tab (歲修特定) -->
+      <!-- Version 期望 Tab (歲修特定) -->
       <div v-if="activeTab === 'version'" class="space-y-4">
         <div class="flex justify-between items-center">
-          <h3 class="text-white font-semibold">版本期望</h3>
+          <div class="flex items-center gap-2">
+            <h3 class="text-white font-semibold">Version 期望</h3>
+            <div class="relative group/info">
+              <svg class="w-[18px] h-[18px] text-slate-500 group-hover/info:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div class="absolute left-0 top-full mt-2 w-80 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-sm text-amber-900 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 z-50 pointer-events-none"
+                style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
+              >
+                <div class="absolute left-4 -top-[6px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-300"></div>
+                <div class="absolute left-4 -top-[5px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-50"></div>
+                <p class="mb-1 font-semibold">Version 期望說明</p>
+                <p>設定每台新設備的預期韌體版本，驗收時比對實際版本是否符合。可設定多個可接受版本，符合任一即通過。</p>
+                <p class="mt-2 font-medium">CSV 匯入格式：</p>
+                <p class="font-mono text-xs mt-0.5">hostname, expected_versions, description</p>
+                <p class="text-xs mt-0.5">多版本用分號分隔，如 16.10.1;16.10.2</p>
+              </div>
+            </div>
+          </div>
           <div class="flex gap-2">
-            <button @click="downloadVersionTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
+            <button @click="downloadVersionTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-lg transition">
               📄 下載範本
             </button>
-            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importVersionList" />
             </label>
-            <button v-if="userCanWrite" @click="openAddVersion" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="openAddVersion" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition">
               ➕ 新增期望
             </button>
           </div>
@@ -145,18 +177,18 @@
               v-model="versionSearch"
               type="text"
               placeholder="搜尋設備或版本..."
-              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
-              @input="loadVersionList"
+              class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+              @input="debouncedLoadVersionList"
             />
-            <button @click="exportVersionCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition">
+            <button @click="exportVersionCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition">
               📤 匯出 CSV
             </button>
           </div>
 
           <!-- 批量操作 -->
-          <div v-if="selectedVersions.length > 0 && userCanWrite" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
+          <div v-if="selectedVersions.length > 0 && userCanWrite" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded-xl border border-cyan-700/40">
             <span class="text-sm text-cyan-300">已選 {{ selectedVersions.length }} 筆</span>
-            <button @click="batchDeleteVersions" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
+            <button @click="batchDeleteVersions" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition">
               🗑️ 批量刪除
             </button>
             <button @click="clearVersionSelection" class="px-2 py-1 text-slate-400 hover:text-white text-sm">
@@ -164,7 +196,7 @@
             </button>
           </div>
 
-          <div ref="versionScrollContainer" class="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <div ref="versionScrollContainer" class="overflow-x-auto max-h-[600px] overflow-y-auto">
             <table class="min-w-full text-sm">
               <thead class="bg-slate-900/60 sticky top-0">
                 <tr>
@@ -174,7 +206,7 @@
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">設備</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">目標版本</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">備註</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
+                  <th v-if="userCanWrite" class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-700">
@@ -184,7 +216,7 @@
                   </td>
                   <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ ver.hostname }}</td>
                   <td class="px-3 py-2 text-xs">
-                    <span v-for="(v, i) in (ver.expected_versions_list || ver.expected_versions.split(';'))" :key="i" class="inline-block px-2 py-0.5 bg-green-600/30 text-green-300 rounded mr-1 mb-1">
+                    <span v-for="(v, i) in (ver.expected_versions_list || (ver.expected_versions || '').split(';'))" :key="i" class="inline-block px-2 py-0.5 bg-green-600/30 text-green-300 rounded mr-1 mb-1">
                       {{ v }}
                     </span>
                   </td>
@@ -195,31 +227,46 @@
                   </td>
                 </tr>
                 <tr v-if="versionExpectations.length === 0">
-                  <td colspan="4" class="px-4 py-8 text-center text-slate-500">尚無版本期望</td>
+                  <td colspan="5" class="px-4 py-8 text-center text-slate-500">尚無 Version 期望</td>
                 </tr>
               </tbody>
             </table>
           </div>
           
-          <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：hostname,expected_versions,description（多版本用分號分隔，如 16.10.1;16.10.2）
-          </p>
         </div>
       </div>
 
       <!-- Port Channel 期望 Tab (歲修特定) -->
       <div v-if="activeTab === 'portchannel'" class="space-y-4">
         <div class="flex justify-between items-center">
-          <h3 class="text-white font-semibold">Port Channel 期望</h3>
+          <div class="flex items-center gap-2">
+            <h3 class="text-white font-semibold">Port Channel 期望</h3>
+            <div class="relative group/info">
+              <svg class="w-[18px] h-[18px] text-slate-500 group-hover/info:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div class="absolute left-0 top-full mt-2 w-80 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-sm text-amber-900 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 z-50 pointer-events-none"
+                style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
+              >
+                <div class="absolute left-4 -top-[6px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-300"></div>
+                <div class="absolute left-4 -top-[5px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-50"></div>
+                <p class="mb-1 font-semibold">Port Channel 期望說明</p>
+                <p>設定每台新設備的 Port-Channel 期望，驗收時檢查 Port-Channel 是否存在、狀態是否為 UP、成員埠是否齊全。</p>
+                <p class="mt-2 font-medium">CSV 匯入格式：</p>
+                <p class="font-mono text-xs mt-0.5">hostname, port_channel, member_interfaces, description</p>
+                <p class="text-xs mt-0.5">成員介面用分號分隔，如 Gi1/0/1;Gi1/0/2</p>
+              </div>
+            </div>
+          </div>
           <div class="flex gap-2">
-            <button @click="downloadPortChannelTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition">
+            <button @click="downloadPortChannelTemplate" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded-lg transition">
               📄 下載範本
             </button>
-            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition cursor-pointer">
+            <label v-if="userCanWrite" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg transition cursor-pointer">
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importPortChannelList" />
             </label>
-            <button v-if="userCanWrite" @click="openAddPortChannel" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded transition">
+            <button v-if="userCanWrite" @click="openAddPortChannel" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition">
               ➕ 新增期望
             </button>
           </div>
@@ -236,18 +283,18 @@
               v-model="portChannelSearch"
               type="text"
               placeholder="搜尋設備或 Port-Channel..."
-              class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm"
-              @input="loadPortChannelList"
+              class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+              @input="debouncedLoadPortChannelList"
             />
-            <button @click="exportPortChannelCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition">
+            <button @click="exportPortChannelCsv" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition">
               📤 匯出 CSV
             </button>
           </div>
 
           <!-- 批量操作 -->
-          <div v-if="selectedPortChannels.length > 0 && userCanWrite" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded border border-cyan-700">
+          <div v-if="selectedPortChannels.length > 0 && userCanWrite" class="flex items-center gap-2 mb-3 p-2 bg-cyan-900/20 rounded-xl border border-cyan-700/40">
             <span class="text-sm text-cyan-300">已選 {{ selectedPortChannels.length }} 筆</span>
-            <button @click="batchDeletePortChannels" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition">
+            <button @click="batchDeletePortChannels" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition">
               🗑️ 批量刪除
             </button>
             <button @click="clearPortChannelSelection" class="px-2 py-1 text-slate-400 hover:text-white text-sm">
@@ -255,7 +302,7 @@
             </button>
           </div>
 
-          <div ref="portChannelScrollContainer" class="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <div ref="portChannelScrollContainer" class="overflow-x-auto max-h-[600px] overflow-y-auto">
             <table class="min-w-full text-sm">
               <thead class="bg-slate-900/60 sticky top-0">
                 <tr>
@@ -266,7 +313,7 @@
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">Port-Channel</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">成員介面</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">備註</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
+                  <th v-if="userCanWrite" class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-700">
@@ -277,7 +324,7 @@
                   <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ pc.hostname }}</td>
                   <td class="px-3 py-2 font-mono text-cyan-300 text-xs">{{ pc.port_channel }}</td>
                   <td class="px-3 py-2 text-xs">
-                    <span v-for="(m, i) in (pc.member_interfaces_list || pc.member_interfaces.split(';'))" :key="i" class="inline-block px-2 py-0.5 bg-purple-600/30 text-purple-300 rounded mr-1 mb-1">
+                    <span v-for="(m, i) in (pc.member_interfaces_list || (pc.member_interfaces || '').split(';'))" :key="i" class="inline-block px-2 py-0.5 bg-purple-600/30 text-purple-300 rounded mr-1 mb-1">
                       {{ m }}
                     </span>
                   </td>
@@ -288,15 +335,12 @@
                   </td>
                 </tr>
                 <tr v-if="portChannelExpectations.length === 0">
-                  <td colspan="5" class="px-4 py-8 text-center text-slate-500">尚無 Port Channel 期望</td>
+                  <td colspan="6" class="px-4 py-8 text-center text-slate-500">尚無 Port Channel 期望</td>
                 </tr>
               </tbody>
             </table>
           </div>
           
-          <p class="text-xs text-slate-500 mt-2">
-            💡 CSV 格式：hostname,port_channel,member_interfaces,description（成員介面用分號分隔，如 Gi1/0/1;Gi1/0/2）
-          </p>
         </div>
       </div>
     </div>
@@ -310,28 +354,28 @@
         <div class="space-y-4">
           <div>
             <label class="block text-sm text-slate-400 mb-1">設備 Hostname <span class="text-red-400">*</span></label>
-            <input v-model="newUplink.hostname" type="text" placeholder="輸入新設備名稱" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newUplink.hostname" type="text" placeholder="輸入新設備名稱" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">本地介面 <span class="text-red-400">*</span></label>
-            <input v-model="newUplink.local_interface" type="text" placeholder="Gi1/0/1" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newUplink.local_interface" type="text" placeholder="Gi1/0/1" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">預期鄰居 <span class="text-red-400">*</span></label>
-            <input v-model="newUplink.expected_neighbor" type="text" placeholder="輸入新設備名稱" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newUplink.expected_neighbor" type="text" placeholder="輸入新設備名稱" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">鄰居介面 <span class="text-red-400">*</span></label>
-            <input v-model="newUplink.expected_interface" type="text" placeholder="Gi1/0/48" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newUplink.expected_interface" type="text" placeholder="Gi1/0/48" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">備註（選填）</label>
-            <input v-model="newUplink.description" type="text" placeholder="例如：上聯到核心" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newUplink.description" type="text" placeholder="例如：上聯到核心" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
           </div>
         </div>
         <div class="flex justify-end gap-2 mt-6">
-          <button @click="closeUplinkModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">取消</button>
-          <button @click="saveUplink" :disabled="!newUplink.hostname || !newUplink.local_interface || !newUplink.expected_neighbor || !newUplink.expected_interface" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
+          <button @click="closeUplinkModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded-lg">取消</button>
+          <button @click="saveUplink" :disabled="!newUplink.hostname || !newUplink.local_interface || !newUplink.expected_neighbor || !newUplink.expected_interface" class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
             {{ editingUplink ? '儲存' : '新增' }}
           </button>
         </div>
@@ -339,30 +383,30 @@
     </div>
     </Transition>
 
-    <!-- 新增/編輯版本期望 Modal -->
+    <!-- 新增/編輯 Version 期望 Modal -->
     <Transition name="modal">
     <div v-if="showAddVersionModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closeVersionModal">
       <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[500px] modal-content">
-        <h3 class="text-lg font-semibold text-white mb-4">{{ editingVersion ? '編輯版本期望' : '新增版本期望' }}</h3>
+        <h3 class="text-lg font-semibold text-white mb-4">{{ editingVersion ? '編輯 Version 期望' : '新增 Version 期望' }}</h3>
         <p class="text-xs text-yellow-400 mb-4">注意：設備 Hostname 必須來自設備清單中的「新設備」</p>
         <div class="space-y-4">
           <div>
             <label class="block text-sm text-slate-400 mb-1">設備 Hostname <span class="text-red-400">*</span></label>
-            <input v-model="newVersion.hostname" type="text" placeholder="SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newVersion.hostname" type="text" placeholder="SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">目標版本 <span class="text-red-400">*</span></label>
-            <input v-model="newVersion.expected_versions" type="text" placeholder="16.10.1;16.10.2" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newVersion.expected_versions" type="text" placeholder="16.10.1;16.10.2" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
             <p class="text-xs text-slate-500 mt-1">多版本用分號分隔，符合任一版本即可</p>
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">備註（選填）</label>
-            <input v-model="newVersion.description" type="text" placeholder="例如：可接受的版本範圍" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newVersion.description" type="text" placeholder="例如：可接受的版本範圍" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
           </div>
         </div>
         <div class="flex justify-end gap-2 mt-6">
-          <button @click="closeVersionModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">取消</button>
-          <button @click="saveVersion" :disabled="!newVersion.hostname || !newVersion.expected_versions" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
+          <button @click="closeVersionModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded-lg">取消</button>
+          <button @click="saveVersion" :disabled="!newVersion.hostname || !newVersion.expected_versions" class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
             {{ editingVersion ? '儲存' : '新增' }}
           </button>
         </div>
@@ -379,25 +423,25 @@
         <div class="space-y-4">
           <div>
             <label class="block text-sm text-slate-400 mb-1">設備 Hostname <span class="text-red-400">*</span></label>
-            <input v-model="newPortChannel.hostname" type="text" placeholder="SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newPortChannel.hostname" type="text" placeholder="SW-001" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">Port-Channel 名稱 <span class="text-red-400">*</span></label>
-            <input v-model="newPortChannel.port_channel" type="text" placeholder="Po1 或 Port-channel1" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newPortChannel.port_channel" type="text" placeholder="Po1 或 Port-channel1" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">成員介面 <span class="text-red-400">*</span></label>
-            <input v-model="newPortChannel.member_interfaces" type="text" placeholder="Gi1/0/1;Gi1/0/2" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newPortChannel.member_interfaces" type="text" placeholder="Gi1/0/1;Gi1/0/2" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
             <p class="text-xs text-slate-500 mt-1">多個介面用分號分隔</p>
           </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">備註（選填）</label>
-            <input v-model="newPortChannel.description" type="text" placeholder="例如：上聯 LACP" class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 text-sm" />
+            <input v-model="newPortChannel.description" type="text" placeholder="例如：上聯 LACP" class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm" />
           </div>
         </div>
         <div class="flex justify-end gap-2 mt-6">
-          <button @click="closePortChannelModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded">取消</button>
-          <button @click="savePortChannel" :disabled="!newPortChannel.hostname || !newPortChannel.port_channel || !newPortChannel.member_interfaces" class="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
+          <button @click="closePortChannelModal" class="px-4 py-2 text-slate-400 hover:bg-slate-700 rounded-lg">取消</button>
+          <button @click="savePortChannel" :disabled="!newPortChannel.hostname || !newPortChannel.port_channel || !newPortChannel.member_interfaces" class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500">
             {{ editingPortChannel ? '儲存' : '新增' }}
           </button>
         </div>
@@ -437,7 +481,7 @@ export default {
       activeTab: 'uplink',
       tabs: [
         { id: 'uplink', name: 'Uplink 期望', icon: '🔗', scope: 'maintenance' },
-        { id: 'version', name: '版本期望', icon: '📦', scope: 'maintenance' },
+        { id: 'version', name: 'Version 期望', icon: '📦', scope: 'maintenance' },
         { id: 'portchannel', name: 'Port Channel 期望', icon: '⛓️', scope: 'maintenance' },
       ],
       
@@ -452,7 +496,7 @@ export default {
       selectedUplinks: [],
       uplinkSelectAll: false,
 
-      // 版本期望
+      // Version 期望
       versionSearch: '',
       selectedVersions: [],
       versionSelectAll: false,
@@ -483,14 +527,19 @@ export default {
       newUplink: { hostname: '', local_interface: '', expected_neighbor: '', expected_interface: '', description: '' },
       editingUplink: null,
       
-      // 版本期望表單
+      // Version 期望表單
       newVersion: { hostname: '', expected_versions: '', description: '' },
       editingVersion: null,
       
       // Port Channel 期望表單
       newPortChannel: { hostname: '', port_channel: '', member_interfaces: '', description: '' },
       editingPortChannel: null,
-      
+
+      // 搜尋防抖計時器
+      uplinkSearchTimeout: null,
+      versionSearchTimeout: null,
+      portChannelSearchTimeout: null,
+
     };
   },
   computed: {
@@ -523,6 +572,11 @@ export default {
     if (this.selectedMaintenanceId) {
       this.loadMaintenanceData();
     }
+  },
+  beforeUnmount() {
+    clearTimeout(this.uplinkSearchTimeout);
+    clearTimeout(this.versionSearchTimeout);
+    clearTimeout(this.portChannelSearchTimeout);
   },
   methods: {
     // CSV 檔案驗證
@@ -564,6 +618,20 @@ export default {
       return { valid: true };
     },
 
+    // 搜尋防抖方法
+    debouncedLoadUplinkList() {
+      clearTimeout(this.uplinkSearchTimeout);
+      this.uplinkSearchTimeout = setTimeout(() => this.loadUplinkList(), 300);
+    },
+    debouncedLoadVersionList() {
+      clearTimeout(this.versionSearchTimeout);
+      this.versionSearchTimeout = setTimeout(() => this.loadVersionList(), 300);
+    },
+    debouncedLoadPortChannelList() {
+      clearTimeout(this.portChannelSearchTimeout);
+      this.portChannelSearchTimeout = setTimeout(() => this.loadPortChannelList(), 300);
+    },
+
     // 歲修管理
     async loadMaintenanceList() {
       try {
@@ -571,6 +639,7 @@ export default {
         this.maintenanceList = data;
       } catch (e) {
         console.error('載入歲修列表失敗:', e);
+        this.showMessage('載入失敗，請稍後再試', 'error');
       }
     },
     
@@ -663,7 +732,7 @@ export default {
         // 載入 Uplink 期望
         await this.loadUplinkList();
 
-        // 載入版本期望
+        // 載入 Version 期望
         await this.loadVersionList();
 
         // 載入 Port Channel 期望
@@ -686,10 +755,10 @@ export default {
         const params = new URLSearchParams();
         if (this.uplinkSearch) params.append('search', this.uplinkSearch);
 
-        let url = `/api/v1/expectations/uplink/${this.selectedMaintenanceId}`;
+        let url = `/expectations/uplink/${encodeURIComponent(this.selectedMaintenanceId)}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const { data } = await api.get(url.replace('/api/v1', ''));
+        const { data } = await api.get(url);
         this.uplinkExpectations = data.items || [];
         this.$nextTick(() => {
           if (this.$refs.uplinkScrollContainer) {
@@ -698,6 +767,7 @@ export default {
         });
       } catch (e) {
         console.error('載入 Uplink 期望失敗:', e);
+        this.showMessage('載入失敗，請稍後再試', 'error');
       }
     },
     
@@ -735,7 +805,8 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
       try {
         const { data } = await api.post(`/expectations/uplink/${this.selectedMaintenanceId}/import-csv`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
         await this.loadUplinkList();
-        this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
+        const toastType = (data.total_errors > 0 && data.imported === 0) ? 'error' : 'success';
+        this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, toastType, '匯入完成');
       } catch (e) {
         console.error('Uplink 匯入失敗:', e);
         this.showMessage(e.response?.data?.detail || '匯入失敗，請檢查網路連線', 'error');
@@ -869,7 +940,7 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
       );
     },
 
-    // ========== 版本期望操作 ==========
+    // ========== Version 期望操作 ==========
     async loadVersionList() {
       if (!this.selectedMaintenanceId) return;
 
@@ -880,10 +951,10 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
         const params = new URLSearchParams();
         if (this.versionSearch) params.append('search', this.versionSearch);
 
-        let url = `/api/v1/expectations/version/${this.selectedMaintenanceId}`;
+        let url = `/expectations/version/${encodeURIComponent(this.selectedMaintenanceId)}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const { data } = await api.get(url.replace('/api/v1', ''));
+        const { data } = await api.get(url);
         this.versionExpectations = data.items || [];
         this.$nextTick(() => {
           if (this.$refs.versionScrollContainer) {
@@ -891,7 +962,8 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
           }
         });
       } catch (e) {
-        console.error('載入版本期望失敗:', e);
+        console.error('載入 Version 期望失敗:', e);
+        this.showMessage('載入失敗，請稍後再試', 'error');
       }
     },
     
@@ -928,9 +1000,10 @@ CORE-SW-01,9.4(1),NX-OS版本`;
       try {
         const { data } = await api.post(`/expectations/version/${this.selectedMaintenanceId}/import-csv`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
         await this.loadVersionList();
-        this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
+        const toastType = (data.total_errors > 0 && data.imported === 0) ? 'error' : 'success';
+        this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, toastType, '匯入完成');
       } catch (e) {
-        console.error('版本期望匯入失敗:', e);
+        console.error('Version 期望匯入失敗:', e);
         this.showMessage(e.response?.data?.detail || '匯入失敗，請檢查網路連線', 'error');
       } finally {
         this.versionLoading = false;
@@ -963,7 +1036,14 @@ CORE-SW-01,9.4(1),NX-OS版本`;
     
     async saveVersion() {
       if (!this.newVersion.hostname || !this.newVersion.expected_versions || !this.selectedMaintenanceId) return;
-      
+
+      // 驗證主機名稱格式
+      const hostnameCheck = this.validateHostname(this.newVersion.hostname);
+      if (!hostnameCheck.valid) {
+        this.showMessage(hostnameCheck.error, 'error');
+        return;
+      }
+
       try {
         let res;
         const payload = {
@@ -977,18 +1057,18 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         } else {
           await api.post(`/expectations/version/${this.selectedMaintenanceId}`, payload);
         }
-        const msg = this.editingVersion ? '版本期望更新成功' : '版本期望新增成功';
+        const msg = this.editingVersion ? 'Version 期望更新成功' : 'Version 期望新增成功';
         this.closeVersionModal();
         await this.loadVersionList();
         this.showMessage(msg, 'success');
       } catch (e) {
-        console.error('儲存版本期望失敗:', e);
+        console.error('儲存 Version 期望失敗:', e);
         this.showMessage(e.response?.data?.detail || '儲存失敗', 'error');
       }
     },
     
     async deleteVersion(ver) {
-      const confirmed = await this.showConfirm(`確定要刪除 ${ver.hostname} 的版本期望？`, '刪除確認');
+      const confirmed = await this.showConfirm(`確定要刪除 ${ver.hostname} 的 Version 期望？`, '刪除確認');
       if (!confirmed) return;
 
       try {
@@ -996,7 +1076,7 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         await this.loadVersionList();
         this.showMessage('刪除成功', 'success');
       } catch (e) {
-        console.error('刪除版本期望失敗:', e);
+        console.error('刪除 Version 期望失敗:', e);
         this.showMessage('刪除失敗', 'error');
       }
     },
@@ -1018,18 +1098,18 @@ CORE-SW-01,9.4(1),NX-OS版本`;
       if (this.selectedVersions.length === 0) return;
 
       const confirmed = await this.showConfirm(
-        `確定要刪除選中的 ${this.selectedVersions.length} 筆版本期望？`,
+        `確定要刪除選中的 ${this.selectedVersions.length} 筆 Version 期望？`,
         '批量刪除確認'
       );
       if (!confirmed) return;
 
       try {
         const { data } = await api.post(`/expectations/version/${this.selectedMaintenanceId}/batch-delete`, { item_ids: this.selectedVersions });
-        this.showMessage(`成功刪除 ${data.deleted_count} 筆版本期望`, 'success');
+        this.showMessage(`成功刪除 ${data.deleted_count} 筆 Version 期望`, 'success');
         this.clearVersionSelection();
         await this.loadVersionList();
       } catch (e) {
-        console.error('批量刪除版本期望失敗:', e);
+        console.error('批量刪除 Version 期望失敗:', e);
         this.showMessage('批量刪除失敗', 'error');
       }
     },
@@ -1056,10 +1136,10 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         const params = new URLSearchParams();
         if (this.portChannelSearch) params.append('search', this.portChannelSearch);
 
-        let url = `/api/v1/expectations/port-channel/${this.selectedMaintenanceId}`;
+        let url = `/expectations/port-channel/${encodeURIComponent(this.selectedMaintenanceId)}`;
         if (params.toString()) url += '?' + params.toString();
 
-        const { data } = await api.get(url.replace('/api/v1', ''));
+        const { data } = await api.get(url);
         this.portChannelExpectations = data.items || [];
         this.$nextTick(() => {
           if (this.$refs.portChannelScrollContainer) {
@@ -1068,6 +1148,7 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         });
       } catch (e) {
         console.error('載入 Port Channel 期望失敗:', e);
+        this.showMessage('載入失敗，請稍後再試', 'error');
       }
     },
     
@@ -1104,7 +1185,8 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
       try {
         const { data } = await api.post(`/expectations/port-channel/${this.selectedMaintenanceId}/import-csv`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
         await this.loadPortChannelList();
-        this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, 'success', '匯入完成');
+        const toastType = (data.total_errors > 0 && data.imported === 0) ? 'error' : 'success';
+        this.showMessage(`新增: ${data.imported} 筆\n更新: ${data.updated} 筆\n錯誤: ${data.total_errors} 筆`, toastType, '匯入完成');
       } catch (e) {
         console.error('Port-Channel 匯入失敗:', e);
         this.showMessage(e.response?.data?.detail || '匯入失敗，請檢查網路連線', 'error');
@@ -1140,7 +1222,14 @@ CORE-01,Po10,Gi0/1;Gi0/2;Gi0/3,三成員 LAG`;
     
     async savePortChannel() {
       if (!this.newPortChannel.hostname || !this.newPortChannel.port_channel || !this.newPortChannel.member_interfaces || !this.selectedMaintenanceId) return;
-      
+
+      // 驗證主機名稱格式
+      const hostnameCheck = this.validateHostname(this.newPortChannel.hostname);
+      if (!hostnameCheck.valid) {
+        this.showMessage(hostnameCheck.error, 'error');
+        return;
+      }
+
       try {
         let res;
         const payload = {

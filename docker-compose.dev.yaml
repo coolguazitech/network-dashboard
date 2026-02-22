@@ -17,9 +17,11 @@
 # =============================================================================
 
 services:
-  # MariaDB 資料庫
+  # MariaDB 資料庫（patched gosu, zero CRITICAL CVE）
   db:
-    image: mariadb:10.11
+    build:
+      context: .
+      dockerfile: docker/mariadb/Dockerfile
     container_name: netora_db
     restart: unless-stopped
     environment:
@@ -70,8 +72,6 @@ services:
       DB_NAME: ${DB_NAME:-netora}
       DB_USER: ${DB_USER:-admin}
       DB_PASSWORD: ${DB_PASSWORD:-admin}
-      MOCK_MODE: ${MOCK_MODE:-convergence}
-      MOCK_CONVERGE_TIME: ${MOCK_CONVERGE_TIME:-7200}
       MOCK_STEADY_FAILURE_RATE: ${MOCK_STEADY_FAILURE_RATE:-0.05}
       MOCK_STEADY_ONSET_RANGE: ${MOCK_STEADY_ONSET_RANGE:-3600}
     ports:
@@ -82,33 +82,33 @@ services:
     networks:
       - dashboard_net
 
-  # MinIO Object Storage（圖片上傳）
-  minio:
-    image: minio/minio:latest
-    container_name: netora_minio
+  # SeaweedFS S3-compatible Object Storage（圖片上傳）
+  # 取代 MinIO（已停維且有 CRITICAL CVE）
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.13
+    container_name: netora_s3
     restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+    command: >-
+      server -s3 -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3.json
+      -ip=localhost -ip.bind=0.0.0.0
+      -dir=/data
     ports:
-      - "9000:9000"    # S3 API
-      - "9001:9001"    # Web Console
+      - "8333:8333"    # S3 API
     volumes:
-      - minio_data:/data
+      - s3_data:/data
+      - ./config/seaweedfs_s3.json:/etc/seaweedfs/s3.json:ro
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
+      test: ["CMD", "wget", "-qO-", "http://localhost:8333/healthz"]
+      interval: 15s
       timeout: 5s
-      retries: 5
+      retries: 3
       start_period: 10s
     networks:
       - dashboard_net
 
   # 主應用程式 (Backend + Frontend)
   app:
-    # 使用 Alpine 以避免 Critical CVE（預設）
-    # 也可改用 :dev 標籤使用 Debian 版本
     image: ${APP_IMAGE:-network-dashboard-base:alpine}
     container_name: netora_app
     restart: unless-stopped
@@ -127,7 +127,13 @@ services:
       # Fetcher 指向 Mock API Server
       FETCHER_SOURCE__FNA__BASE_URL: http://mock-api:9999
       FETCHER_SOURCE__DNA__BASE_URL: http://mock-api:9999
-      FETCHER_SOURCE__GNMSPING__BASE_URL: http://mock-api:9999
+      # GNMS Ping per-tenant（開發環境全部指向 mock）
+      GNMSPING__ENDPOINT: /api/gnms_ping
+      GNMSPING__BASE_URLS__F18: http://mock-api:9999
+      GNMSPING__BASE_URLS__F6: http://mock-api:9999
+      GNMSPING__BASE_URLS__AP: http://mock-api:9999
+      GNMSPING__BASE_URLS__F14: http://mock-api:9999
+      GNMSPING__BASE_URLS__F12: http://mock-api:9999
       FETCHER_ENDPOINT__GET_GBIC_DETAILS: /api/get_gbic_details
       FETCHER_ENDPOINT__GET_CHANNEL_GROUP: /api/get_channel_group
       FETCHER_ENDPOINT__GET_UPLINK: /api/get_uplink
@@ -138,14 +144,14 @@ services:
       FETCHER_ENDPOINT__GET_FAN: /api/get_fan
       FETCHER_ENDPOINT__GET_POWER: /api/get_power
       FETCHER_ENDPOINT__GET_VERSION: /api/get_version
-      FETCHER_ENDPOINT__PING_BATCH: /api/ping_batch
-      # MinIO
-      MINIO__ENDPOINT: minio:9000
+      FETCHER_ENDPOINT__GET_INTERFACE_STATUS: /api/get_interface_status
+      # S3 Object Storage (SeaweedFS)
+      MINIO__ENDPOINT: seaweedfs:8333
       MINIO__ACCESS_KEY: minioadmin
       MINIO__SECRET_KEY: minioadmin
       MINIO__BUCKET: netora-uploads
       MINIO__SECURE: "false"
-      MINIO__PUBLIC_URL: http://localhost:9000
+      MINIO__PUBLIC_URL: http://localhost:8333
     ports:
       - "8000:8000"
     depends_on:
@@ -153,7 +159,7 @@ services:
         condition: service_healthy
       mock-api:
         condition: service_started
-      minio:
+      seaweedfs:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -172,8 +178,8 @@ services:
 volumes:
   db_data:
     name: netora_db_data
-  minio_data:
-    name: netora_minio_data
+  s3_data:
+    name: netora_s3_data
 
 networks:
   dashboard_net:

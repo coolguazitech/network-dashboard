@@ -7,13 +7,13 @@
         <button
           v-if="canWrite"
           @click="showCleanupModal = true"
-          class="px-3 py-1.5 text-sm bg-red-600/20 text-red-400 border border-red-600/30 rounded hover:bg-red-600/30 transition"
+          class="px-3 py-1.5 text-sm bg-red-600/20 text-red-400 border border-red-600/30 rounded-lg hover:bg-red-600/30 transition"
         >
           清理舊日誌
         </button>
         <button
           @click="loadLogs"
-          class="px-3 py-1.5 text-sm bg-cyan-600/20 text-cyan-400 border border-cyan-600/30 rounded hover:bg-cyan-600/30 transition"
+          class="px-3 py-1.5 text-sm bg-cyan-600/20 text-cyan-400 border border-cyan-600/30 rounded-lg hover:bg-cyan-600/30 transition"
         >
           重新整理
         </button>
@@ -69,7 +69,7 @@
     </div>
 
     <!-- 過濾條件 -->
-    <div class="bg-slate-800/50 border border-slate-700 rounded-lg p-3">
+    <div class="bg-slate-800/50 border border-slate-700/40 rounded-xl p-3">
       <div class="flex flex-wrap gap-3 items-end">
         <div class="flex-1 min-w-[200px]">
           <label class="block text-xs text-slate-400 mb-1">搜尋</label>
@@ -77,7 +77,7 @@
             v-model="filters.search"
             type="text"
             placeholder="搜尋摘要、細節、模組..."
-            class="w-full px-3 py-1.5 text-sm bg-slate-900 border border-slate-600 rounded text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
+            class="w-full px-3 py-1.5 text-sm bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-400"
             @keyup.enter="loadLogs"
           />
         </div>
@@ -85,7 +85,7 @@
           <label class="block text-xs text-slate-400 mb-1">等級</label>
           <select
             v-model="filters.level"
-            class="px-3 py-1.5 text-sm bg-slate-900 border border-slate-600 rounded text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
+            class="px-3 py-1.5 text-sm bg-slate-900 border border-slate-600/40 rounded-lg text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
           >
             <option value="">全部</option>
             <option value="ERROR">ERROR</option>
@@ -97,7 +97,7 @@
           <label class="block text-xs text-slate-400 mb-1">來源</label>
           <select
             v-model="filters.source"
-            class="px-3 py-1.5 text-sm bg-slate-900 border border-slate-600 rounded text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
+            class="px-3 py-1.5 text-sm bg-slate-900 border border-slate-600/40 rounded-lg text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
           >
             <option value="">全部</option>
             <option value="api">API</option>
@@ -110,7 +110,7 @@
           <label class="block text-xs text-slate-400 mb-1">歲修</label>
           <select
             v-model="filters.maintenance_id"
-            class="px-3 py-1.5 text-sm bg-slate-900 border border-slate-600 rounded text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
+            class="px-3 py-1.5 text-sm bg-slate-900 border border-slate-600/40 rounded-lg text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
           >
             <option value="">全部</option>
             <option v-for="m in maintenanceList" :key="m.id" :value="m.id">
@@ -120,13 +120,13 @@
         </div>
         <button
           @click="loadLogs"
-          class="px-4 py-1.5 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded transition"
+          class="px-4 py-1.5 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition"
         >
           查詢
         </button>
         <button
           @click="resetFilters"
-          class="px-4 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition"
+          class="px-4 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition"
         >
           重置
         </button>
@@ -134,7 +134,7 @@
     </div>
 
     <!-- 日誌列表 -->
-    <div class="bg-slate-800/50 border border-slate-700 rounded-lg overflow-hidden">
+    <div class="bg-slate-800/50 border border-slate-700/40 rounded-xl overflow-hidden">
       <div v-if="loading" class="p-8 text-center text-slate-400">
         載入中...
       </div>
@@ -212,7 +212,7 @@
                   </div>
                   <div v-if="log.detail" class="mt-2">
                     <div class="text-slate-500 mb-1">詳細資訊:</div>
-                    <pre class="bg-slate-950 border border-slate-700 rounded p-2 text-slate-300 overflow-x-auto max-h-60 whitespace-pre-wrap break-all">{{ log.detail }}</pre>
+                    <pre class="bg-slate-950 border border-slate-700 rounded-lg p-2 text-slate-300 overflow-x-auto max-h-60 whitespace-pre-wrap break-all">{{ log.detail }}</pre>
                   </div>
                 </div>
               </td>
@@ -231,7 +231,7 @@
         <button
           @click="goPage(page - 1)"
           :disabled="page <= 1"
-          class="px-3 py-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-3 py-1 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
           上一頁
         </button>
@@ -239,7 +239,7 @@
           v-for="p in visiblePages"
           :key="p"
           @click="goPage(p)"
-          class="px-3 py-1 rounded transition"
+          class="px-3 py-1 rounded-lg transition"
           :class="p === page ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'"
         >
           {{ p }}
@@ -247,7 +247,7 @@
         <button
           @click="goPage(page + 1)"
           :disabled="page >= totalPages"
-          class="px-3 py-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-3 py-1 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
           下一頁
         </button>
@@ -270,21 +270,22 @@
             type="number"
             min="0"
             max="365"
-            class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+            class="w-full px-3 py-2 bg-slate-900 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
           />
         </div>
         <div class="flex justify-end gap-2">
           <button
             @click="showCleanupModal = false"
-            class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded transition"
+            class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition"
           >
             取消
           </button>
           <button
             @click="doCleanup"
-            class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition"
+            :disabled="cleanupSaving"
+            class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            確認清理
+            {{ cleanupSaving ? '清理中...' : '確認清理' }}
           </button>
         </div>
       </div>
@@ -317,6 +318,7 @@ const { displayed: animInfo } = useAnimatedNumber(toRef(stats, 'info'))
 const { displayed: animTotal } = useAnimatedNumber(toRef(stats, 'total'))
 const showCleanupModal = ref(false)
 const cleanupDays = ref(30)
+const cleanupSaving = ref(false)
 const maintenanceList = ref([])
 
 const filters = reactive({
@@ -371,6 +373,7 @@ function toggleDetail(id) {
 }
 
 async function loadLogs() {
+  expandedIds.value = new Set()
   loading.value = true
   try {
     const params = new URLSearchParams()
@@ -385,17 +388,22 @@ async function loadLogs() {
     logs.value = data.items
     total.value = data.total
     totalPages.value = data.total_pages
+    await loadStats()
   } catch (e) {
     console.error('載入日誌失敗:', e)
   } finally {
     loading.value = false
   }
-  loadStats()
 }
 
 async function loadStats() {
   try {
-    const { data } = await api.get('/system-logs/stats')
+    const params = {}
+    if (filters.level) params.level = filters.level
+    if (filters.source) params.source = filters.source
+    if (filters.maintenance_id) params.maintenance_id = filters.maintenance_id
+    // TODO: pass filters.search when backend supports it
+    const { data } = await api.get('/system-logs/stats', { params })
     stats.error = data.error
     stats.warning = data.warning
     stats.info = data.info
@@ -427,13 +435,25 @@ function resetFilters() {
 }
 
 async function doCleanup() {
+  if (cleanupSaving.value) return
+
+  const days = cleanupDays.value
+  if (!Number.isFinite(days) || days < 0 || days > 365) {
+    alert('請輸入 0 到 365 之間的天數')
+    return
+  }
+
+  cleanupSaving.value = true
   try {
-    const { data } = await api.delete(`/system-logs/cleanup?retain_days=${cleanupDays.value}`)
+    const { data } = await api.delete(`/system-logs/cleanup?retain_days=${days}`)
     showCleanupModal.value = false
     alert(`已清理 ${data.deleted_count} 筆舊日誌`)
     loadLogs()
   } catch (e) {
-    console.error('清理日誌失敗:', e)
+    console.error('清理失敗:', e)
+    alert('清理失敗，請稍後再試')
+  } finally {
+    cleanupSaving.value = false
   }
 }
 

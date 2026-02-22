@@ -144,22 +144,6 @@ class AuthService:
             return user, token, None
 
     @staticmethod
-    def get_role_permissions(role: UserRole) -> list[str]:
-        """
-        根據角色取得權限列表。
-
-        - ROOT: 全部權限（包含管理歲修和用戶）
-        - PM: 寫入權限（設備、通訊錄、餐點等，但不含歲修/用戶管理）
-        - GUEST: 無寫入權限（只能讀取）
-        """
-        if role == UserRole.ROOT:
-            return ["all"]
-        elif role == UserRole.PM:
-            return ["write"]  # 有寫入權限
-        else:
-            return []  # GUEST 無寫入權限
-
-    @staticmethod
     async def get_user_by_id(user_id: int) -> User | None:
         """根據 ID 取得使用者。"""
         async with get_session_context() as session:

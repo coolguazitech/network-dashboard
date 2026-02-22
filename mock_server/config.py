@@ -20,13 +20,7 @@ class MockServerSettings(BaseSettings):
     db_user: str = "admin"
     db_password: str = "admin"
 
-    # 模式：convergence（時間收斂）或 steady_state（穩態）
-    mock_mode: str = "convergence"
-
-    # 收斂時間常數 T（秒）— convergence 模式用
-    mock_converge_time: int = 7200
-
-    # 穩態模式設定 — steady_state 模式用
+    # 穩態模式設定
     mock_steady_failure_rate: float = 0.05  # 5% 設備+API 組合會故障
     mock_steady_onset_range: float = 3600   # 故障出現時間分散在 1 小時內
 

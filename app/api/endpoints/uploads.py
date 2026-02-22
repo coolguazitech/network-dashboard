@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
 from app.api.endpoints.auth import get_current_user
 from app.services.storage import upload_file
+from app.services.system_log import write_log
 
 router = APIRouter(prefix="/uploads", tags=["Uploads"])
 
@@ -49,6 +50,14 @@ async def upload_case_image(
         object_name=object_name,
         data=content,
         content_type=file.content_type or "image/jpeg",
+    )
+
+    await write_log(
+        level="INFO",
+        source=user.get("username", "unknown"),
+        summary=f"上傳案件圖片: {filename}",
+        module="uploads",
+        maintenance_id=maintenance_id,
     )
 
     return {"url": url, "filename": filename}

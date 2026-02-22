@@ -1,166 +1,84 @@
-"""Tests for app.services.change_cache."""
+"""Tests for per-MAC hash computation in ClientCollectionService."""
 from unittest.mock import MagicMock
 
-from app.services.change_cache import (
-    ClientChangeCache,
-    IndicatorChangeCache,
-    compute_client_hash,
-    compute_indicator_hash,
-)
-from app.parsers.protocols import FanStatusData
+from app.services.client_collection_service import ClientCollectionService
 
 
-class TestComputeIndicatorHash:
+class TestComputeClientRecordHash:
+    def _make_record(self, **kwargs):
+        defaults = {
+            "mac_address": "AA:BB:CC:DD:EE:FF",
+            "ip_address": "10.0.0.1",
+            "switch_hostname": "SW-01",
+            "interface_name": "GE1/0/1",
+            "vlan_id": 10,
+            "speed": "1G",
+            "duplex": "full",
+            "link_status": "up",
+            "ping_reachable": True,
+            "acl_rules_applied": "3001",
+        }
+        defaults.update(kwargs)
+        mock = MagicMock()
+        for k, v in defaults.items():
+            setattr(mock, k, v)
+        return mock
+
     def test_same_data_same_hash(self):
-        items = [
-            FanStatusData(fan_id="Fan 1/1", status="normal"),
-            FanStatusData(fan_id="Fan 1/2", status="normal"),
-        ]
-        h1 = compute_indicator_hash(items)
-        h2 = compute_indicator_hash(items)
+        r1 = self._make_record()
+        r2 = self._make_record()
+        h1 = ClientCollectionService._compute_client_record_hash(r1)
+        h2 = ClientCollectionService._compute_client_record_hash(r2)
         assert h1 == h2
 
     def test_different_data_different_hash(self):
-        items1 = [FanStatusData(fan_id="Fan 1/1", status="normal")]
-        items2 = [FanStatusData(fan_id="Fan 1/1", status="fail")]
-        assert compute_indicator_hash(items1) != compute_indicator_hash(items2)
-
-    def test_order_independent(self):
-        """Sorted before hashing, so order shouldn't matter."""
-        items1 = [
-            FanStatusData(fan_id="Fan 1/1", status="normal"),
-            FanStatusData(fan_id="Fan 1/2", status="ok"),
-        ]
-        items2 = [
-            FanStatusData(fan_id="Fan 1/2", status="ok"),
-            FanStatusData(fan_id="Fan 1/1", status="normal"),
-        ]
-        assert compute_indicator_hash(items1) == compute_indicator_hash(items2)
-
-    def test_empty_list(self):
-        h = compute_indicator_hash([])
-        assert isinstance(h, str)
-        assert len(h) == 64  # SHA-256 hex
-
-
-class TestComputeClientHash:
-    def _make_record(self, **kwargs):
-        defaults = {
-            "mac_address": "AA:BB:CC:DD:EE:FF",
-            "switch_hostname": "SW-01",
-            "interface_name": "GE1/0/1",
-            "vlan_id": 10,
-            "speed": "1G",
-            "duplex": "full",
-            "link_status": "up",
-            "ping_reachable": True,
-            "acl_passes": True,
-        }
-        defaults.update(kwargs)
-        mock = MagicMock()
-        for k, v in defaults.items():
-            setattr(mock, k, v)
-        return mock
-
-    def test_same_records_same_hash(self):
-        r1 = self._make_record()
-        r2 = self._make_record()
-        h1 = compute_client_hash([r1])
-        h2 = compute_client_hash([r2])
-        assert h1 == h2
-
-    def test_different_records_different_hash(self):
         r1 = self._make_record(speed="1G")
         r2 = self._make_record(speed="10G")
-        assert compute_client_hash([r1]) != compute_client_hash([r2])
+        h1 = ClientCollectionService._compute_client_record_hash(r1)
+        h2 = ClientCollectionService._compute_client_record_hash(r2)
+        assert h1 != h2
 
-    def test_empty_list(self):
-        h = compute_client_hash([])
+    def test_hash_length_is_16(self):
+        r = self._make_record()
+        h = ClientCollectionService._compute_client_record_hash(r)
+        assert len(h) == 16
+
+    def test_identity_fields_excluded(self):
+        """mac_address and ip_address changes should NOT change hash."""
+        r1 = self._make_record(mac_address="AA:BB:CC:DD:EE:FF", ip_address="10.0.0.1")
+        r2 = self._make_record(mac_address="11:22:33:44:55:66", ip_address="10.0.0.2")
+        h1 = ClientCollectionService._compute_client_record_hash(r1)
+        h2 = ClientCollectionService._compute_client_record_hash(r2)
+        assert h1 == h2
+
+    def test_ping_change_detected(self):
+        r1 = self._make_record(ping_reachable=True)
+        r2 = self._make_record(ping_reachable=False)
+        h1 = ClientCollectionService._compute_client_record_hash(r1)
+        h2 = ClientCollectionService._compute_client_record_hash(r2)
+        assert h1 != h2
+
+    def test_acl_change_detected(self):
+        r1 = self._make_record(acl_rules_applied="3001")
+        r2 = self._make_record(acl_rules_applied="3560")
+        h1 = ClientCollectionService._compute_client_record_hash(r1)
+        h2 = ClientCollectionService._compute_client_record_hash(r2)
+        assert h1 != h2
+
+    def test_none_values_handled(self):
+        r = self._make_record(
+            switch_hostname=None, interface_name=None,
+            vlan_id=None, speed=None, duplex=None,
+            link_status=None, ping_reachable=None,
+            acl_rules_applied=None,
+        )
+        h = ClientCollectionService._compute_client_record_hash(r)
         assert isinstance(h, str)
-        assert len(h) == 64
+        assert len(h) == 16
 
-
-class TestIndicatorChangeCache:
-    def test_first_call_always_changed(self):
-        cache = IndicatorChangeCache()
-        items = [FanStatusData(fan_id="Fan 1/1", status="normal")]
-        assert cache.has_changed("M1", "get_fan", "SW-01", items) is True
-
-    def test_same_data_not_changed(self):
-        cache = IndicatorChangeCache()
-        items = [FanStatusData(fan_id="Fan 1/1", status="normal")]
-        cache.has_changed("M1", "get_fan", "SW-01", items)
-        assert cache.has_changed("M1", "get_fan", "SW-01", items) is False
-
-    def test_different_data_changed(self):
-        cache = IndicatorChangeCache()
-        items1 = [FanStatusData(fan_id="Fan 1/1", status="normal")]
-        items2 = [FanStatusData(fan_id="Fan 1/1", status="fail")]
-        cache.has_changed("M1", "get_fan", "SW-01", items1)
-        assert cache.has_changed("M1", "get_fan", "SW-01", items2) is True
-
-    def test_different_device_independent(self):
-        cache = IndicatorChangeCache()
-        items = [FanStatusData(fan_id="Fan 1/1", status="normal")]
-        cache.has_changed("M1", "get_fan", "SW-01", items)
-        # Different hostname is independent
-        assert cache.has_changed("M1", "get_fan", "SW-02", items) is True
-
-    def test_clear(self):
-        cache = IndicatorChangeCache()
-        items = [FanStatusData(fan_id="Fan 1/1", status="normal")]
-        cache.has_changed("M1", "get_fan", "SW-01", items)
-        cache.clear()
-        # After clear, first call should report changed again
-        assert cache.has_changed("M1", "get_fan", "SW-01", items) is True
-
-
-class TestClientChangeCache:
-    def _make_record(self, **kwargs):
-        defaults = {
-            "mac_address": "AA:BB:CC:DD:EE:FF",
-            "switch_hostname": "SW-01",
-            "interface_name": "GE1/0/1",
-            "vlan_id": 10,
-            "speed": "1G",
-            "duplex": "full",
-            "link_status": "up",
-            "ping_reachable": True,
-            "acl_passes": True,
-        }
-        defaults.update(kwargs)
-        mock = MagicMock()
-        for k, v in defaults.items():
-            setattr(mock, k, v)
-        return mock
-
-    def test_first_call_always_changed(self):
-        cache = ClientChangeCache()
-        records = [self._make_record()]
-        assert cache.has_changed("M1", records) is True
-
-    def test_same_data_not_changed(self):
-        cache = ClientChangeCache()
-        records = [self._make_record()]
-        cache.has_changed("M1", records)
-        assert cache.has_changed("M1", records) is False
-
-    def test_different_data_changed(self):
-        cache = ClientChangeCache()
-        r1 = [self._make_record(speed="1G")]
-        r2 = [self._make_record(speed="10G")]
-        cache.has_changed("M1", r1)
-        assert cache.has_changed("M1", r2) is True
-
-    def test_different_maintenance_independent(self):
-        cache = ClientChangeCache()
-        records = [self._make_record()]
-        cache.has_changed("M1", records)
-        assert cache.has_changed("M2", records) is True
-
-    def test_clear(self):
-        cache = ClientChangeCache()
-        records = [self._make_record()]
-        cache.has_changed("M1", records)
-        cache.clear()
-        assert cache.has_changed("M1", records) is True
+    def test_none_vs_value_different_hash(self):
+        r1 = self._make_record(ping_reachable=None)
+        r2 = self._make_record(ping_reachable=True)
+        h1 = ClientCollectionService._compute_client_record_hash(r1)
+        h2 = ClientCollectionService._compute_client_record_hash(r2)
+        assert h1 != h2

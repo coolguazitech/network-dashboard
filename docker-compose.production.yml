@@ -2,27 +2,35 @@
 # Production Docker Compose - 一鍵起服務
 #
 # 使用方式：
-#   1. 複製 .env.production → .env，修改密碼
-#   2. docker-compose -f docker-compose.production.yml up -d
-#   3. 開瀏覽器 http://localhost:8000 → root/admin123 登入
+#   1. 複製 .env.production → .env，修改密碼 + API URL
+#   2. 修改下方 image 為公司 registry 掃描後的 URL
+#   3. docker-compose -f docker-compose.production.yml up -d
+#   4. docker exec netora_app alembic upgrade head
+#   5. 開瀏覽器 http://localhost:8000 → root/admin123 登入
 # =============================================================================
 
 services:
   app:
-    image: coolguazi/network-dashboard-base:v1.2.0
+    # ★ 改成公司 registry 掃描通過後的 image URL
+    # 例如: registry.company.com/netora/network-dashboard-base:v2.0.0
+    image: ${APP_IMAGE:-coolguazi/network-dashboard-base:v2.0.0}
     container_name: netora_app
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
     env_file: .env
     environment:
       - DB_HOST=db
       - DB_PORT=3306
+      - MINIO__ENDPOINT=seaweedfs:8333
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
       - app_data:/app/data
+      - ./config/seaweedfs_s3.json:/app/config/seaweedfs_s3.json:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -31,7 +39,9 @@ services:
       retries: 3
 
   db:
-    image: mariadb:10.11
+    build:
+      context: .
+      dockerfile: docker/mariadb/Dockerfile
     container_name: netora_db
     restart: unless-stopped
     environment:
@@ -48,6 +58,27 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.13
+    container_name: netora_s3
+    restart: unless-stopped
+    command: >-
+      server -s3 -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3.json
+      -ip=localhost -ip.bind=0.0.0.0
+      -dir=/data
+    ports:
+      - "8333:8333"
+    volumes:
+      - s3_data:/data
+      - ./config/seaweedfs_s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8333/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   phpmyadmin:
     image: phpmyadmin:5.2
@@ -66,3 +97,4 @@ services:
 volumes:
   mariadb_data:
   app_data:
+  s3_data:

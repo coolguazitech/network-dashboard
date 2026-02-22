@@ -11,7 +11,7 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import UplinkExpectation, NeighborRecord
+from app.db.models import MaintenanceDeviceList, UplinkExpectation, NeighborRecord
 from app.repositories.typed_records import NeighborRecordRepo
 from app.indicators.base import (
     BaseIndicator,
@@ -120,9 +120,18 @@ class UplinkIndicator(BaseIndicator):
         session: AsyncSession,
         maintenance_id: str,
     ) -> dict[str, list[str]]:
-        """從 DB 讀取 uplink 期望。"""
+        """從 DB 讀取 uplink 期望（僅限仍在設備清單中的設備）。"""
+        active_hostnames = (
+            select(MaintenanceDeviceList.new_hostname)
+            .where(
+                MaintenanceDeviceList.maintenance_id == maintenance_id,
+                MaintenanceDeviceList.new_hostname.isnot(None),
+            )
+        )
+
         stmt = select(UplinkExpectation).where(
-            UplinkExpectation.maintenance_id == maintenance_id
+            UplinkExpectation.maintenance_id == maintenance_id,
+            UplinkExpectation.hostname.in_(active_hostnames),
         )
         result = await session.execute(stmt)
         expectations = result.scalars().all()

@@ -7,21 +7,21 @@
         <button
           v-if="maintenanceId"
           @click="exportCSV"
-          class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm font-medium transition"
+          class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition"
         >
           📤 CSV 匯出
         </button>
         <button
           v-if="userCanWrite"
           @click="showImportModal = true"
-          class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm font-medium transition"
+          class="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition"
         >
           📥 CSV 匯入
         </button>
         <button
           v-if="userCanWrite"
           @click="openContactModal(null)"
-          class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-sm font-medium transition"
+          class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium transition"
         >
           ➕ 新增聯絡人
         </button>
@@ -29,7 +29,7 @@
     </div>
 
     <!-- 無歲修提示 -->
-    <div v-if="!maintenanceId" class="bg-slate-800/80 rounded border border-slate-600 p-8 text-center">
+    <div v-if="!maintenanceId" class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-600/40 p-8 text-center">
       <div class="text-5xl mb-3">📇</div>
       <p class="text-slate-400 text-lg">請先在頂部選擇歲修 ID</p>
     </div>
@@ -38,7 +38,7 @@
     <div v-else class="flex gap-4">
       <!-- 左側分類選單 -->
       <div class="w-48 flex-shrink-0">
-        <div class="bg-slate-800/80 rounded border border-slate-600 overflow-hidden">
+        <div class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-600/40 overflow-hidden">
           <!-- 標題 -->
           <div class="flex justify-between items-center px-3 py-2 border-b border-slate-700">
             <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wide">分類</h3>
@@ -129,13 +129,13 @@
           <input
             v-model="searchQuery"
             type="text"
-            placeholder="🔍 搜尋姓名、角色、電話、Email..."
-            class="w-full px-3 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+            placeholder="搜尋姓名、角色、電話、Email..."
+            class="w-full px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
           />
         </div>
 
         <!-- 批量操作欄 -->
-        <div v-if="selectedContacts.length > 0 && userCanWrite" class="mb-3 flex items-center gap-3 bg-cyan-500/10 border border-cyan-500/30 rounded px-3 py-2">
+        <div v-if="selectedContacts.length > 0 && userCanWrite" class="mb-3 flex items-center gap-3 bg-cyan-500/10 border border-cyan-500/30 rounded-xl px-3 py-2">
           <span class="text-sm text-cyan-300">已選擇 {{ selectedContacts.length }} 筆</span>
 
           <!-- 批量修改分類 -->
@@ -143,7 +143,7 @@
             <span class="text-xs text-slate-400">移至</span>
             <select
               v-model="bulkTargetCategory"
-              class="px-2 py-1 bg-slate-700 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+              class="px-2 py-1 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
             >
               <option :value="null">未分類</option>
               <option v-for="cat in categories" :key="cat.id" :value="cat.id">
@@ -152,7 +152,8 @@
             </select>
             <button
               @click="bulkChangeCategory"
-              class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-sm transition"
+              class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="saving"
             >
               移動
             </button>
@@ -162,20 +163,26 @@
 
           <button
             @click="bulkDelete"
-            class="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-sm transition"
+            class="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+            :disabled="saving"
           >
             批量刪除
           </button>
           <button
             @click="selectedContacts = []"
-            class="px-3 py-1 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm transition"
+            class="px-3 py-1 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm transition"
           >
             取消選擇
           </button>
         </div>
 
+        <!-- 載入中 -->
+        <div v-if="loading" class="flex justify-center py-8">
+          <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+        </div>
+
         <!-- 聯絡人列表 -->
-        <div v-if="filteredContacts.length > 0" class="bg-slate-800/80 rounded border border-slate-600 overflow-hidden">
+        <div v-if="!loading && filteredContacts.length > 0" class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-600/40 overflow-hidden">
           <!-- 表頭 -->
           <div class="grid grid-cols-12 gap-2 px-3 py-2 bg-slate-900/50 border-b border-slate-700 text-xs text-slate-400 uppercase tracking-wide items-center">
             <div v-if="userCanWrite" class="col-span-1 flex items-center">
@@ -240,13 +247,13 @@
         </div>
 
         <!-- 無資料 -->
-        <div v-else class="bg-slate-800/80 rounded border border-slate-600 p-8 text-center">
+        <div v-else-if="!loading" class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-600/40 p-8 text-center">
           <div class="text-4xl mb-3">📭</div>
           <p class="text-slate-400 text-sm">{{ searchQuery ? '沒有符合的搜尋結果' : '尚無聯絡人' }}</p>
           <button
             v-if="!searchQuery && userCanWrite"
             @click="openContactModal(null)"
-            class="mt-3 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-sm transition"
+            class="mt-3 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm transition"
           >
             + 新增聯絡人
           </button>
@@ -276,14 +283,14 @@
               <input
                 v-model="contactForm.name"
                 type="text"
-                class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
               />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">分類</label>
               <select
                 v-model="contactForm.category_id"
-                class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
               >
                 <option :value="null">未分類</option>
                 <option v-for="cat in categories" :key="cat.id" :value="cat.id">
@@ -296,36 +303,36 @@
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs text-slate-400 mb-1">角色</label>
-              <input v-model="contactForm.title" type="text" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+              <input v-model="contactForm.title" type="text" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">公司</label>
-              <input v-model="contactForm.company" type="text" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+              <input v-model="contactForm.company" type="text" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
             </div>
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs text-slate-400 mb-1">電話</label>
-              <input v-model="contactForm.phone" type="tel" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+              <input v-model="contactForm.phone" type="tel" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">手機</label>
-              <input v-model="contactForm.mobile" type="tel" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+              <input v-model="contactForm.mobile" type="tel" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
             </div>
           </div>
 
           <div>
             <label class="block text-xs text-slate-400 mb-1">Email</label>
-            <input v-model="contactForm.email" type="email" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+            <input v-model="contactForm.email" type="email" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
           </div>
         </div>
 
         <div class="flex justify-end gap-2 mt-4">
-          <button @click="showContactModal = false" class="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm transition">
+          <button @click="showContactModal = false" class="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm transition">
             取消
           </button>
-          <button @click="saveContact" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-sm transition disabled:opacity-50 disabled:cursor-not-allowed" :disabled="!contactForm.name">
+          <button @click="saveContact" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm transition disabled:opacity-50 disabled:cursor-not-allowed" :disabled="!contactForm.name || saving">
             儲存
           </button>
         </div>
@@ -354,7 +361,7 @@
             <input
               v-model="categoryForm.name"
               type="text"
-              class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+              class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
             />
           </div>
 
@@ -376,10 +383,10 @@
         </div>
 
         <div class="flex justify-end gap-2 mt-4">
-          <button @click="showCategoryModal = false" class="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm transition">
+          <button @click="showCategoryModal = false" class="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm transition">
             取消
           </button>
-          <button @click="saveCategory" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-sm transition" :disabled="!categoryForm.name">
+          <button @click="saveCategory" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm transition disabled:opacity-50 disabled:cursor-not-allowed" :disabled="!categoryForm.name || saving">
             儲存
           </button>
         </div>
@@ -413,13 +420,14 @@
         <div class="flex justify-end gap-2">
           <button
             @click="showDeleteModal = false"
-            class="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm transition"
+            class="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm transition"
           >
             取消
           </button>
           <button
             @click="confirmDelete"
-            class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded text-sm transition"
+            class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+            :disabled="saving"
           >
             確定刪除
           </button>
@@ -441,10 +449,10 @@
           <button @click="showImportModal = false" class="text-slate-400 hover:text-white text-xl">&times;</button>
         </div>
 
-        <div class="bg-slate-700/50 rounded p-3 mb-4 text-sm">
+        <div class="bg-slate-700/50 rounded-lg p-3 mb-4 text-sm">
           <p class="text-slate-300 mb-2">CSV 格式說明：</p>
-          <code class="block bg-slate-900 p-2 rounded text-xs text-cyan-300 overflow-x-auto">
-            category_name,name,title,company,phone,mobile,email
+          <code class="block bg-slate-900 p-2 rounded-lg text-xs text-cyan-300 overflow-x-auto">
+            category_name,name,title,department,company,phone,mobile,email,extension,notes
           </code>
           <p class="text-slate-400 text-xs mt-2">* category_name 欄位會自動建立對應分類</p>
         </div>
@@ -455,25 +463,25 @@
             type="file"
             accept=".csv"
             @change="handleFileSelect"
-            class="w-full text-sm text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-cyan-600 file:text-white hover:file:bg-cyan-500"
+            class="w-full text-sm text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-cyan-600 file:text-white hover:file:bg-cyan-500"
           />
         </div>
 
         <div class="flex justify-between">
           <button
             @click="downloadTemplate"
-            class="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm transition"
+            class="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm transition"
           >
             📄 下載範本
           </button>
           <div class="flex gap-2">
-            <button @click="showImportModal = false" class="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded text-sm transition">
+            <button @click="showImportModal = false" class="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm transition">
               取消
             </button>
             <button
               @click="importCSV"
-              class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-sm transition"
-              :disabled="!importFile"
+              class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="!importFile || saving"
             >
               匯入
             </button>
@@ -492,6 +500,9 @@ import { canWrite } from '@/utils/auth'
 
 const maintenanceId = inject('maintenanceId')
 const userCanWrite = computed(() => canWrite.value)
+
+const loading = ref(false)
+const saving = ref(false)
 
 const categories = ref([])
 const contacts = ref([])
@@ -597,28 +608,37 @@ const toggleSelect = (id) => {
 
 // 批量刪除
 const bulkDelete = async () => {
-  if (selectedContacts.value.length === 0) return
+  if (!selectedContacts.value.length) return
+  if (!confirm('確定要刪除選取的聯絡人？')) return
 
-  if (!confirm(`確定要刪除選中的 ${selectedContacts.value.length} 筆聯絡人嗎？`)) {
-    return
-  }
-
+  saving.value = true
   try {
-    // 逐一刪除（可以之後優化成批量 API）
-    for (const id of selectedContacts.value) {
-      await api.delete(`/contacts/${maintenanceId.value}/${id}`)
+    const results = { success: 0, failed: 0 }
+    for (const id of [...selectedContacts.value]) {
+      try {
+        await api.delete(`/contacts/${maintenanceId.value}/${id}`)
+        results.success++
+      } catch {
+        results.failed++
+      }
     }
+
+    if (results.failed > 0) {
+      alert(`刪除完成：成功 ${results.success} 筆，失敗 ${results.failed} 筆`)
+    } else {
+      alert(`已刪除 ${results.success} 筆聯絡人`)
+    }
+
     selectedContacts.value = []
     await fetchContacts()
-  } catch (error) {
-    console.error('Failed to bulk delete:', error)
-    alert('刪除失敗')
+  } finally {
+    saving.value = false
   }
 }
 
 // 批量修改分類
 const bulkChangeCategory = async () => {
-  if (selectedContacts.value.length === 0) return
+  if (!selectedContacts.value.length || bulkTargetCategory.value === undefined) return
 
   const targetName = bulkTargetCategory.value === null
     ? '未分類'
@@ -628,17 +648,31 @@ const bulkChangeCategory = async () => {
     return
   }
 
+  saving.value = true
   try {
-    for (const id of selectedContacts.value) {
-      await api.put(`/contacts/${maintenanceId.value}/${id}`, {
-        category_id: bulkTargetCategory.value
-      })
+    const results = { success: 0, failed: 0 }
+    for (const id of [...selectedContacts.value]) {
+      try {
+        await api.put(`/contacts/${maintenanceId.value}/${id}`, {
+          category_id: bulkTargetCategory.value
+        })
+        results.success++
+      } catch {
+        results.failed++
+      }
     }
+
+    if (results.failed > 0) {
+      alert(`分類變更完成：成功 ${results.success} 筆，失敗 ${results.failed} 筆`)
+    } else {
+      alert(`已變更 ${results.success} 筆聯絡人分類`)
+    }
+
     selectedContacts.value = []
+    bulkTargetCategory.value = null
     await fetchContacts()
-  } catch (error) {
-    console.error('Failed to bulk change category:', error)
-    alert('修改分類失敗')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -655,11 +689,15 @@ const fetchCategories = async () => {
 
 const fetchContacts = async () => {
   if (!maintenanceId.value) return
+  loading.value = true
   try {
     const response = await api.get(`/contacts/${maintenanceId.value}`)
     contacts.value = response.data
-  } catch (error) {
-    console.error('Failed to fetch contacts:', error)
+  } catch (e) {
+    console.error(e)
+    alert('載入聯絡人失敗')
+  } finally {
+    loading.value = false
   }
 }
 
@@ -677,6 +715,7 @@ const openCategoryModal = (category) => {
 const saveCategory = async () => {
   if (!categoryForm.value.name || !maintenanceId.value) return
 
+  saving.value = true
   try {
     if (editingCategory.value) {
       await api.put(`/contacts/categories/${editingCategory.value.id}`, categoryForm.value)
@@ -692,6 +731,8 @@ const saveCategory = async () => {
   } catch (error) {
     console.error('Failed to save category:', error)
     alert(`儲存失敗: ${error.response?.data?.detail || error.message}`)
+  } finally {
+    saving.value = false
   }
 }
 
@@ -734,17 +775,26 @@ const saveContact = async () => {
     return
   }
 
+  const editableFields = ['name', 'title', 'department', 'company', 'phone', 'mobile', 'email', 'extension', 'notes', 'category_id']
+  const payload = {}
+  for (const key of editableFields) {
+    if (key in contactForm.value) payload[key] = contactForm.value[key]
+  }
+
+  saving.value = true
   try {
     if (editingContact.value) {
-      await api.put(`/contacts/${maintenanceId.value}/${editingContact.value.id}`, contactForm.value)
+      await api.put(`/contacts/${maintenanceId.value}/${editingContact.value.id}`, payload)
     } else {
-      await api.post(`/contacts/${maintenanceId.value}`, contactForm.value)
+      await api.post(`/contacts/${maintenanceId.value}`, payload)
     }
     showContactModal.value = false
     await fetchContacts()
   } catch (error) {
     console.error('Failed to save contact:', error)
     alert(`儲存失敗: ${error.response?.data?.detail || error.message}`)
+  } finally {
+    saving.value = false
   }
 }
 
@@ -761,6 +811,7 @@ const deleteContact = (contact) => {
 const confirmDelete = async () => {
   if (!deleteTarget.value) return
 
+  saving.value = true
   try {
     if (deleteTarget.value.type === 'category') {
       await api.delete(`/contacts/categories/${deleteTarget.value.id}`)
@@ -775,8 +826,11 @@ const confirmDelete = async () => {
     }
     showDeleteModal.value = false
     deleteTarget.value = null
-  } catch (error) {
-    console.error('Failed to delete:', error)
+  } catch (e) {
+    console.error(e)
+    alert('刪除失敗，請稍後再試')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -812,6 +866,7 @@ const downloadTemplate = () => {
   link.href = URL.createObjectURL(blob)
   link.download = 'contacts_template.csv'
   link.click()
+  URL.revokeObjectURL(link.href)
 }
 
 // 匯出 CSV（根據當前篩選條件）
@@ -865,6 +920,7 @@ const exportCSV = () => {
 
   link.download = filename
   link.click()
+  URL.revokeObjectURL(link.href)
 }
 
 // Watch maintenance ID changes
@@ -879,6 +935,13 @@ watch(maintenanceId, (newId) => {
 // 切換分類時清空選擇
 watch(selectedCategoryId, () => {
   selectedContacts.value = []
+})
+
+// 關閉匯入 Modal 時清空檔案
+watch(showImportModal, (val) => {
+  if (!val) {
+    importFile.value = null
+  }
 })
 
 onMounted(() => {

@@ -114,7 +114,6 @@ COPY --chown=appuser:appgroup app/__init__.py app/
 COPY --chown=appuser:appgroup app/core/ app/core/
 COPY --chown=appuser:appgroup app/db/ app/db/
 COPY --chown=appuser:appgroup app/api/ app/api/
-COPY --chown=appuser:appgroup app/schemas/ app/schemas/
 COPY --chown=appuser:appgroup app/repositories/ app/repositories/
 COPY --chown=appuser:appgroup app/services/ app/services/
 COPY --chown=appuser:appgroup app/indicators/ app/indicators/

@@ -20,7 +20,6 @@ from app.db.models import (
     ClientCategory,
     ClientCategoryMember,
     ClientComparison,
-    SeverityOverride,
 )
 from app.services.system_log import write_log
 
@@ -120,8 +119,6 @@ class CategoryStatsResponse(BaseModel):
     color: str
     total_count: int        # 總數（包含未偵測）
     issue_count: int        # 有異常的數量
-    critical_count: int     # 重大問題數量
-    warning_count: int      # 警告數量
     undetected_count: int = 0  # 未偵測（分類中有但監測數據中沒有）
 
 
@@ -209,7 +206,7 @@ async def get_category_stats(
         
         # 計算統計
         stats: dict[int | None, dict[str, Any]] = {}
-        
+
         # 初始化種類統計
         for cat in categories:
             stats[cat.id] = {
@@ -218,11 +215,9 @@ async def get_category_stats(
                 "color": cat.color or "#3B82F6",
                 "total_count": 0,
                 "issue_count": 0,
-                "critical_count": 0,
-                "warning_count": 0,
                 "undetected_count": 0,
             }
-        
+
         # 未分類
         stats[None] = {
             "category_id": None,
@@ -230,134 +225,72 @@ async def get_category_stats(
             "color": "#6B7280",
             "total_count": 0,
             "issue_count": 0,
-            "critical_count": 0,
-            "warning_count": 0,
             "undetected_count": 0,
         }
-        
-        # 獲取所有覆蓋記錄
-        override_stmt = select(SeverityOverride).where(
-            SeverityOverride.maintenance_id == maintenance_id
-        )
-        override_result = await session.execute(override_stmt)
-        overrides = override_result.scalars().all()
-        
-        # 建立 MAC -> 覆蓋 severity 對照
-        override_map = {
-            o.mac_address.upper(): o.override_severity for o in overrides
-        }
-        
+
         # 建立已偵測到的 MAC 集合
         detected_macs = {
             c.mac_address.upper() for c in comparisons if c.mac_address
         }
-        
+
         # 用於計算「全部」聯集的 MAC 集合
         all_macs: set[str] = set()
         all_issue_macs: set[str] = set()
-        all_critical_macs: set[str] = set()
-        all_warning_macs: set[str] = set()
         all_undetected_macs: set[str] = set()
-        
-        # 統計每個比較結果（標準化 MAC 為大寫）
+
+        # 統計每個比較結果
         for comp in comparisons:
             normalized_mac = comp.mac_address.upper() if comp.mac_address else ""
             if not normalized_mac:
                 continue
-            
-            # 獲取該 MAC 所屬的所有分類
+
             cat_ids = mac_to_categories.get(normalized_mac, [])
-            
-            # 如果沒有分類，歸入未分類
             if not cat_ids:
                 cat_ids = [None]
-            
-            # 使用覆蓋的 severity（如果有）
-            effective_severity = override_map.get(
-                normalized_mac, comp.severity
-            )
 
-            # 判斷是否為異常（與 /diff 端點邏輯一致）：
-            # - 如果被覆蓋為 info（正常），則不算異常
-            # - 否則：有變化的 OR severity 為 critical/warning/undetected
-            if effective_severity == "info":
-                is_issue = False
-            elif effective_severity == "undetected":
-                is_issue = True
-            else:
-                is_issue = comp.is_changed or effective_severity in ("critical", "warning")
-            
-            # 統計到每個所屬分類
+            is_issue = comp.is_changed or comp.severity == "undetected"
+
             for cat_id in cat_ids:
                 if cat_id not in stats:
                     continue
                 stats[cat_id]["total_count"] += 1
-
-                if effective_severity == "undetected":
+                if comp.severity == "undetected":
                     stats[cat_id]["undetected_count"] += 1
-
                 if is_issue:
                     stats[cat_id]["issue_count"] += 1
-                    if effective_severity == "critical":
-                        stats[cat_id]["critical_count"] += 1
-                    elif effective_severity == "warning":
-                        stats[cat_id]["warning_count"] += 1
 
-            # 聯集統計（用於「全部」）
             all_macs.add(normalized_mac)
-            if effective_severity == "undetected":
+            if comp.severity == "undetected":
                 all_undetected_macs.add(normalized_mac)
             if is_issue:
                 all_issue_macs.add(normalized_mac)
-                if effective_severity == "critical":
-                    all_critical_macs.add(normalized_mac)
-                elif effective_severity == "warning":
-                    all_warning_macs.add(normalized_mac)
-        
-        # 統計分類成員中未偵測到的 MAC（只統計有分類的）
-        # 未偵測預設算異常，但如果被覆蓋為 info 則不算異常
+
+        # 統計分類成員中未偵測到的 MAC
         for mac, cat_ids in mac_to_categories.items():
             if mac not in detected_macs:
-                # 這個 MAC 在分類成員表中但沒有監測數據
-                # 檢查是否有覆蓋
-                effective_severity = override_map.get(mac, 'undetected')
-                is_issue = effective_severity in ('critical', 'warning', 'undetected')
-                
                 for cat_id in cat_ids:
                     if cat_id in stats:
                         stats[cat_id]["total_count"] += 1
                         stats[cat_id]["undetected_count"] += 1
-                        if is_issue:
-                            stats[cat_id]["issue_count"] += 1
-                            if effective_severity == "critical":
-                                stats[cat_id]["critical_count"] += 1
-                            elif effective_severity == "warning":
-                                stats[cat_id]["warning_count"] += 1
+                        stats[cat_id]["issue_count"] += 1
                 all_macs.add(mac)
                 all_undetected_macs.add(mac)
-                if is_issue:
-                    all_issue_macs.add(mac)
-                    if effective_severity == "critical":
-                        all_critical_macs.add(mac)
-                    elif effective_severity == "warning":
-                        all_warning_macs.add(mac)
-        
+                all_issue_macs.add(mac)
+
         # 加入「全部」統計（使用聯集計算）
         all_stats = {
             "category_id": -1,
             "category_name": "全部",
             "color": "#1F2937",
-            "total_count": len(all_macs),  # 聯集：去重後的 MAC 總數
+            "total_count": len(all_macs),
             "issue_count": len(all_issue_macs),
-            "critical_count": len(all_critical_macs),
-            "warning_count": len(all_warning_macs),
             "undetected_count": len(all_undetected_macs),
         }
-        
+
         result = [all_stats]
         result.extend(stats[cat.id] for cat in categories)
         result.append(stats[None])
-        
+
         return result
 
 

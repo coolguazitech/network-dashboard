@@ -13,7 +13,7 @@
 #   make clean-raw         → 清除 raw data 和報告
 # =============================================================================
 
-.PHONY: fetch fetch-dry parse parse-verbose parse-debug parse-ok parse-reset test-parsers clean-raw help mock-server fetch-mock fetch-sample verify collect-once mock-timeseries
+.PHONY: fetch fetch-dry parse parse-verbose parse-debug parse-ok parse-reset test-parsers clean-raw help verify collect-once mock-timeseries
 
 # 預設目標
 help:
@@ -36,10 +36,6 @@ help:
 	@echo "  TARGET=10.1.1.1 make fetch    只撈特定交換機"
 	@echo "  API=get_fan make parse        只測特定 API"
 	@echo ""
-	@echo "隨機取樣（從大量設備清單）："
-	@echo "  make fetch-sample             從 inventory 隨機挑 20 台 (預設)"
-	@echo "  N=50 make fetch-sample        從 inventory 隨機挑 50 台"
-	@echo ""
 	@echo "採集驗證："
 	@echo "  make verify                   端到端 pipeline 驗證 (in-memory, 秒級)"
 	@echo "  make collect-once             對真實 DB 跑一輪採集 (mock fetcher)"
@@ -49,10 +45,6 @@ help:
 	@echo "時間序列測試："
 	@echo "  make mock-timeseries          模擬多輪採集 (預設 10 輪, 2s 間隔)"
 	@echo "  N=30 INTERVAL=1 make mock-timeseries  自訂輪數和間隔"
-	@echo ""
-	@echo "Mock 測試："
-	@echo "  make mock-server              啟動 Mock API server (port 9999)"
-	@echo "  make fetch-mock               用 Mock config 撈取 (需先啟動 mock-server)"
 	@echo ""
 	@echo "Timeout 選項："
 	@echo "  TIMEOUT=60 make fetch                     覆蓋 read timeout (秒)"
@@ -92,18 +84,6 @@ parse-reset:
 
 # ── Full pipeline: fetch + parse ──
 test-parsers: fetch parse
-
-# ── Mock API server for local testing ──
-mock-server:
-	python scripts/mock_api_server.py
-
-# ── Fetch using mock config (requires mock-server running) ──
-fetch-mock:
-	python scripts/fetch_raw.py --config config/api_test_mock.yaml $(if $(API),--api $(API)) $(if $(TARGET),--target $(TARGET)) $(if $(TIMEOUT),--timeout $(TIMEOUT)) $(if $(CONNECT_TIMEOUT),--connect-timeout $(CONNECT_TIMEOUT))
-
-# ── Fetch with random sampling from device inventory ──
-fetch-sample:
-	python scripts/fetch_raw.py --inventory config/device_inventory.csv --sample $(or $(N),20) $(if $(API),--api $(API)) $(if $(TIMEOUT),--timeout $(TIMEOUT)) $(if $(CONNECT_TIMEOUT),--connect-timeout $(CONNECT_TIMEOUT))
 
 # ── Pipeline verification (in-memory, no external dependency) ──
 verify:

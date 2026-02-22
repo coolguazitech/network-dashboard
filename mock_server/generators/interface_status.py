@@ -1,8 +1,6 @@
 """Mock: 介面狀態 (get_interface_status)。"""
 from __future__ import annotations
 
-from mock_server.convergence import should_device_fail
-
 # 20 個介面，涵蓋不同類型
 _HPE_INTERFACES = [
     ("GE1/0/1", 1), ("GE1/0/2", 1), ("GE1/0/3", 100),
@@ -35,15 +33,7 @@ _NXOS_INTERFACES = [
 ]
 
 
-def generate(
-    device_type: str,
-    is_old: bool | None,
-    active_seconds: float,
-    converge_time: float,
-    **_kw: object,
-) -> str:
-    fails = should_device_fail(is_old, active_seconds, converge_time)
-
+def generate(device_type: str, fails: bool = False, **_kw: object) -> str:
     if device_type == "nxos":
         return _generate_nxos(fails)
     elif device_type == "ios":

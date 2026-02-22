@@ -480,7 +480,6 @@ class MockDataGenerator:
             duplex=duplex,
             link_status=link_status,
             ping_reachable=ping_reachable,
-            acl_passes=base.acl_passes,
         )
 
     def _create_new_record(
@@ -578,7 +577,6 @@ class MockDataGenerator:
             duplex="full",
             link_status="up",
             ping_reachable=True,
-            acl_passes=True,
         )
 
     def _create_new_record_realistic(
@@ -686,7 +684,6 @@ class MockDataGenerator:
             duplex="full",
             link_status="up",
             ping_reachable=ping_reachable,
-            acl_passes=True,
         )
 
     def _create_varied_record_realistic(
@@ -786,7 +783,6 @@ class MockDataGenerator:
             duplex=duplex,
             link_status=link_status,
             ping_reachable=ping_reachable,
-            acl_passes=base.acl_passes,
         )
 
     def _tenant_to_category(self, tenant_group: TenantGroup | None) -> str:

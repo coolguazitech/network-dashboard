@@ -7,19 +7,14 @@ from __future__ import annotations
 
 import hashlib
 
-from mock_server.convergence import should_device_fail
-
 
 def generate(
     device_type: str,
-    is_old: bool | None,
-    active_seconds: float,
-    converge_time: float,
+    fails: bool = False,
     switch_ip: str = "",
     mac_list: list[dict] | None = None,
     **_kw: object,
 ) -> str:
-    fails = should_device_fail(is_old, active_seconds, converge_time)
 
     # 設備不可達時回傳空表
     if fails:

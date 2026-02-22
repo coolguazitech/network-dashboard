@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import LinkStatus
-from app.db.models import PortChannelRecord, PortChannelExpectation
+from app.db.models import MaintenanceDeviceList, PortChannelRecord, PortChannelExpectation
 from app.indicators.base import (
     BaseIndicator,
     DisplayConfig,
@@ -96,9 +96,18 @@ class PortChannelIndicator(BaseIndicator):
         session: AsyncSession,
         maintenance_id: str,
     ) -> _ExpMap:
-        """Load expectations and index them as hostname -> {pc_name: exp}."""
+        """Load expectations (only for devices still in device list)."""
+        active_hostnames = (
+            select(MaintenanceDeviceList.new_hostname)
+            .where(
+                MaintenanceDeviceList.maintenance_id == maintenance_id,
+                MaintenanceDeviceList.new_hostname.isnot(None),
+            )
+        )
+
         stmt = select(PortChannelExpectation).where(
             PortChannelExpectation.maintenance_id == maintenance_id,
+            PortChannelExpectation.hostname.in_(active_hostnames),
         )
         result = await session.execute(stmt)
         expectations = result.scalars().all()

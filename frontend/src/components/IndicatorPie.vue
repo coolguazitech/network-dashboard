@@ -80,9 +80,9 @@ const statusColor = computed(() => {
 
 const getTitle = (type) => {
   const titles = {
-    transceiver: '光模塊驗收',
-    version: '版本驗收',
-    uplink: 'Uplink 驗收',
+    transceiver: 'TRANSCEIVER',
+    version: 'VERSION',
+    uplink: 'UPLINK',
   }
   return titles[type] || type
 }

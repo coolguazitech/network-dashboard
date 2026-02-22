@@ -44,15 +44,31 @@ class ErrorCountIndicator(BaseIndicator):
         session: AsyncSession,
     ) -> IndicatorEvaluationResult:
         """評估錯誤計數指標。"""
+        # 設備清單為空 → 沒有驗收項目
+        device_hostnames = await self._get_active_device_hostnames(
+            session, maintenance_id,
+        )
+        if not device_hostnames:
+            return IndicatorEvaluationResult(
+                indicator_type=self.indicator_type,
+                maintenance_id=maintenance_id,
+                total_count=0, pass_count=0, fail_count=0,
+                pass_rates={"error_no_growth": 0},
+                summary="無設備資料",
+            )
+
         repo = InterfaceErrorRecordRepo(session)
+        active_set = set(device_hostnames)
 
         # 1. 取最新採集（per device 最新 batch 的所有 rows）
         current_records = await repo.get_latest_per_device(maintenance_id)
 
-        # 2. 按 device 分組，記錄每台設備的 latest batch_id
+        # 2. 按 device 分組（只保留設備清單中的設備），記錄 latest batch_id
         device_batch: dict[str, int] = {}
         current_by_device: dict[str, list[InterfaceErrorRecord]] = defaultdict(list)
         for r in current_records:
+            if r.switch_hostname not in active_set:
+                continue
             current_by_device[r.switch_hostname].append(r)
             device_batch[r.switch_hostname] = r.batch_id
 

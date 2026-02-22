@@ -2,13 +2,7 @@
 from __future__ import annotations
 
 
-def generate(
-    device_type: str,
-    is_old: bool | None,
-    active_seconds: float,
-    converge_time: float,
-    **_kw: object,
-) -> str:
+def generate(device_type: str, **_kw: object) -> str:
     lines = ["Interface,ACL"]
     for i in range(1, 21):
         lines.append(f"GE1/0/{i},3001")

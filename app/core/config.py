@@ -21,11 +21,27 @@ class SourceConfig(BaseModel):
 
 
 class FetcherSourceConfig(BaseModel):
-    """All external API source configs (FNA / DNA / GNMSPing)."""
+    """All external API source configs (FNA / DNA)."""
 
     fna: SourceConfig = SourceConfig()
     dna: SourceConfig = SourceConfig()
-    gnmsping: SourceConfig = SourceConfig(timeout=60)
+
+
+class GnmsPingConfig(BaseModel):
+    """GNMS Ping per-tenant config.
+
+    每個 tenant_group 有自己的 base_url，endpoint 相同。
+    .env 範例::
+
+        GNMSPING__TIMEOUT=60
+        GNMSPING__ENDPOINT=/api/v1/ping
+        GNMSPING__BASE_URLS__F18=http://gnmsping-f18:8001
+        GNMSPING__BASE_URLS__F6=http://gnmsping-f6:8001
+    """
+
+    timeout: int = 60
+    endpoint: str = "/api/v1/ping"
+    base_urls: dict[str, str] = {}  # TenantGroup value → base_url
 
 
 class FetcherEndpointConfig(BaseModel):
@@ -57,9 +73,6 @@ class FetcherEndpointConfig(BaseModel):
     get_version: str = "/api/v1/version/{switch_ip}"
     # DNA (1)
     get_interface_status: str = "/api/v1/interface-status/{switch_ip}"
-    # GNMSPING (2)
-    ping_batch: str = "/api/v1/ping/{switch_ip}"
-    gnms_ping: str = "/api/v1/gnms-ping"
 
 
 class MinioConfig(BaseModel):
@@ -103,6 +116,9 @@ class Settings(BaseSettings):
 
     # Fetcher Endpoints (per-fetcher endpoint templates)
     fetcher_endpoint: FetcherEndpointConfig = FetcherEndpointConfig()
+
+    # GNMS Ping (per-tenant base_url + 統一 endpoint)
+    gnmsping: GnmsPingConfig = GnmsPingConfig()
 
     # Scheduling
     collection_interval_seconds: int = Field(

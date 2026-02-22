@@ -16,6 +16,7 @@ from app.core.enums import UserRole
 from app.db.base import get_async_session
 from app.db.models import User, MaintenanceConfig
 from app.services.auth_service import AuthService
+from app.services.system_log import write_log
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -109,7 +110,7 @@ async def get_available_roles(
     """
     role_info = {
         UserRole.ROOT: ("管理員", "可管理歲修和使用者，擁有所有權限"),
-        UserRole.PM: ("PM", "專案經理，有歲修內的所有寫入權限"),
+        UserRole.PM: ("執秘", "有歲修內的所有寫入權限"),
         UserRole.GUEST: ("訪客", "只有讀取權限，無法進行任何寫入操作"),
     }
 
@@ -195,7 +196,7 @@ async def list_pending_users(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_user(
     data: CreateUserRequest,
-    _: Annotated[dict[str, Any], Depends(require_root)],
+    current_user: Annotated[dict[str, Any], Depends(require_root)],
     session: AsyncSession = Depends(get_async_session),
 ) -> UserListResponse:
     """
@@ -243,8 +244,21 @@ async def create_user(
     if role in [UserRole.PM, UserRole.GUEST] and not data.maintenance_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="PM 和訪客必須指定歲修 ID",
+            detail="執秘和訪客必須指定歲修 ID",
         )
+
+    # 每個歲修只能有一個執秘
+    if role == UserRole.PM and data.maintenance_id:
+        stmt = select(User).where(
+            User.role == UserRole.PM,
+            User.maintenance_id == data.maintenance_id,
+        )
+        result = await session.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"歲修 '{data.maintenance_id}' 已有執秘，每個歲修只能有一位執秘",
+            )
 
     # 驗證 maintenance_id 是否存在
     if data.maintenance_id:
@@ -272,6 +286,14 @@ async def create_user(
     session.add(user)
     await session.commit()
     await session.refresh(user)
+
+    await write_log(
+        level="INFO",
+        source=current_user.get("username", "unknown"),
+        summary=f"新增使用者「{user.display_name}」(角色: {role.value})",
+        module="users",
+        maintenance_id=user.maintenance_id,
+    )
 
     return UserListResponse(
         id=user.id,
@@ -382,12 +404,28 @@ async def update_user(
     if data.role is not None:
         try:
             new_role = UserRole(data.role)
-            user.role = new_role
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"無效的角色: {data.role}",
             )
+
+        # 每個歲修只能有一個執秘
+        mid = data.maintenance_id if data.maintenance_id is not None else user.maintenance_id
+        if new_role == UserRole.PM and mid:
+            stmt = select(User).where(
+                User.role == UserRole.PM,
+                User.maintenance_id == mid,
+                User.id != user_id,
+            )
+            result = await session.execute(stmt)
+            if result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"歲修 '{mid}' 已有執秘，每個歲修只能有一位執秘",
+                )
+
+        user.role = new_role
     if data.maintenance_id is not None:
         # 驗證 maintenance_id 是否存在
         if data.maintenance_id:
@@ -406,6 +444,14 @@ async def update_user(
     await session.commit()
     await session.refresh(user)
 
+    await write_log(
+        level="INFO",
+        source=current_user.get("username", "unknown"),
+        summary=f"更新使用者「{user.display_name}」",
+        module="users",
+        maintenance_id=user.maintenance_id,
+    )
+
     return UserListResponse(
         id=user.id,
         username=user.username,
@@ -421,7 +467,7 @@ async def update_user(
 @router.post("/{user_id}/activate")
 async def activate_user(
     user_id: int,
-    _: Annotated[dict[str, Any], Depends(require_root)],
+    current_user: Annotated[dict[str, Any], Depends(require_root)],
     session: AsyncSession = Depends(get_async_session),
 ) -> UserListResponse:
     """
@@ -448,6 +494,14 @@ async def activate_user(
     user.is_active = True
     await session.commit()
     await session.refresh(user)
+
+    await write_log(
+        level="INFO",
+        source=current_user.get("username", "unknown"),
+        summary=f"啟用使用者「{user.display_name}」",
+        module="users",
+        maintenance_id=user.maintenance_id,
+    )
 
     return UserListResponse(
         id=user.id,
@@ -494,16 +548,28 @@ async def delete_user(
             detail="不可刪除自己的帳號",
         )
 
+    # 保存資訊供日誌使用
+    deleted_name = user.display_name
+    deleted_mid = user.maintenance_id
+
     # 刪除使用者
     await session.delete(user)
     await session.commit()
+
+    await write_log(
+        level="WARNING",
+        source=current_user.get("username", "unknown"),
+        summary=f"刪除使用者「{deleted_name}」",
+        module="users",
+        maintenance_id=deleted_mid,
+    )
 
 
 @router.post("/{user_id}/reset-password")
 async def reset_user_password(
     user_id: int,
     data: ResetPasswordRequest,
-    _: Annotated[dict[str, Any], Depends(require_root)],
+    current_user: Annotated[dict[str, Any], Depends(require_root)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, str]:
     """
@@ -521,5 +587,13 @@ async def reset_user_password(
 
     user.password_hash = AuthService.hash_password(data.new_password)
     await session.commit()
+
+    await write_log(
+        level="WARNING",
+        source=current_user.get("username", "unknown"),
+        summary=f"重設使用者「{user.display_name}」的密碼",
+        module="users",
+        maintenance_id=user.maintenance_id,
+    )
 
     return {"message": f"使用者 {user.username} 的密碼已重設"}

@@ -46,29 +46,45 @@ class FanIndicator(BaseIndicator):
         """
         評估風扇指標。
 
-        Args:
-            maintenance_id: 維護作業 ID
-            session: 資料庫 session
+        分母 = 設備清單中的設備數（source of truth）。
+        分子 = 風扇狀態全部正常的設備數。
         """
+        # 1. 設備清單 = 分母
+        device_hostnames = await self._get_active_device_hostnames(
+            session, maintenance_id,
+        )
+        total_count = len(device_hostnames)
+
+        if total_count == 0:
+            return IndicatorEvaluationResult(
+                indicator_type=self.indicator_type,
+                maintenance_id=maintenance_id,
+                total_count=0, pass_count=0, fail_count=0,
+                pass_rates={"status_ok": 0},
+                summary="無設備資料",
+            )
+
+        # 2. 取採集資料，按設備分組
         repo = FanRecordRepo(session)
         records = await repo.get_latest_per_device(maintenance_id)
 
-        # Group records by device hostname
-        devices: dict[str, list[FanRecord]] = defaultdict(list)
+        records_by_host: dict[str, list[FanRecord]] = defaultdict(list)
         for record in records:
-            devices[record.switch_hostname].append(record)
+            records_by_host[record.switch_hostname].append(record)
 
-        total_count = 0
+        # 3. 以設備清單為基準遍歷
         pass_count = 0
         failures = []
         passes = []
 
-        for hostname, device_records in devices.items():
+        for hostname in device_hostnames:
+            device_records = records_by_host.get(hostname, [])
+
             if not device_records:
                 failures.append({
                     "device": hostname,
-                    "interface": "N/A",
-                    "reason": "未檢測到風扇",
+                    "interface": "Cooling System",
+                    "reason": "尚無採集資料",
                     "data": None,
                 })
                 continue
@@ -84,7 +100,6 @@ class FanIndicator(BaseIndicator):
                         f"Fan {record.fan_id}: 狀態異常 ({record.status})"
                     )
 
-            total_count += 1
             if device_passed:
                 pass_count += 1
                 if len(passes) < 10:

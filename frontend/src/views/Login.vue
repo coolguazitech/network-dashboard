@@ -58,7 +58,7 @@
         <form v-if="activeTab === 'login'" @submit.prevent="handleLogin">
           <!-- 錯誤訊息 -->
           <Transition name="slide-down">
-          <div v-if="errorMsg" key="login-error" class="shake mb-4 p-3 bg-red-900/30 border border-red-700/50 rounded text-red-300 text-sm">
+          <div v-if="errorMsg" key="login-error" class="shake mb-4 p-3 bg-red-900/30 border border-red-700/50 rounded-xl text-red-300 text-sm">
             {{ errorMsg }}
           </div>
           </Transition>
@@ -87,7 +87,6 @@
                 class="w-full px-4 py-2.5 pr-10 bg-slate-900 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition"
                 placeholder="請輸入密碼"
                 :disabled="loading"
-                @keyup.enter="handleLogin"
               />
               <button
                 type="button"
@@ -125,14 +124,14 @@
         <form v-else @submit.prevent="handleRegister">
           <!-- 成功訊息 -->
           <Transition name="slide-down">
-          <div v-if="successMsg" key="reg-success" class="mb-4 p-3 bg-green-900/30 border border-green-700/50 rounded text-green-300 text-sm">
+          <div v-if="successMsg" key="reg-success" class="mb-4 p-3 bg-green-900/30 border border-green-700/50 rounded-xl text-green-300 text-sm">
             {{ successMsg }}
           </div>
           </Transition>
 
           <!-- 錯誤訊息 -->
           <Transition name="slide-down">
-          <div v-if="errorMsg" key="reg-error" class="shake mb-4 p-3 bg-red-900/30 border border-red-700/50 rounded text-red-300 text-sm">
+          <div v-if="errorMsg" key="reg-error" class="shake mb-4 p-3 bg-red-900/30 border border-red-700/50 rounded-xl text-red-300 text-sm">
             {{ errorMsg }}
           </div>
           </Transition>
@@ -170,10 +169,10 @@
             <div class="flex items-center gap-1.5 mb-1.5">
               <label class="text-sm text-slate-400">顯示名稱 <span class="text-red-400">*</span></label>
               <div class="relative group/dn">
-                <svg class="w-3.5 h-3.5 text-slate-500 group-hover/dn:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-[18px] h-[18px] text-slate-500 group-hover/dn:text-amber-400 transition cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <div class="absolute left-0 bottom-full mb-2 w-64 px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-xs text-amber-900 leading-relaxed opacity-0 invisible group-hover/dn:opacity-100 group-hover/dn:visible transition-all duration-200 z-50 pointer-events-none"
+                <div class="absolute left-0 bottom-full mb-2 w-80 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg shadow-lg text-sm text-amber-900 leading-relaxed opacity-0 invisible group-hover/dn:opacity-100 group-hover/dn:visible transition-all duration-200 z-50 pointer-events-none"
                   style="filter: drop-shadow(0 2px 8px rgba(217, 160, 0, 0.2));"
                 >
                   此名稱將作為您在系統中的識別名稱，用於案件指派與操作記錄。名稱不可與其他使用者重複。
@@ -218,6 +217,7 @@
                 </svg>
               </button>
             </div>
+            <p class="text-xs text-slate-500 mt-1">密碼至少需要 6 個字元</p>
           </div>
 
           <!-- 確認密碼 -->
@@ -279,7 +279,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { login } from '@/utils/auth'
 import api from '@/utils/api'
@@ -318,6 +318,7 @@ const canRegister = computed(() => {
     regUsername.value &&
     regDisplayName.value.trim() &&
     regPassword.value &&
+    regPassword.value.length >= 6 &&
     regPassword.value === regPasswordConfirm.value
 })
 
@@ -328,7 +329,8 @@ const loadMaintenances = async () => {
     const response = await api.get('/auth/maintenances-public')
     maintenances.value = response.data || []
   } catch (err) {
-    console.error('Failed to load maintenances:', err)
+    console.error('載入歲修列表失敗:', err)
+    errorMsg.value = '無法載入歲修列表，請重新整理頁面'
   } finally {
     loadingMaintenances.value = false
   }
@@ -336,21 +338,26 @@ const loadMaintenances = async () => {
 
 // 登入處理
 const handleLogin = async () => {
-  if (!username.value || !password.value) return
+  if (!username.value || !password.value || loading.value) return
 
   loading.value = true
   errorMsg.value = ''
   successMsg.value = ''
 
-  const result = await login(username.value, password.value)
+  try {
+    const result = await login(username.value, password.value)
 
-  loading.value = false
-
-  if (result.ok) {
-    const redirect = router.currentRoute.value.query.redirect || '/'
-    router.push(redirect)
-  } else {
-    errorMsg.value = result.error
+    if (result.ok) {
+      const redirect = router.currentRoute.value.query.redirect || '/'
+      const safePath = (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) ? redirect : '/'
+      router.push(safePath)
+    } else {
+      errorMsg.value = result.error || '登入失敗'
+    }
+  } catch (e) {
+    errorMsg.value = '連線失敗，請稍後再試'
+  } finally {
+    loading.value = false
   }
 }
 
@@ -394,6 +401,8 @@ const clearMessages = () => {
   errorMsg.value = ''
   successMsg.value = ''
 }
+
+watch(activeTab, () => { clearMessages() })
 
 onMounted(() => {
   loadMaintenances()

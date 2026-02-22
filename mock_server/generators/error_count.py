@@ -3,17 +3,9 @@ from __future__ import annotations
 
 import random
 
-from mock_server.convergence import should_device_fail
 
-
-def generate(
-    device_type: str,
-    is_old: bool | None,
-    active_seconds: float,
-    converge_time: float,
-    **_kw: object,
-) -> str:
-    has_error = should_device_fail(is_old, active_seconds, converge_time)
+def generate(device_type: str, fails: bool = False, **_kw: object) -> str:
+    has_error = fails
 
     if device_type == "nxos":
         return _generate_nxos(has_error)

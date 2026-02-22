@@ -219,6 +219,14 @@ async def add_note(
     if "error" in result:
         raise HTTPException(status_code=403, detail=result["error"])
 
+    await write_log(
+        level="INFO",
+        source=user.get("username", "unknown"),
+        summary=f"新增案件 #{case_id} 筆記",
+        module="cases",
+        maintenance_id=maintenance_id,
+    )
+
     return {"success": True, "note": result}
 
 
@@ -250,6 +258,14 @@ async def update_note(
     if "error" in result:
         raise HTTPException(status_code=403, detail=result["error"])
 
+    await write_log(
+        level="INFO",
+        source=user.get("username", "unknown"),
+        summary=f"更新案件 #{case_id} 筆記",
+        module="cases",
+        maintenance_id=maintenance_id,
+    )
+
     return {"success": True, "note": result}
 
 
@@ -275,6 +291,14 @@ async def delete_note(
 
     if "error" in result:
         raise HTTPException(status_code=403, detail=result["error"])
+
+    await write_log(
+        level="WARNING",
+        source=user.get("username", "unknown"),
+        summary=f"刪除案件 #{case_id} 筆記",
+        module="cases",
+        maintenance_id=maintenance_id,
+    )
 
     return {"success": True}
 

@@ -1,8 +1,6 @@
 """Mock: Uplink \u9130\u5c45\uff08CDP/LLDP\uff09(get_uplink)\u3002"""
 from __future__ import annotations
 
-from mock_server.convergence import should_device_fail
-
 
 _DEFAULT_NEIGHBORS: list[tuple[str, str, str]] = [
     ("GigabitEthernet1/0/49", "SW-DEFAULT-CORE-01", "HGE1/0/1"),
@@ -12,16 +10,12 @@ _DEFAULT_NEIGHBORS: list[tuple[str, str, str]] = [
 
 def generate(
     device_type: str,
-    is_old: bool | None,
-    active_seconds: float,
-    converge_time: float,
+    fails: bool = False,
     *,
     switch_ip: str = "",
     expected_neighbors: list[tuple[str, str, str]] | None = None,
+    **_kw: object,
 ) -> str:
-    fails = should_device_fail(is_old, active_seconds, converge_time)
-
-    # 使用 DB 中的期望鄰居（收斂後應出現正確鄰居）
     neighbors = expected_neighbors if expected_neighbors else _DEFAULT_NEIGHBORS
 
     if fails and len(neighbors) > 1:

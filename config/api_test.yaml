@@ -69,6 +69,10 @@ endpoints:
     hpe:  ""                                      # e.g. /api/v1/hpe/version/display_version
     ios:  ""                                      # e.g. /api/v1/ios/version/show_version
     nxos: ""                                      # e.g. /api/v1/nxos/version/show_version
+  get_interface_status:
+    hpe:  ""                                      # e.g. /api/v1/hpe/interface-status/display_interface
+    ios:  ""                                      # e.g. /api/v1/ios/interface-status/show_interface
+    nxos: ""                                      # e.g. /api/v1/nxos/interface-status/show_interface
 
 
 # ── 測試目標交換機 ──
@@ -151,4 +155,10 @@ apis:
     query_params: { hosts: "{ip}" }
     parser_command: "get_version_{device_type}_dna"
     description: "韌體版本"
+
+  - name: get_interface_status
+    source: DNA
+    query_params: { hosts: "{ip}" }
+    parser_command: "get_interface_status_{device_type}_dna"
+    description: "介面狀態 (link/speed/duplex)"
 

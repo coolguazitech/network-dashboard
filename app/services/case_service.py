@@ -16,6 +16,7 @@ from app.core.enums import CaseStatus, UserRole
 from app.db.models import (
     Case, CaseNote, ClientRecord, MaintenanceMacList, User,
 )
+from app.services.system_log import write_log
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,13 @@ class CaseService:
             logger.info(
                 "同步案件: 新增 %d 筆 maintenance_id=%s",
                 created, maintenance_id,
+            )
+            await write_log(
+                level="INFO",
+                source="scheduler",
+                summary=f"自動同步案件: 新增 {created} 筆",
+                module="case_sync",
+                maintenance_id=maintenance_id,
             )
 
         return {"created": created, "total": len(mac_list)}
@@ -447,6 +455,15 @@ class CaseService:
             for n in notes_result.scalars().all()
         ]
 
+        # 採集異常
+        from app.db.models import CollectionError
+
+        err_stmt = select(CollectionError).where(
+            CollectionError.maintenance_id == maintenance_id,
+        )
+        err_result = await session.execute(err_stmt)
+        collection_errors = err_result.scalars().all()
+
         # 最新 ClientRecord 快照
         latest_cr_stmt = (
             select(ClientRecord)
@@ -483,6 +500,15 @@ class CaseService:
                 "acl_rules_applied": latest_cr.acl_rules_applied if latest_cr else None,
                 "collected_at": latest_cr.collected_at.isoformat() if latest_cr and latest_cr.collected_at else None,
             } if latest_cr else None,
+            "collection_errors": [
+                {
+                    "collection_type": e.collection_type,
+                    "switch_hostname": e.switch_hostname,
+                    "error_message": e.error_message,
+                    "occurred_at": e.occurred_at.isoformat() if e.occurred_at else None,
+                }
+                for e in collection_errors
+            ],
             "created_at": case_obj.created_at.isoformat() if case_obj.created_at else None,
             "updated_at": case_obj.updated_at.isoformat() if case_obj.updated_at else None,
         }
@@ -747,30 +773,89 @@ class CaseService:
 
         await session.commit()
 
+    async def update_ping_status_direct(
+        self,
+        maintenance_id: str,
+        ping_map: dict[str, bool],
+        ip_to_mac: dict[str, str],
+        session: AsyncSession,
+    ) -> None:
+        """
+        從 ping 結果直接更新 Case.last_ping_reachable（不透過 ClientRecord）。
+
+        比 update_ping_status() 更輕量：直接用參數中的 IP→reachable 結果，
+        透過 ip_to_mac 映射到 MAC，再更新 Case。
+        Anti-flapping 邏輯與 update_ping_status() 相同。
+        """
+        now = datetime.now(timezone.utc)
+
+        # IP 結果 → MAC 結果
+        mac_to_reachable: dict[str, bool] = {}
+        for ip, reachable in ping_map.items():
+            mac = ip_to_mac.get(ip)
+            if mac:
+                mac_to_reachable[mac.upper()] = reachable
+
+        if not mac_to_reachable:
+            return
+
+        # 取得現有 Case 的 ping 狀態
+        case_stmt = select(
+            Case.mac_address, Case.last_ping_reachable, Case.ping_reachable_since,
+        ).where(Case.maintenance_id == maintenance_id)
+        case_result = await session.execute(case_stmt)
+        case_states = {
+            row[0].upper(): (row[1], row[2])
+            for row in case_result.fetchall()
+        }
+
+        for mac_upper, ping_reachable in mac_to_reachable.items():
+            if mac_upper not in case_states:
+                continue
+
+            old_reachable, old_since = case_states[mac_upper]
+
+            # Anti-flapping: 計算 ping_reachable_since
+            if ping_reachable is True:
+                if old_reachable is True and old_since is not None:
+                    new_since = old_since  # 持續可達：保持原始時間
+                else:
+                    new_since = now  # 新轉為可達：記錄起始時間
+            else:
+                new_since = None  # 不可達：清除計時器
+
+            await session.execute(
+                update(Case)
+                .where(
+                    Case.maintenance_id == maintenance_id,
+                    Case.mac_address == mac_upper,
+                )
+                .values(
+                    last_ping_reachable=ping_reachable,
+                    ping_reachable_since=new_since,
+                )
+            )
+
+        await session.commit()
+
     async def auto_resolve_reachable(
         self,
         maintenance_id: str,
         session: AsyncSession,
-        stable_minutes: int = 10,
     ) -> int:
         """
-        自動結案：Ping 持續可達超過 stable_minutes 分鐘 → 標記為已結案。
+        自動結案：Ping 可達 → 直接標記為已結案。
 
-        Anti-flapping 機制：避免 ping 在可達/不可達間快速切換時，
-        案件在已結案和已指派之間頻繁變換。
-        僅當 ping_reachable_since 早於 now - stable_minutes 時才自動結案。
+        若隨後 Ping 又不可達，auto_reopen_unreachable 會將案件重開為 ASSIGNED，
+        使用者接受後變為 IN_PROGRESS，IN_PROGRESS 和 DISCUSSING 不受自動結案影響。
 
         不影響正在處理中（IN_PROGRESS）或待討論（DISCUSSING）的案件。
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=stable_minutes)
-
         stmt = (
             update(Case)
             .where(
                 Case.maintenance_id == maintenance_id,
                 Case.last_ping_reachable == True,  # noqa: E712
-                Case.ping_reachable_since != None,  # noqa: E711
-                Case.ping_reachable_since <= cutoff,
                 Case.status.notin_([
                     CaseStatus.RESOLVED,
                     CaseStatus.IN_PROGRESS,
@@ -785,8 +870,15 @@ class CaseService:
         resolved = result.rowcount
         if resolved > 0:
             logger.info(
-                "Auto-resolved %d reachable cases (stable >%dm) for %s",
-                resolved, stable_minutes, maintenance_id,
+                "Auto-resolved %d reachable cases for %s",
+                resolved, maintenance_id,
+            )
+            await write_log(
+                level="INFO",
+                source="scheduler",
+                summary=f"自動結案 {resolved} 筆（Ping 可達）",
+                module="auto_resolve",
+                maintenance_id=maintenance_id,
             )
         return resolved
 
@@ -820,6 +912,13 @@ class CaseService:
             logger.info(
                 "Auto-reopened %d unreachable resolved cases for %s",
                 reopened, maintenance_id,
+            )
+            await write_log(
+                level="WARNING",
+                source="scheduler",
+                summary=f"自動重開 {reopened} 筆（Ping 變為不可達）",
+                module="auto_reopen",
+                maintenance_id=maintenance_id,
             )
         return reopened
 

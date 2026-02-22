@@ -1,19 +1,10 @@
 """Mock: Port-Channel / LAG \u72c0\u614b (get_channel_group)\u3002"""
 from __future__ import annotations
 
-from mock_server.convergence import should_device_fail
-
 
 def generate(
-    device_type: str,
-    is_old: bool | None,
-    active_seconds: float,
-    converge_time: float,
-    *,
-    switch_ip: str = "",
+    device_type: str, fails: bool = False, *, switch_ip: str = "", **_kw: object,
 ) -> str:
-    fails = should_device_fail(is_old, active_seconds, converge_time)
-
     parts = switch_ip.split(".")
     third_octet = int(parts[2]) if len(parts) == 4 else 0
 
