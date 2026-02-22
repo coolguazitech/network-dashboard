@@ -38,8 +38,8 @@
           </thead>
           <tbody class="divide-y divide-slate-700/30">
             <tr v-for="sw in switches" :key="sw.id" class="hover:bg-cyan-500/5 transition-colors">
-              <td class="px-4 py-3 whitespace-nowrap">
-                <div class="text-sm font-medium font-mono text-slate-100">{{ sw.hostname }}</div>
+              <td class="px-4 py-3">
+                <div class="text-sm font-medium font-mono text-slate-100 break-all">{{ sw.hostname }}</div>
               </td>
               <td class="px-4 py-3 whitespace-nowrap">
                 <div class="text-sm text-slate-400 font-mono">{{ sw.ip_address }}</div>

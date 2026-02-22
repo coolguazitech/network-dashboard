@@ -110,7 +110,7 @@
                   <td class="px-2 py-2 text-center">
                     <input type="checkbox" :value="uplink.id" v-model="selectedUplinks" class="rounded border-slate-500" />
                   </td>
-                  <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ uplink.hostname }}</td>
+                  <td class="px-3 py-2 font-mono text-slate-200 text-xs break-all">{{ uplink.hostname }}</td>
                   <td class="px-3 py-2 font-mono text-slate-300 text-xs">{{ uplink.local_interface }}</td>
                   <td class="px-3 py-2 font-mono text-cyan-300 text-xs">{{ uplink.expected_neighbor }}</td>
                   <td class="px-3 py-2 font-mono text-slate-300 text-xs">{{ uplink.expected_interface || '-' }}</td>
@@ -214,7 +214,7 @@
                   <td class="px-2 py-2 text-center">
                     <input type="checkbox" :value="ver.id" v-model="selectedVersions" class="rounded border-slate-500" />
                   </td>
-                  <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ ver.hostname }}</td>
+                  <td class="px-3 py-2 font-mono text-slate-200 text-xs break-all">{{ ver.hostname }}</td>
                   <td class="px-3 py-2 text-xs">
                     <span v-for="(v, i) in (ver.expected_versions_list || (ver.expected_versions || '').split(';'))" :key="i" class="inline-block px-2 py-0.5 bg-green-600/30 text-green-300 rounded mr-1 mb-1">
                       {{ v }}
@@ -321,7 +321,7 @@
                   <td class="px-2 py-2 text-center">
                     <input type="checkbox" :value="pc.id" v-model="selectedPortChannels" class="rounded border-slate-500" />
                   </td>
-                  <td class="px-3 py-2 font-mono text-slate-200 text-xs">{{ pc.hostname }}</td>
+                  <td class="px-3 py-2 font-mono text-slate-200 text-xs break-all">{{ pc.hostname }}</td>
                   <td class="px-3 py-2 font-mono text-cyan-300 text-xs">{{ pc.port_channel }}</td>
                   <td class="px-3 py-2 text-xs">
                     <span v-for="(m, i) in (pc.member_interfaces_list || (pc.member_interfaces || '').split(';'))" :key="i" class="inline-block px-2 py-0.5 bg-purple-600/30 text-purple-300 rounded mr-1 mb-1">

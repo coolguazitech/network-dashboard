@@ -323,7 +323,7 @@
                   <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                     <div class="bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
                       <span class="text-slate-500 text-sm">交換機</span>
-                      <div class="text-slate-200 font-mono text-sm mt-0.5">{{ caseDetail.latest_snapshot.switch_hostname || '—' }}</div>
+                      <div class="text-slate-200 font-mono text-sm mt-0.5 break-all">{{ caseDetail.latest_snapshot.switch_hostname || '—' }}</div>
                     </div>
                     <div class="bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/50">
                       <span class="text-slate-500 text-sm">介面</span>

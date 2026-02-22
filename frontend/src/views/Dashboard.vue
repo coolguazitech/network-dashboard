@@ -182,8 +182,8 @@
                 :key="idx"
                 class="bg-slate-900/50 rounded-lg px-4 py-3 border border-slate-700/50 hover:border-slate-600 transition"
               >
-                <div class="flex items-center justify-between mb-1.5">
-                  <span class="font-mono text-sm text-slate-200 font-medium">{{ failure.device }}</span>
+                <div class="flex items-center justify-between mb-1.5 min-w-0">
+                  <span class="font-mono text-sm text-slate-200 font-medium truncate" :title="failure.device">{{ failure.device }}</span>
                   <span class="text-sm text-slate-400">{{ getInterfaceName(failure) }}</span>
                 </div>
                 <div class="text-sm" :class="failure.is_system_error ? 'text-purple-400' : 'text-red-400'">

@@ -273,8 +273,8 @@
                   <td class="px-2 py-2 text-center">
                     <input type="checkbox" :value="device.id" v-model="selectedDevices" class="rounded border-slate-500" />
                   </td>
-                  <td class="px-2 py-2 font-mono text-slate-200 text-xs">{{ device.old_hostname || '-' }}</td>
-                  <td class="px-2 py-2 font-mono text-slate-400 text-xs">
+                  <td class="px-2 py-2 font-mono text-slate-200 text-xs break-all">{{ device.old_hostname || '-' }}</td>
+                  <td class="px-2 py-2 font-mono text-slate-400 text-xs whitespace-nowrap">
                     <span
                       v-if="device.old_hostname"
                       class="inline-block rounded-full mr-3 align-middle" style="width: 11px; height: 11px"
@@ -285,8 +285,8 @@
                           : 'bg-slate-600'"
                     ></span>{{ device.old_ip_address || '-' }}</td>
                   <td class="px-2 py-2 text-slate-400 text-xs">{{ device.old_vendor || '-' }}</td>
-                  <td class="px-2 py-2 font-mono text-slate-200 text-xs">{{ device.new_hostname || '-' }}</td>
-                  <td class="px-2 py-2 font-mono text-slate-400 text-xs">
+                  <td class="px-2 py-2 font-mono text-slate-200 text-xs break-all">{{ device.new_hostname || '-' }}</td>
+                  <td class="px-2 py-2 font-mono text-slate-400 text-xs whitespace-nowrap">
                     <span
                       v-if="device.new_hostname"
                       class="inline-block rounded-full mr-3 align-middle" style="width: 11px; height: 11px"
@@ -300,7 +300,7 @@
                   <td class="px-2 py-2">
                     <span class="px-1.5 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs">{{ device.tenant_group || 'F18' }}</span>
                   </td>
-                  <td class="px-2 py-2 text-slate-400 text-xs max-w-[150px] truncate" :title="device.description">
+                  <td class="px-2 py-2 text-slate-400 text-xs max-w-[80px] truncate" :title="device.description">
                     {{ device.description || '-' }}
                   </td>
                   <td class="px-2 py-2 text-xs whitespace-nowrap">
