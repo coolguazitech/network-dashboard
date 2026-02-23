@@ -62,20 +62,20 @@ class FetcherEndpointConfig(BaseModel):
         FETCHER_ENDPOINT__GET_GBIC_DETAILS=/api/v1/transceiver/{switch_ip}
     """
 
-    # FNA (7)
+    # FNA (5)
     get_gbic_details: str = "/api/v1/transceiver/{switch_ip}"
     get_channel_group: str = "/api/v1/port-channel/{switch_ip}"
-    get_uplink: str = "/api/v1/neighbors/{switch_ip}"
     get_error_count: str = "/api/v1/error-count/{switch_ip}"
     get_static_acl: str = "/api/v1/acl/static/{switch_ip}"
     get_dynamic_acl: str = "/api/v1/acl/dynamic/{switch_ip}"
-    # DNA (4)
+    # DNA (7)
     get_mac_table: str = "/api/v1/mac-table/{switch_ip}"
     get_fan: str = "/api/v1/fan/{switch_ip}"
     get_power: str = "/api/v1/power/{switch_ip}"
     get_version: str = "/api/v1/version/{switch_ip}"
-    # DNA (1)
     get_interface_status: str = "/api/v1/interface-status/{switch_ip}"
+    get_uplink_lldp: str = "/api/v1/{device_type}/uplink-lldp/{switch_ip}"
+    get_uplink_cdp: str = "/api/v1/{device_type}/uplink-cdp/{switch_ip}"
 
 
 class MinioConfig(BaseModel):
