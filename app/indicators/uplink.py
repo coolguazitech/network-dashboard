@@ -2,7 +2,7 @@
 Uplink indicator evaluator.
 
 驗證 NEW phase 的 uplink 拓樸是否符合預期。
-Uses typed UplinkRecord table via NeighborRecordRepo.
+合併 LLDP + CDP 兩個來源的鄰居資料進行評估。
 """
 from __future__ import annotations
 
@@ -12,7 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import MaintenanceDeviceList, UplinkExpectation, NeighborRecord
-from app.repositories.typed_records import NeighborRecordRepo
+from app.repositories.typed_records import (
+    NeighborLldpRecordRepo,
+    NeighborCdpRecordRepo,
+    get_typed_repo,
+)
 from app.indicators.base import (
     BaseIndicator,
     IndicatorEvaluationResult,
@@ -23,15 +27,32 @@ from app.indicators.base import (
     RawDataRow,
 )
 
+# LLDP + CDP 兩個 collection_type，evaluate 時合併查詢
+_UPLINK_COLLECTION_TYPES = ("get_uplink_lldp", "get_uplink_cdp")
+
 
 class UplinkIndicator(BaseIndicator):
     """
     Uplink 拓樸驗收評估器。
 
     檢查 NEW phase 的設備鄰居是否符合預期。
+    合併 LLDP 和 CDP 兩個來源，避免單一協定遺漏鄰居。
     """
 
     indicator_type = "uplink"
+
+    async def _get_latest_all_protocols(
+        self,
+        maintenance_id: str,
+        session: AsyncSession,
+    ) -> list[NeighborRecord]:
+        """合併 LLDP + CDP 的最新鄰居記錄。"""
+        all_records: list[NeighborRecord] = []
+        for ct in _UPLINK_COLLECTION_TYPES:
+            repo = get_typed_repo(ct, session)
+            records = await repo.get_latest_per_device(maintenance_id)
+            all_records.extend(records)
+        return all_records
 
     async def evaluate(
         self,
@@ -44,14 +65,15 @@ class UplinkIndicator(BaseIndicator):
             session, maintenance_id
         )
 
-        # 使用 NeighborRecordRepo 取得每台設備最新批次的鄰居記錄
-        repo = NeighborRecordRepo(session)
-        records = await repo.get_latest_per_device(maintenance_id)
+        # 合併 LLDP + CDP 最新鄰居記錄
+        records = await self._get_latest_all_protocols(
+            maintenance_id, session
+        )
 
-        # 按設備分組：每台設備有多筆 NeighborRecord（每個鄰居一筆）
-        device_neighbors: dict[str, list[str]] = defaultdict(list)
+        # 按設備分組並去重（同一鄰居可能同時出現在 CDP 和 LLDP）
+        device_neighbors: dict[str, set[str]] = defaultdict(set)
         for record in records:
-            device_neighbors[record.switch_hostname].append(
+            device_neighbors[record.switch_hostname].add(
                 record.remote_hostname
             )
 
@@ -66,7 +88,7 @@ class UplinkIndicator(BaseIndicator):
                 continue
 
             # 取得該設備的實際鄰居
-            actual_neighbors = device_neighbors.get(device_hostname, [])
+            actual_neighbors = device_neighbors.get(device_hostname, set())
 
             # 驗證每個期望的鄰居
             for expected_neighbor in expected_neighbors:
@@ -92,7 +114,7 @@ class UplinkIndicator(BaseIndicator):
                         "expected_neighbor": expected_neighbor,
                         "reason": (
                             f"期望鄰居 '{expected_neighbor}' 未找到。"
-                            f"實際: {actual_neighbors}"
+                            f"實際: {sorted(actual_neighbors)}"
                         ),
                     })
 
@@ -173,23 +195,25 @@ class UplinkIndicator(BaseIndicator):
         session: AsyncSession,
         maintenance_id: str,
     ) -> list[TimeSeriesPoint]:
-        """獲取時間序列數據。"""
+        """獲取時間序列數據（合併 LLDP + CDP）。"""
         uplink_expectations = await self._load_expectations(
             session, maintenance_id
         )
 
-        repo = NeighborRecordRepo(session)
-        records = await repo.get_time_series_records(
-            maintenance_id, limit
-        )
+        # 合併兩個協定的 time series records
+        all_records: list[NeighborRecord] = []
+        for ct in _UPLINK_COLLECTION_TYPES:
+            repo = get_typed_repo(ct, session)
+            records = await repo.get_time_series_records(
+                maintenance_id, limit
+            )
+            all_records.extend(records)
 
-        # 按 (collected_at, switch_hostname) 分組，計算每組的匹配率
-        groups: dict[
-            tuple, list[str]
-        ] = defaultdict(list)
-        for record in records:
+        # 按 (collected_at, switch_hostname) 分組，去重鄰居
+        groups: dict[tuple, set[str]] = defaultdict(set)
+        for record in all_records:
             key = (record.collected_at, record.switch_hostname)
-            groups[key].append(record.remote_hostname)
+            groups[key].add(record.remote_hostname)
 
         # 按時間戳聚合：同一時間點所有設備的平均匹配率
         ts_map: dict[object, list[float]] = defaultdict(list)
@@ -224,14 +248,21 @@ class UplinkIndicator(BaseIndicator):
         session: AsyncSession,
         maintenance_id: str,
     ) -> list[RawDataRow]:
-        """獲取最新原始數據。"""
-        repo = NeighborRecordRepo(session)
-        records = await repo.get_latest_records(
-            maintenance_id, limit
-        )
+        """獲取最新原始數據（合併 LLDP + CDP）。"""
+        all_records: list[NeighborRecord] = []
+        for ct in _UPLINK_COLLECTION_TYPES:
+            repo = get_typed_repo(ct, session)
+            records = await repo.get_latest_records(
+                maintenance_id, limit
+            )
+            all_records.extend(records)
+
+        # 按時間排序（最新優先）並限制數量
+        all_records.sort(key=lambda r: r.collected_at, reverse=True)
+        all_records = all_records[:limit]
 
         raw_data = []
-        for record in records:
+        for record in all_records:
             raw_data.append(
                 RawDataRow(
                     switch_hostname=record.switch_hostname,

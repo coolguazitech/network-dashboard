@@ -472,6 +472,20 @@ class NeighborRecordRepo(TypedRecordRepository[NeighborRecord]):
     collection_type = "get_uplink"
 
 
+class NeighborLldpRecordRepo(TypedRecordRepository[NeighborRecord]):
+    """LLDP 鄰居記錄（獨立 collection_type，不與 CDP 互相覆蓋）。"""
+
+    model = NeighborRecord
+    collection_type = "get_uplink_lldp"
+
+
+class NeighborCdpRecordRepo(TypedRecordRepository[NeighborRecord]):
+    """CDP 鄰居記錄（獨立 collection_type，不與 LLDP 互相覆蓋）。"""
+
+    model = NeighborRecord
+    collection_type = "get_uplink_cdp"
+
+
 class InterfaceErrorRecordRepo(TypedRecordRepository[InterfaceErrorRecord]):
     model = InterfaceErrorRecord
     collection_type = "get_error_count"
@@ -531,8 +545,8 @@ TYPED_REPO_MAP: dict[str, type[TypedRecordRepository[Any]]] = {
     "get_gbic_details": TransceiverRecordRepo,
     "get_channel_group": PortChannelRecordRepo,
     "get_uplink": NeighborRecordRepo,
-    "get_uplink_lldp": NeighborRecordRepo,
-    "get_uplink_cdp": NeighborRecordRepo,
+    "get_uplink_lldp": NeighborLldpRecordRepo,
+    "get_uplink_cdp": NeighborCdpRecordRepo,
     "get_error_count": InterfaceErrorRecordRepo,
     "get_static_acl": StaticAclRecordRepo,
     "get_dynamic_acl": DynamicAclRecordRepo,

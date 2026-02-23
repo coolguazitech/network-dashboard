@@ -166,8 +166,8 @@ class TestUplinkEvaluateAllPass:
                     "SW-02": ["CORE-SW-01"],
                 },
             ),
-            patch(
-                "app.indicators.uplink.NeighborRecordRepo.get_latest_per_device",
+            patch.object(
+                indicator, "_get_latest_all_protocols",
                 new_callable=AsyncMock,
                 return_value=neighbor_records,
             ),
@@ -207,8 +207,8 @@ class TestUplinkEvaluateSomeFail:
                     "SW-01": ["CORE-SW-01", "CORE-SW-02"],
                 },
             ),
-            patch(
-                "app.indicators.uplink.NeighborRecordRepo.get_latest_per_device",
+            patch.object(
+                indicator, "_get_latest_all_protocols",
                 new_callable=AsyncMock,
                 return_value=neighbor_records,
             ),
@@ -242,8 +242,8 @@ class TestUplinkEvaluateNoCollectedData:
                     "SW-01": ["CORE-SW-01", "CORE-SW-02"],
                 },
             ),
-            patch(
-                "app.indicators.uplink.NeighborRecordRepo.get_latest_per_device",
+            patch.object(
+                indicator, "_get_latest_all_protocols",
                 new_callable=AsyncMock,
                 return_value=[],  # no records at all
             ),
@@ -274,8 +274,8 @@ class TestUplinkEvaluateNoExpectations:
                 new_callable=AsyncMock,
                 return_value={},
             ),
-            patch(
-                "app.indicators.uplink.NeighborRecordRepo.get_latest_per_device",
+            patch.object(
+                indicator, "_get_latest_all_protocols",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
@@ -305,8 +305,8 @@ class TestUplinkEvaluateEmptyExpectedNeighborList:
                     "SW-01": [],  # empty list, should be skipped
                 },
             ),
-            patch(
-                "app.indicators.uplink.NeighborRecordRepo.get_latest_per_device",
+            patch.object(
+                indicator, "_get_latest_all_protocols",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
@@ -342,8 +342,8 @@ class TestUplinkEvaluateMultipleDevices:
                     "SW-02": ["CORE-SW-01", "CORE-SW-03"],
                 },
             ),
-            patch(
-                "app.indicators.uplink.NeighborRecordRepo.get_latest_per_device",
+            patch.object(
+                indicator, "_get_latest_all_protocols",
                 new_callable=AsyncMock,
                 return_value=neighbor_records,
             ),
@@ -380,8 +380,8 @@ class TestUplinkPassesCappedAtTen:
                 new_callable=AsyncMock,
                 return_value=expectations,
             ),
-            patch(
-                "app.indicators.uplink.NeighborRecordRepo.get_latest_per_device",
+            patch.object(
+                indicator, "_get_latest_all_protocols",
                 new_callable=AsyncMock,
                 return_value=neighbor_records,
             ),
