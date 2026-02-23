@@ -127,10 +127,9 @@ GNMSPING__BASE_URLS__F14=http://<GNMSPING-F14伺服器IP>:<port>
 GNMSPING__BASE_URLS__F12=http://<GNMSPING-F12伺服器IP>:<port>
 
 # ===== Endpoint 路徑（必改）=====
-# FNA — 所有廠牌共用同一個 endpoint
+# FNA — 所有廠牌共用（5 個 API）
 FETCHER_ENDPOINT__GET_GBIC_DETAILS=/switch/network/get_gbic_details/{switch_ip}
 FETCHER_ENDPOINT__GET_CHANNEL_GROUP=/switch/network/get_channel_group/{switch_ip}
-FETCHER_ENDPOINT__GET_UPLINK=/switch/network/get_neighbors/{switch_ip}
 FETCHER_ENDPOINT__GET_ERROR_COUNT=/switch/network/get_error_count/{switch_ip}
 FETCHER_ENDPOINT__GET_STATIC_ACL=/switch/network/get_static_acl/{switch_ip}
 FETCHER_ENDPOINT__GET_DYNAMIC_ACL=/switch/network/get_dynamic_acl/{switch_ip}
@@ -141,6 +140,8 @@ FETCHER_ENDPOINT__GET_FAN=/api/v1/{device_type}/fan/{switch_ip}
 FETCHER_ENDPOINT__GET_POWER=/api/v1/{device_type}/power/{switch_ip}
 FETCHER_ENDPOINT__GET_VERSION=/api/v1/{device_type}/version/{switch_ip}
 FETCHER_ENDPOINT__GET_INTERFACE_STATUS=/api/v1/{device_type}/interface-status/{switch_ip}
+FETCHER_ENDPOINT__GET_UPLINK_LLDP=/api/v1/{device_type}/uplink-lldp/{switch_ip}
+FETCHER_ENDPOINT__GET_UPLINK_CDP=/api/v1/{device_type}/uplink-cdp/{switch_ip}
 ```
 
 啟動（不需要 `--profile mock`）：
@@ -213,12 +214,12 @@ curl http://localhost:8000/health
 docker exec -it netora_app bash
 
 # 測試 FNA 連通（替換成真實 IP，FNA 需 Bearer token）
-# FNA API：get_gbic_details, get_channel_group, get_uplink, get_error_count, get_static_acl, get_dynamic_acl
+# FNA API：get_gbic_details, get_channel_group, get_error_count, get_static_acl, get_dynamic_acl
 curl -v -H "Authorization: Bearer <FNA_TOKEN>" \
   "http://<FNA伺服器IP>:<port>/switch/network/get_gbic_details/10.1.1.1"
 
 # 測試 DNA 連通（不需認證）
-# DNA API：get_mac_table, get_fan, get_power, get_version, get_interface_status
+# DNA API：get_mac_table, get_fan, get_power, get_version, get_interface_status, get_uplink_lldp, get_uplink_cdp
 curl -v "http://<DNA伺服器IP>:<port>/api/v1/hpe/fan/display_fan?hosts=10.1.1.1"
 
 # 測試 GNMSPING 連通（POST + JSON body）
@@ -310,7 +311,6 @@ endpoints:
   # FNA（所有廠牌共用）
   get_gbic_details:     "/switch/network/get_gbic_details/{ip}"       # ★ 填入
   get_channel_group:    "/switch/network/get_channel_group/{ip}"      # ★ 填入
-  get_uplink:           "/switch/network/get_neighbors/{ip}"          # ★ 填入
   get_error_count:      "/switch/network/get_error_count/{ip}"        # ★ 填入
   get_static_acl:       "/switch/network/get_static_acl/{ip}"        # ★ 填入
   get_dynamic_acl:      "/switch/network/get_dynamic_acl/{ip}"       # ★ 填入
@@ -336,6 +336,13 @@ endpoints:
     hpe:  "/api/v1/hpe/interface-status/display_interface"
     ios:  "/api/v1/ios/interface-status/show_interface"
     nxos: "/api/v1/nxos/interface-status/show_interface"
+  get_uplink_lldp:
+    hpe:  "/api/v1/hpe/uplink-lldp/display_lldp"
+    ios:  "/api/v1/ios/uplink-lldp/show_lldp"
+    nxos: "/api/v1/nxos/uplink-lldp/show_lldp"
+  get_uplink_cdp:
+    ios:  "/api/v1/ios/uplink-cdp/show_cdp"
+    nxos: "/api/v1/nxos/uplink-cdp/show_cdp"
 
 # ── 測試目標（每種廠牌至少一台）──
 targets:
@@ -423,7 +430,7 @@ make parse
 ```
   OK     get_fan_hpe_dna         3 records   (get_fan_hpe_10.1.1.1.txt)
   EMPTY  get_fan_ios_dna         0 records   (get_fan_ios_10.2.2.2.txt)
-  ERROR  get_uplink_nxos_fna     ValueError  (get_uplink_nxos_10.3.3.3.txt)
+  ERROR  get_uplink_lldp_nxos_dna     ValueError  (get_uplink_nxos_10.3.3.3.txt)
 
   SUMMARY: 10 OK / 8 EMPTY / 2 ERROR
 ```
@@ -442,7 +449,7 @@ make parse-debug
 
 ```
   EMPTY  get_fan_ios_dna         → test_data/debug/get_fan_ios_dna.md
-  ERROR  get_uplink_nxos_fna     → test_data/debug/get_uplink_nxos_fna.md
+  ERROR  get_uplink_lldp_nxos_dna     → test_data/debug/get_uplink_lldp_nxos_dna.md
      OK  get_fan_hpe_dna         → test_data/debug/get_fan_hpe_dna.md
 
   Generated:  15 bundles
@@ -524,9 +531,20 @@ make parse-debug
   All parsers converged!
 ```
 
+### 2.7b 常見陷阱
+
+#### get_gbic_details：多通道光模組（QSFP/QSFP28/QSFP-DD）
+
+多通道光模組（如 40G QSFP、100G QSFP28）有 4 條 lane，每條 lane 有獨立的 Tx/Rx 功率。
+
+**常見問題**：AI 只解析 channel 1 的數據就回報 OK，漏掉 channel 2-4。
+
+> `make parse-debug` 的 bundle 已自動包含多通道警告（在 `scripts/generate_debug.py` 的 `EXTRA_NOTES` 中），
+> 正常流程下 AI 會自動看到。如果仍然只抓 channel 1，手動提醒 AI 注意 bundle 中的 ⚠️ CRITICAL 段落。
+
 ### 2.8 Parser 開發完成檢查清單
 
-- [ ] 所有 34 個 parser 都顯示 `OK` 或 `CONVERGED`
+- [ ] 所有 36 個 parser 都顯示 `OK` 或 `CONVERGED`
 - [ ] 至少用 3 台以上不同設備的 raw data 驗證過
 - [ ] `make parse` 的 EMPTY 和 ERROR 數量 = 0
 - [ ] 修改過的 parser 檔案都已存檔
@@ -626,7 +644,7 @@ print(f'Total: {len(parser_registry._parsers)} parsers')
 "
 ```
 
-預期應有 34 個 parser 被載入。
+預期應有 36 個 parser 被載入。
 
 ---
 
@@ -721,7 +739,7 @@ docker-compose -f docker-compose.production.yml up -d
 app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
 ```
 
-### 完整 Parser 清單（34 個）
+### 完整 Parser 清單（36 個）
 
 | # | Parser 檔案 | command | device_type | 資料來源 | 輸出模型 |
 |---|------------|---------|-------------|---------|---------|
@@ -731,34 +749,36 @@ app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
 | 4 | `get_channel_group_hpe_fna_parser.py` | `get_channel_group_hpe_fna` | HPE | FNA | PortChannelData |
 | 5 | `get_channel_group_ios_fna_parser.py` | `get_channel_group_ios_fna` | CISCO_IOS | FNA | PortChannelData |
 | 6 | `get_channel_group_nxos_fna_parser.py` | `get_channel_group_nxos_fna` | CISCO_NXOS | FNA | PortChannelData |
-| 7 | `get_uplink_hpe_fna_parser.py` | `get_uplink_hpe_fna` | HPE | FNA | NeighborData |
-| 8 | `get_uplink_ios_fna_parser.py` | `get_uplink_ios_fna` | CISCO_IOS | FNA | NeighborData |
-| 9 | `get_uplink_nxos_fna_parser.py` | `get_uplink_nxos_fna` | CISCO_NXOS | FNA | NeighborData |
-| 10 | `get_error_count_hpe_fna_parser.py` | `get_error_count_hpe_fna` | HPE | FNA | InterfaceErrorData |
-| 11 | `get_error_count_ios_fna_parser.py` | `get_error_count_ios_fna` | CISCO_IOS | FNA | InterfaceErrorData |
-| 12 | `get_error_count_nxos_fna_parser.py` | `get_error_count_nxos_fna` | CISCO_NXOS | FNA | InterfaceErrorData |
-| 13 | `get_static_acl_hpe_fna_parser.py` | `get_static_acl_hpe_fna` | HPE | FNA | AclData |
-| 14 | `get_static_acl_ios_fna_parser.py` | `get_static_acl_ios_fna` | CISCO_IOS | FNA | AclData |
-| 15 | `get_static_acl_nxos_fna_parser.py` | `get_static_acl_nxos_fna` | CISCO_NXOS | FNA | AclData |
-| 16 | `get_dynamic_acl_hpe_fna_parser.py` | `get_dynamic_acl_hpe_fna` | HPE | FNA | AclData |
-| 17 | `get_dynamic_acl_ios_fna_parser.py` | `get_dynamic_acl_ios_fna` | CISCO_IOS | FNA | AclData |
-| 18 | `get_dynamic_acl_nxos_fna_parser.py` | `get_dynamic_acl_nxos_fna` | CISCO_NXOS | FNA | AclData |
-| 19 | `get_mac_table_hpe_dna_parser.py` | `get_mac_table_hpe_dna` | HPE | DNA | MacTableData |
-| 20 | `get_mac_table_ios_dna_parser.py` | `get_mac_table_ios_dna` | CISCO_IOS | DNA | MacTableData |
-| 21 | `get_mac_table_nxos_dna_parser.py` | `get_mac_table_nxos_dna` | CISCO_NXOS | DNA | MacTableData |
-| 22 | `get_fan_hpe_dna_parser.py` | `get_fan_hpe_dna` | HPE | DNA | FanStatusData |
-| 23 | `get_fan_ios_dna_parser.py` | `get_fan_ios_dna` | CISCO_IOS | DNA | FanStatusData |
-| 24 | `get_fan_nxos_dna_parser.py` | `get_fan_nxos_dna` | CISCO_NXOS | DNA | FanStatusData |
-| 25 | `get_power_hpe_dna_parser.py` | `get_power_hpe_dna` | HPE | DNA | PowerData |
-| 26 | `get_power_ios_dna_parser.py` | `get_power_ios_dna` | CISCO_IOS | DNA | PowerData |
-| 27 | `get_power_nxos_dna_parser.py` | `get_power_nxos_dna` | CISCO_NXOS | DNA | PowerData |
-| 28 | `get_version_hpe_dna_parser.py` | `get_version_hpe_dna` | HPE | DNA | VersionData |
-| 29 | `get_version_ios_dna_parser.py` | `get_version_ios_dna` | CISCO_IOS | DNA | VersionData |
-| 30 | `get_version_nxos_dna_parser.py` | `get_version_nxos_dna` | CISCO_NXOS | DNA | VersionData |
-| 31 | `get_interface_status_hpe_dna_parser.py` | `get_interface_status_hpe_dna` | HPE | DNA | InterfaceStatusData |
-| 32 | `get_interface_status_ios_dna_parser.py` | `get_interface_status_ios_dna` | CISCO_IOS | DNA | InterfaceStatusData |
-| 33 | `get_interface_status_nxos_dna_parser.py` | `get_interface_status_nxos_dna` | CISCO_NXOS | DNA | InterfaceStatusData |
-| 34 | `ping_batch_parser.py` | `ping_batch` | 所有 | GNMSPING | PingResultData |
+| 7 | `get_uplink_lldp_hpe_dna_parser.py` | `get_uplink_lldp_hpe_dna` | HPE | DNA | NeighborData |
+| 8 | `get_uplink_lldp_ios_dna_parser.py` | `get_uplink_lldp_ios_dna` | CISCO_IOS | DNA | NeighborData |
+| 9 | `get_uplink_lldp_nxos_dna_parser.py` | `get_uplink_lldp_nxos_dna` | CISCO_NXOS | DNA | NeighborData |
+| 10 | `get_uplink_cdp_ios_dna_parser.py` | `get_uplink_cdp_ios_dna` | CISCO_IOS | DNA | NeighborData |
+| 11 | `get_uplink_cdp_nxos_dna_parser.py` | `get_uplink_cdp_nxos_dna` | CISCO_NXOS | DNA | NeighborData |
+| 12 | `get_error_count_hpe_fna_parser.py` | `get_error_count_hpe_fna` | HPE | FNA | InterfaceErrorData |
+| 13 | `get_error_count_ios_fna_parser.py` | `get_error_count_ios_fna` | CISCO_IOS | FNA | InterfaceErrorData |
+| 14 | `get_error_count_nxos_fna_parser.py` | `get_error_count_nxos_fna` | CISCO_NXOS | FNA | InterfaceErrorData |
+| 15 | `get_static_acl_hpe_fna_parser.py` | `get_static_acl_hpe_fna` | HPE | FNA | AclData |
+| 16 | `get_static_acl_ios_fna_parser.py` | `get_static_acl_ios_fna` | CISCO_IOS | FNA | AclData |
+| 17 | `get_static_acl_nxos_fna_parser.py` | `get_static_acl_nxos_fna` | CISCO_NXOS | FNA | AclData |
+| 18 | `get_dynamic_acl_hpe_fna_parser.py` | `get_dynamic_acl_hpe_fna` | HPE | FNA | AclData |
+| 19 | `get_dynamic_acl_ios_fna_parser.py` | `get_dynamic_acl_ios_fna` | CISCO_IOS | FNA | AclData |
+| 20 | `get_dynamic_acl_nxos_fna_parser.py` | `get_dynamic_acl_nxos_fna` | CISCO_NXOS | FNA | AclData |
+| 21 | `get_mac_table_hpe_dna_parser.py` | `get_mac_table_hpe_dna` | HPE | DNA | MacTableData |
+| 22 | `get_mac_table_ios_dna_parser.py` | `get_mac_table_ios_dna` | CISCO_IOS | DNA | MacTableData |
+| 23 | `get_mac_table_nxos_dna_parser.py` | `get_mac_table_nxos_dna` | CISCO_NXOS | DNA | MacTableData |
+| 24 | `get_fan_hpe_dna_parser.py` | `get_fan_hpe_dna` | HPE | DNA | FanStatusData |
+| 25 | `get_fan_ios_dna_parser.py` | `get_fan_ios_dna` | CISCO_IOS | DNA | FanStatusData |
+| 26 | `get_fan_nxos_dna_parser.py` | `get_fan_nxos_dna` | CISCO_NXOS | DNA | FanStatusData |
+| 27 | `get_power_hpe_dna_parser.py` | `get_power_hpe_dna` | HPE | DNA | PowerData |
+| 28 | `get_power_ios_dna_parser.py` | `get_power_ios_dna` | CISCO_IOS | DNA | PowerData |
+| 29 | `get_power_nxos_dna_parser.py` | `get_power_nxos_dna` | CISCO_NXOS | DNA | PowerData |
+| 30 | `get_version_hpe_dna_parser.py` | `get_version_hpe_dna` | HPE | DNA | VersionData |
+| 31 | `get_version_ios_dna_parser.py` | `get_version_ios_dna` | CISCO_IOS | DNA | VersionData |
+| 32 | `get_version_nxos_dna_parser.py` | `get_version_nxos_dna` | CISCO_NXOS | DNA | VersionData |
+| 33 | `get_interface_status_hpe_dna_parser.py` | `get_interface_status_hpe_dna` | HPE | DNA | InterfaceStatusData |
+| 34 | `get_interface_status_ios_dna_parser.py` | `get_interface_status_ios_dna` | CISCO_IOS | DNA | InterfaceStatusData |
+| 35 | `get_interface_status_nxos_dna_parser.py` | `get_interface_status_nxos_dna` | CISCO_NXOS | DNA | InterfaceStatusData |
+| 36 | `ping_batch_parser.py` | `ping_batch` | 所有 | GNMSPING | PingResultData |
 
 ### 三處命名必須一致
 
@@ -782,7 +802,7 @@ app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
 
 | 模型 | 用途 | 必填欄位 | 可選欄位 |
 |------|------|---------|---------|
-| `TransceiverData` | 光模組 | interface_name, channels | temperature, voltage |
+| `TransceiverData` | 光模組（⚠️ 多通道必須解析所有 channel，見 2.7b） | interface_name, channels | temperature, voltage |
 | `TransceiverChannelData` | 光模組通道 | channel(1-4) | tx_power, rx_power, bias_current_ma |
 | `InterfaceErrorData` | CRC 錯誤 | interface_name | crc_errors(=0，inbound+outbound 加總) |
 | `FanStatusData` | 風扇 | fan_id, status | speed_rpm, speed_percent |

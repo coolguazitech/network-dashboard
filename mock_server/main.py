@@ -54,7 +54,9 @@ app = FastAPI(
 GENERATORS: dict[str, Callable[..., str]] = {
     "get_gbic_details": gbic_details.generate,
     "get_channel_group": channel_group.generate,
-    "get_uplink": uplink.generate,
+    "get_uplink": uplink.generate,  # legacy (backwards compat)
+    "get_uplink_lldp": uplink.generate_lldp,
+    "get_uplink_cdp": uplink.generate_cdp,
     "get_error_count": error_count.generate,
     "get_static_acl": static_acl.generate,
     "get_dynamic_acl": dynamic_acl.generate,
@@ -118,7 +120,7 @@ def mock_api(
         kwargs["switch_ips"] = switch_ips
         kwargs["failure_rate"] = settings.mock_steady_failure_rate
     # uplink: 從 DB 讀取期望鄰居
-    if api_name == "get_uplink":
+    if api_name in ("get_uplink", "get_uplink_lldp", "get_uplink_cdp"):
         expected = db.get_uplink_neighbors(maintenance_id, switch_ip)
         if expected:
             kwargs["expected_neighbors"] = expected

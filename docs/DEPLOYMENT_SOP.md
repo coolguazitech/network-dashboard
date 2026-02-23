@@ -225,7 +225,8 @@ FETCHER_SOURCE__GNMSPING__TIMEOUT=60
 # ===== Endpoint 模板（名稱必須與 scheduler.yaml 的 fetcher key 一致）=====
 FETCHER_ENDPOINT__GET_GBIC_DETAILS=/api/v1/transceiver/{switch_ip}
 FETCHER_ENDPOINT__GET_CHANNEL_GROUP=/api/v1/port-channel/{switch_ip}
-FETCHER_ENDPOINT__GET_UPLINK=/api/v1/neighbors/{switch_ip}
+FETCHER_ENDPOINT__GET_UPLINK_LLDP=/api/v1/{device_type}/uplink-lldp/{switch_ip}
+FETCHER_ENDPOINT__GET_UPLINK_CDP=/api/v1/{device_type}/uplink-cdp/{switch_ip}
 FETCHER_ENDPOINT__GET_ERROR_COUNT=/api/v1/error-count/{switch_ip}
 FETCHER_ENDPOINT__GET_STATIC_ACL=/api/v1/acl/static/{switch_ip}
 FETCHER_ENDPOINT__GET_DYNAMIC_ACL=/api/v1/acl/dynamic/{switch_ip}

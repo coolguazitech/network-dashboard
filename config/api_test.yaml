@@ -48,7 +48,6 @@ endpoints:
   # FNA（所有廠牌共用同一個 endpoint，FNA 內部自動偵測廠牌）
   get_gbic_details:     ""                        # TODO: e.g. /switch/network/get_gbic_details/{ip}
   get_channel_group:    ""                        # TODO: e.g. /switch/network/get_channel_group/{ip}
-  get_uplink:           ""                        # TODO: e.g. /switch/network/get_neighbors/{ip}
   get_error_count:      ""                        # TODO: e.g. /switch/network/get_error_count/{ip}
   get_static_acl:       ""                        # TODO: e.g. /switch/network/get_static_acl/{ip}
   get_dynamic_acl:      ""                        # TODO: e.g. /switch/network/get_dynamic_acl/{ip}
@@ -73,6 +72,13 @@ endpoints:
     hpe:  ""                                      # e.g. /api/v1/hpe/interface-status/display_interface
     ios:  ""                                      # e.g. /api/v1/ios/interface-status/show_interface
     nxos: ""                                      # e.g. /api/v1/nxos/interface-status/show_interface
+  get_uplink_lldp:                                # Uplink LLDP（所有廠牌都有 LLDP）
+    hpe:  ""                                      # e.g. /api/v1/hpe/uplink-lldp/display_lldp
+    ios:  ""                                      # e.g. /api/v1/ios/uplink-lldp/show_lldp
+    nxos: ""                                      # e.g. /api/v1/nxos/uplink-lldp/show_lldp
+  get_uplink_cdp:                                 # Uplink CDP（僅 Cisco IOS/NXOS）
+    ios:  ""                                      # e.g. /api/v1/ios/uplink-cdp/show_cdp
+    nxos: ""                                      # e.g. /api/v1/nxos/uplink-cdp/show_cdp
 
 
 # ── 測試目標交換機 ──
@@ -110,11 +116,6 @@ apis:
     source: FNA
     parser_command: "get_channel_group_{device_type}_fna"
     description: "Port-Channel 狀態及成員"
-
-  - name: get_uplink
-    source: FNA
-    parser_command: "get_uplink_{device_type}_fna"
-    description: "Uplink 鄰居拓撲 (CDP/LLDP)"
 
   - name: get_error_count
     source: FNA
@@ -161,4 +162,17 @@ apis:
     query_params: { hosts: "{ip}" }
     parser_command: "get_interface_status_{device_type}_dna"
     description: "介面狀態 (link/speed/duplex)"
+
+  - name: get_uplink_lldp
+    source: DNA
+    query_params: { hosts: "{ip}" }
+    parser_command: "get_uplink_lldp_{device_type}_dna"
+    description: "Uplink 鄰居拓撲 (LLDP)"
+
+  - name: get_uplink_cdp
+    source: DNA
+    query_params: { hosts: "{ip}" }
+    parser_command: "get_uplink_cdp_{device_type}_dna"
+    description: "Uplink 鄰居拓撲 (CDP，僅 Cisco IOS/NXOS)"
+    skip_device_types: [hpe]
 

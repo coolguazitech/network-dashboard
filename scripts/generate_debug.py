@@ -65,12 +65,34 @@ MODEL_MAP: dict[str, list[type]] = {
     "get_version": [proto_module.VersionData],
     "get_power": [proto_module.PowerData],
     "get_mac_table": [proto_module.MacTableData],
+    "get_uplink_lldp": [proto_module.NeighborData],
+    "get_uplink_cdp": [proto_module.NeighborData],
     "get_uplink": [proto_module.NeighborData],
     "get_channel_group": [proto_module.PortChannelData],
     "get_error_count": [proto_module.InterfaceErrorData],
-"get_static_acl": [proto_module.AclData],
+    "get_static_acl": [proto_module.AclData],
     "get_dynamic_acl": [proto_module.AclData],
     "get_gbic_details": [proto_module.TransceiverData, proto_module.TransceiverChannelData],
+}
+
+# ── Per-API extra notes injected into AI bundles ──
+# Keyed by api_name prefix — matched via startswith()
+EXTRA_NOTES: dict[str, str] = {
+    "get_gbic_details": """
+## ⚠️ CRITICAL: Multi-Channel Optics (QSFP/QSFP28/QSFP-DD)
+
+Multi-channel optics (40G QSFP, 100G QSFP28) have **4 lanes**, each with
+independent Tx/Rx power readings.
+
+**You MUST parse ALL channels, not just channel 1.**
+
+- `TransceiverData.channels` must contain ALL channels (typically 4 lanes)
+- Each lane = one `TransceiverChannelData(channel=N, tx_power=..., rx_power=...)`
+- If raw data shows Lane 1/2/3/4 or Channel 1/2/3/4, the channels list must have 4 entries
+
+**Common mistake**: Only capturing channel 1 and reporting OK. This is WRONG.
+Count the channels in the raw data and verify your parser returns the same count.
+""",
 }
 
 
@@ -145,6 +167,14 @@ def get_parser_source(parser_command: str) -> tuple[str, str]:
     return filepath.read_text(encoding="utf-8"), str(filepath.relative_to(PROJECT_ROOT))
 
 
+def _get_extra_notes(api_name: str) -> str:
+    """Look up per-API extra notes to inject into the bundle."""
+    for prefix, note in EXTRA_NOTES.items():
+        if api_name.startswith(prefix):
+            return note.strip()
+    return ""
+
+
 def generate_bundle(
     parser_command: str,
     status: str,
@@ -155,6 +185,7 @@ def generate_bundle(
     parser_filepath: str,
     record_count: int,
     sample_records: str,
+    extra_notes: str = "",
 ) -> str:
     """Generate the markdown debug bundle content."""
     raw_sections = []
@@ -200,6 +231,8 @@ def generate_bundle(
 Parser produced **no results** (empty list).
 """
 
+    extra_notes_section = f"\n{extra_notes}\n" if extra_notes else ""
+
     return f"""# Parser Evaluation: {parser_command}
 
 ## Task
@@ -221,7 +254,7 @@ data, and its current output. Then decide:
 5. Keep the `parser_registry.register(...)` call at the bottom
 6. Keep the `=== ParsedData Model ===` block in the module docstring
 7. Return the COMPLETE file — no `...`, no "rest unchanged"
-
+{extra_notes_section}
 ## Current Status
 
 {status_description}
@@ -424,6 +457,7 @@ def main() -> None:
         model_source = get_model_source(api_name)
         parser_source, parser_filepath = get_parser_source(parser_command)
         sample_records = "\n".join(sample_lines) if sample_lines else ""
+        extra_notes = _get_extra_notes(api_name)
 
         # Generate bundle
         bundle = generate_bundle(
@@ -436,6 +470,7 @@ def main() -> None:
             parser_filepath=parser_filepath,
             record_count=total_records,
             sample_records=sample_records,
+            extra_notes=extra_notes,
         )
 
         # Write

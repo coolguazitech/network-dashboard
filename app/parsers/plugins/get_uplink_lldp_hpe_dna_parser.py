@@ -1,5 +1,5 @@
 """
-Parser for 'get_uplink_hpe_fna' API.
+Parser for 'get_uplink_lldp_hpe_dna' API.
 
 Parses HPE Comware `display lldp neighbor-information` output to extract
 LLDP neighbor details (remote hostname, interface, platform).
@@ -25,18 +25,11 @@ from app.parsers.protocols import BaseParser, NeighborData
 from app.parsers.registry import parser_registry
 
 
-class GetUplinkHpeFnaParser(BaseParser[NeighborData]):
+class GetUplinkLldpHpeDnaParser(BaseParser[NeighborData]):
     """
     Parser for HPE Comware ``display lldp neighbor-information`` output.
 
-    The real ``display lldp neighbor-information list`` returns a tabular summary::
-
-        System Name  Local Interface         Chassis ID          Port ID
-        CORE-SW-01   GigabitEthernet1/0/25   000c-29aa-bb01      HGE1/0/1
-        CORE-SW-02   GigabitEthernet1/0/26   000c-29aa-bb02      HGE1/0/2
-
-    The FNA API may return the verbose format instead
-    (ref: NTC-templates ``hp_comware_display_lldp_neighbor-information_verbose.raw``)::
+    Real CLI output (ref: NTC-templates ``hp_comware_display_lldp_neighbor-information_verbose.raw``)::
 
         LLDP neighbor-information of port 25[GigabitEthernet1/0/25]:
           Neighbor index                   : 1
@@ -65,11 +58,11 @@ class GetUplinkHpeFnaParser(BaseParser[NeighborData]):
         - Blocks split by ``LLDP neighbor-information of port N[IntfName]:``.
         - Local interface extracted from ``[IntfName]`` in header.
         - Required: System name, Port ID. System description is optional.
-        - If FNA returns the list (tabular) format, parser may need adjustment.
+        - If DNA returns the list (tabular) format, parser may need adjustment.
     """
 
     device_type = DeviceType.HPE
-    command = "get_uplink_hpe_fna"
+    command = "get_uplink_lldp_hpe_dna"
 
     # Match block header to extract local interface name from brackets
     BLOCK_HEADER_PATTERN = re.compile(
@@ -180,4 +173,4 @@ class GetUplinkHpeFnaParser(BaseParser[NeighborData]):
 
 
 # Register parser
-parser_registry.register(GetUplinkHpeFnaParser())
+parser_registry.register(GetUplinkLldpHpeDnaParser())

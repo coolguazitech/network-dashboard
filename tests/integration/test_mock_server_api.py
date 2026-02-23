@@ -31,6 +31,8 @@ class TestMockApiEndpoint:
         "get_gbic_details",
         "get_channel_group",
         "get_uplink",
+        "get_uplink_lldp",
+        "get_uplink_cdp",
         "get_error_count",
         "get_static_acl",
         "get_dynamic_acl",

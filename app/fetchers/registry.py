@@ -17,10 +17,11 @@ Fetcher Registry.
 
        FETCHER_ENDPOINT__GET_FAN=/api/v1/fan/{switch_ip}
 
-目前已註冊的 fetch_type（11 個）:
-    FNA (6): get_gbic_details, get_channel_group, get_uplink, get_error_count,
+目前已註冊的 fetch_type（12 個）:
+    FNA (5): get_gbic_details, get_channel_group, get_error_count,
              get_static_acl, get_dynamic_acl
-    DNA (4): get_mac_table, get_fan, get_power, get_version
+    DNA (7): get_mac_table, get_fan, get_power, get_version,
+             get_interface_status, get_uplink_lldp, get_uplink_cdp
 """
 from __future__ import annotations
 

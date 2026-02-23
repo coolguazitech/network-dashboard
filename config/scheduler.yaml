@@ -11,7 +11,7 @@
 #      e.g. get_fan + hpe + dna → get_fan_hpe_dna
 #
 # source: 外部 API 來源
-#   - FNA: FAB Network API（共用 endpoint，內部自動偵測廠牌）
+#   - FNA: FAB Network API（共用 endpoint，server 側自動偵測廠牌）
 #   - DNA: Data Network API（每個 device_type 各自的 endpoint）
 #
 # interval: 觸發頻率（秒）。上一輪未完成時本次跳過（max_instances=1）
@@ -20,7 +20,7 @@
 
 fetchers:
   # ---------------------------------------------------------------------------
-  # FNA (7): 所有廠牌共用同一個 endpoint，只需 {ip}
+  # FNA (5): 所有廠牌共用同一個 endpoint，只需 {ip}
   # ---------------------------------------------------------------------------
   get_gbic_details:
     source: FNA
@@ -31,11 +31,6 @@ fetchers:
     source: FNA
     interval: 300
     description: "Port-Channel 狀態及成員"
-
-  get_uplink:
-    source: FNA
-    interval: 300
-    description: "Uplink 鄰居拓撲 (CDP/LLDP)"
 
   get_error_count:
     source: FNA
@@ -53,7 +48,7 @@ fetchers:
     description: "Dynamic ACL 綁定"
 
   # ---------------------------------------------------------------------------
-  # DNA (5): 每個 device_type 各自的 endpoint
+  # DNA (7): 每個 device_type 各自的 endpoint
   # ---------------------------------------------------------------------------
   get_mac_table:
     source: DNA
@@ -79,6 +74,16 @@ fetchers:
     source: DNA
     interval: 300
     description: "Interface 狀態（速率/雙工）"
+
+  get_uplink_lldp:
+    source: DNA
+    interval: 300
+    description: "Uplink 鄰居拓撲 (LLDP)"
+
+  get_uplink_cdp:
+    source: DNA
+    interval: 300
+    description: "Uplink 鄰居拓撲 (CDP，僅 Cisco IOS/NXOS)"
 
   # ---------------------------------------------------------------------------
   # GNMSPING: ICMP 連通性測試（統一批次 Ping）

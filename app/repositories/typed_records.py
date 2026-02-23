@@ -531,6 +531,8 @@ TYPED_REPO_MAP: dict[str, type[TypedRecordRepository[Any]]] = {
     "get_gbic_details": TransceiverRecordRepo,
     "get_channel_group": PortChannelRecordRepo,
     "get_uplink": NeighborRecordRepo,
+    "get_uplink_lldp": NeighborRecordRepo,
+    "get_uplink_cdp": NeighborRecordRepo,
     "get_error_count": InterfaceErrorRecordRepo,
     "get_static_acl": StaticAclRecordRepo,
     "get_dynamic_acl": DynamicAclRecordRepo,

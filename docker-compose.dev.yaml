@@ -136,7 +136,8 @@ services:
       GNMSPING__BASE_URLS__F12: http://mock-api:9999
       FETCHER_ENDPOINT__GET_GBIC_DETAILS: /api/get_gbic_details
       FETCHER_ENDPOINT__GET_CHANNEL_GROUP: /api/get_channel_group
-      FETCHER_ENDPOINT__GET_UPLINK: /api/get_uplink
+      FETCHER_ENDPOINT__GET_UPLINK_LLDP: /api/get_uplink_lldp
+      FETCHER_ENDPOINT__GET_UPLINK_CDP: /api/get_uplink_cdp
       FETCHER_ENDPOINT__GET_ERROR_COUNT: /api/get_error_count
       FETCHER_ENDPOINT__GET_STATIC_ACL: /api/get_static_acl
       FETCHER_ENDPOINT__GET_DYNAMIC_ACL: /api/get_dynamic_acl

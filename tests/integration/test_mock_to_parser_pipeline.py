@@ -260,13 +260,13 @@ class TestErrorCountPipeline:
         assert len(results) >= 1
 
 
-class TestUplinkPipeline:
-    def test_hpe(self):
-        from mock_server.generators.uplink import generate
-        from app.parsers.plugins.get_uplink_hpe_fna_parser import GetUplinkHpeFnaParser
+class TestUplinkLldpPipeline:
+    def test_hpe_lldp(self):
+        from mock_server.generators.uplink import generate_lldp
+        from app.parsers.plugins.get_uplink_lldp_hpe_dna_parser import GetUplinkLldpHpeDnaParser
 
-        raw = generate("hpe")
-        parser = GetUplinkHpeFnaParser()
+        raw = generate_lldp("hpe")
+        parser = GetUplinkLldpHpeDnaParser()
         results = parser.parse(raw)
 
         assert len(results) >= 1
@@ -274,21 +274,44 @@ class TestUplinkPipeline:
             assert r.local_interface
             assert r.remote_hostname
 
-    def test_ios(self):
-        from mock_server.generators.uplink import generate
-        from app.parsers.plugins.get_uplink_ios_fna_parser import GetUplinkIosFnaParser
+    def test_ios_lldp(self):
+        from mock_server.generators.uplink import generate_lldp
+        from app.parsers.plugins.get_uplink_lldp_ios_dna_parser import GetUplinkLldpIosDnaParser
 
-        raw = generate("ios")
-        parser = GetUplinkIosFnaParser()
+        raw = generate_lldp("ios")
+        parser = GetUplinkLldpIosDnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
 
-    def test_nxos(self):
-        from mock_server.generators.uplink import generate
-        from app.parsers.plugins.get_uplink_nxos_fna_parser import GetUplinkNxosFnaParser
+    def test_nxos_lldp(self):
+        from mock_server.generators.uplink import generate_lldp
+        from app.parsers.plugins.get_uplink_lldp_nxos_dna_parser import GetUplinkLldpNxosDnaParser
 
-        raw = generate("nxos")
-        parser = GetUplinkNxosFnaParser()
+        raw = generate_lldp("nxos")
+        parser = GetUplinkLldpNxosDnaParser()
+        results = parser.parse(raw)
+        assert len(results) >= 1
+
+
+class TestUplinkCdpPipeline:
+    def test_ios_cdp(self):
+        from mock_server.generators.uplink import generate_cdp
+        from app.parsers.plugins.get_uplink_cdp_ios_dna_parser import GetUplinkCdpIosDnaParser
+
+        raw = generate_cdp("ios")
+        parser = GetUplinkCdpIosDnaParser()
+        results = parser.parse(raw)
+        assert len(results) >= 1
+        for r in results:
+            assert r.local_interface
+            assert r.remote_hostname
+
+    def test_nxos_cdp(self):
+        from mock_server.generators.uplink import generate_cdp
+        from app.parsers.plugins.get_uplink_cdp_nxos_dna_parser import GetUplinkCdpNxosDnaParser
+
+        raw = generate_cdp("nxos")
+        parser = GetUplinkCdpNxosDnaParser()
         results = parser.parse(raw)
         assert len(results) >= 1
 

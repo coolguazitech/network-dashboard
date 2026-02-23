@@ -1,7 +1,7 @@
 """
-Parser for 'get_uplink_ios_fna' API.
+Parser for 'get_uplink_cdp_nxos_dna' API.
 
-Parses Cisco IOS/IOS-XE `show cdp neighbors detail` output to extract
+Parses Cisco NX-OS `show cdp neighbors detail` output to extract
 CDP neighbor details (remote hostname, interface, platform).
 
 === ParsedData Model (DO NOT REMOVE) ===
@@ -13,7 +13,7 @@ class NeighborData(ParsedData):
 === End ParsedData Model ===
 
 === Real CLI Command ===
-Command: show cdp neighbor / show lldp neighbor
+Command: show cdp neighbors detail
 === End Real CLI Command ===
 """
 from __future__ import annotations
@@ -25,36 +25,45 @@ from app.parsers.protocols import BaseParser, NeighborData
 from app.parsers.registry import parser_registry
 
 
-class GetUplinkIosFnaParser(BaseParser[NeighborData]):
+class GetUplinkCdpNxosDnaParser(BaseParser[NeighborData]):
     """
-    Parser for Cisco IOS/IOS-XE ``show cdp neighbors detail`` output.
+    Parser for Cisco NX-OS ``show cdp neighbors detail`` output.
 
-    Real CLI output (ref: NTC-templates ``cisco_ios_show_cdp_neighbors_detail.raw``)::
+    Real CLI output::
 
-        -------------------------
-        Device ID: SW-CORE-01.example.com
-        Entry address(es):
-          IP address: 10.0.0.1
-        Platform: cisco WS-C3750X-48PF,  Capabilities: Router Switch IGMP
-        Interface: GigabitEthernet0/1,  Port ID (outgoing port): GigabitEthernet1/0/1
-        Holdtime : 143 sec
-        Version :
-        Cisco IOS Software, C3750E Software, Version 15.2(4)E10
-        -------------------------
-        Device ID: SW-CORE-02
-        Platform: cisco WS-C3750X-48PF,  Capabilities: Router Switch IGMP
-        Interface: GigabitEthernet0/2,  Port ID (outgoing port): GigabitEthernet1/0/1
-        Holdtime : 143 sec
-        -------------------------
+        ----------------------------------------
+        Device ID:SPINE-01(SSI12345678)
+        System Name: SPINE-01
+
+        Interface address(es):
+            IPv4 Address: 10.0.0.1
+        Platform: N9K-C93180YC-EX, Capabilities: Router Switch IGMP Filtering Supports-STP-Dispute
+        Interface: Ethernet1/1, Port ID (outgoing port): Ethernet1/25
+        Holdtime: 155 sec
+
+        Version:
+        Cisco Nexus Operating System (NX-OS) Software, Version 9.3(8)
+
+        Advertisement Version: 2
+        ----------------------------------------
+        Device ID:SPINE-02(SSI12345679)
+        System Name: SPINE-02
+
+        Interface address(es):
+            IPv4 Address: 10.0.0.2
+        Platform: N9K-C93180YC-EX, Capabilities: Router Switch IGMP Filtering
+        Interface: Ethernet1/2, Port ID (outgoing port): Ethernet1/25
+        Holdtime: 148 sec
 
     Notes:
         - Blocks separated by lines of 10+ dashes.
-        - Device ID may include domain suffix.
-        - Platform text before comma is extracted.
+        - Device ID may include serial number in parentheses.
+        - Platform text before first comma is extracted.
+        - NX-OS CDP output is very similar to IOS CDP output.
     """
 
-    device_type = DeviceType.CISCO_IOS
-    command = "get_uplink_ios_fna"
+    device_type = DeviceType.CISCO_NXOS
+    command = "get_uplink_cdp_nxos_dna"
 
     # CDP detail patterns
     DEVICE_ID_PATTERN = re.compile(r'Device ID:\s*(.+)')
@@ -65,7 +74,7 @@ class GetUplinkIosFnaParser(BaseParser[NeighborData]):
 
     def parse(self, raw_output: str) -> list[NeighborData]:
         """
-        Parse Cisco IOS CDP neighbor detail output into NeighborData records.
+        Parse Cisco NX-OS CDP neighbor detail output into NeighborData records.
 
         Args:
             raw_output: Raw CLI output from `show cdp neighbors detail`
@@ -102,7 +111,11 @@ class GetUplinkIosFnaParser(BaseParser[NeighborData]):
         device_match = self.DEVICE_ID_PATTERN.search(block)
         if not device_match:
             return None
-        remote_hostname = device_match.group(1).strip()
+        raw_device_id = device_match.group(1).strip()
+        if not raw_device_id:
+            return None
+        # Remove serial number suffix like "(SSI12345678)"
+        remote_hostname = re.sub(r'\(.*?\)\s*$', '', raw_device_id).strip()
         if not remote_hostname:
             return None
 
@@ -133,4 +146,4 @@ class GetUplinkIosFnaParser(BaseParser[NeighborData]):
 
 
 # Register parser
-parser_registry.register(GetUplinkIosFnaParser())
+parser_registry.register(GetUplinkCdpNxosDnaParser())

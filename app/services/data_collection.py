@@ -240,10 +240,11 @@ class ApiCollectionService:
                 device_type=device_type,
             )
         if parser is None:
-            raise ValueError(
-                f"No parser for '{parser_command}' "
-                f"(device_type={device_type.value})"
+            logger.debug(
+                "No parser for '%s' (device_type=%s), skipping",
+                parser_command, device_type.value,
             )
+            return
 
         # 3. Fetch raw data
         fetcher = fetcher_registry.get_or_raise(api_name)

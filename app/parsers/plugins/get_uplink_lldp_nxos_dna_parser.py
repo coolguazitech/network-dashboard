@@ -1,5 +1,5 @@
 """
-Parser for 'get_uplink_nxos_fna' API.
+Parser for 'get_uplink_lldp_nxos_dna' API.
 
 Parses Cisco NX-OS `show lldp neighbors detail` output to extract
 LLDP neighbor details (remote hostname, interface, platform).
@@ -13,7 +13,7 @@ class NeighborData(ParsedData):
 === End ParsedData Model ===
 
 === Real CLI Command ===
-Command: show cdp neighbor / show lldp neighbor
+Command: show lldp neighbors detail
 === End Real CLI Command ===
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ from app.parsers.protocols import BaseParser, NeighborData
 from app.parsers.registry import parser_registry
 
 
-class GetUplinkNxosFnaParser(BaseParser[NeighborData]):
+class GetUplinkLldpNxosDnaParser(BaseParser[NeighborData]):
     """
     Parser for Cisco NX-OS ``show lldp neighbors detail`` output.
 
@@ -58,7 +58,7 @@ class GetUplinkNxosFnaParser(BaseParser[NeighborData]):
     """
 
     device_type = DeviceType.CISCO_NXOS
-    command = "get_uplink_nxos_fna"
+    command = "get_uplink_lldp_nxos_dna"
 
     # LLDP field patterns
     LOCAL_PORT_PATTERN = re.compile(
@@ -150,4 +150,4 @@ class GetUplinkNxosFnaParser(BaseParser[NeighborData]):
 
 
 # Register parser
-parser_registry.register(GetUplinkNxosFnaParser())
+parser_registry.register(GetUplinkLldpNxosDnaParser())

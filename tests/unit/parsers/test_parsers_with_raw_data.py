@@ -102,11 +102,11 @@ class TestGetErrorCountHpeFnaParser:
         assert parser.parse("") == []
 
 
-class TestGetUplinkHpeFnaParser:
+class TestGetUplinkLldpHpeDnaParser:
     def test_parse_real_data(self):
-        from app.parsers.plugins.get_uplink_hpe_fna_parser import GetUplinkHpeFnaParser
+        from app.parsers.plugins.get_uplink_lldp_hpe_dna_parser import GetUplinkLldpHpeDnaParser
 
-        parser = GetUplinkHpeFnaParser()
+        parser = GetUplinkLldpHpeDnaParser()
         raw = load_raw("get_uplink_hpe_10.10.1.1.txt")
         results = parser.parse(raw)
 
