@@ -9,7 +9,6 @@ class NeighborData(ParsedData):
     local_interface: str                     # local port, e.g. "GigabitEthernet0/1"
     remote_hostname: str                     # neighbor device name
     remote_interface: str                    # neighbor port
-    remote_platform: str | None = None       # optional platform description
 === End ParsedData Model ===
 
 === Real CLI Command ===
@@ -58,7 +57,6 @@ class GetUplinkCdpIosDnaParser(BaseParser[NeighborData]):
 
     # CDP detail patterns
     DEVICE_ID_PATTERN = re.compile(r'Device ID:\s*(.+)')
-    PLATFORM_PATTERN = re.compile(r'Platform:\s*(.+?)(?:,\s*Capabilities:|$)')
     INTERFACE_PATTERN = re.compile(
         r'Interface:\s*(\S+?)\s*,\s*Port ID \(outgoing port\):\s*(\S+)'
     )
@@ -116,19 +114,10 @@ class GetUplinkCdpIosDnaParser(BaseParser[NeighborData]):
         if not local_interface or not remote_interface:
             return None
 
-        # Extract remote platform (Platform) - optional, text before comma
-        remote_platform: str | None = None
-        platform_match = self.PLATFORM_PATTERN.search(block)
-        if platform_match:
-            platform_val = platform_match.group(1).strip().rstrip(",")
-            if platform_val:
-                remote_platform = platform_val
-
         return NeighborData(
             local_interface=local_interface,
             remote_hostname=remote_hostname,
             remote_interface=remote_interface,
-            remote_platform=remote_platform,
         )
 
 

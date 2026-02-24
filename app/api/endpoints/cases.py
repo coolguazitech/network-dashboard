@@ -313,7 +313,7 @@ async def get_change_timeline(
 ) -> dict[str, Any]:
     """取得某屬性的變化時間線。"""
     from sqlalchemy import select
-    from app.db.models import Case
+    from app.db.models import Case, LatestClientRecord
     from app.services.case_service import TRACKED_ATTRIBUTES, ATTRIBUTE_LABELS
 
     if attribute not in TRACKED_ATTRIBUTES:
@@ -335,9 +335,19 @@ async def get_change_timeline(
         session=session,
     )
 
+    # 查詢最後確認時間
+    lcr_stmt = select(LatestClientRecord).where(
+        LatestClientRecord.maintenance_id == maintenance_id,
+        LatestClientRecord.mac_address == case.mac_address.upper(),
+    )
+    lcr = (await session.execute(lcr_stmt)).scalar_one_or_none()
+
     return {
         "success": True,
         "attribute": attribute,
         "label": ATTRIBUTE_LABELS.get(attribute, attribute),
         "timeline": timeline,
+        "last_checked_at": (
+            lcr.last_checked_at.isoformat() if lcr and lcr.last_checked_at else None
+        ),
     }

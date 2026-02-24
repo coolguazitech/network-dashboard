@@ -96,7 +96,6 @@ class PingIndicator(BaseIndicator):
                     "reason": "Ping 不可達",
                     "data": {
                         "is_reachable": False,
-                        "success_rate": device_status.get("success_rate"),
                         "last_check_at": str(device_status["last_check_at"]) if device_status["last_check_at"] else None,
                     }
                 })
@@ -109,7 +108,6 @@ class PingIndicator(BaseIndicator):
                         "reason": "Ping 可達",
                         "data": {
                             "is_reachable": True,
-                            "success_rate": device_status.get("success_rate"),
                             "last_check_at": str(device_status["last_check_at"]) if device_status["last_check_at"] else None,
                         }
                     })
@@ -173,7 +171,6 @@ class PingIndicator(BaseIndicator):
             ):
                 collected[hostname] = {
                     "is_reachable": record.is_reachable,
-                    "success_rate": record.success_rate,
                     "last_check_at": record.collected_at,
                 }
 
@@ -259,7 +256,6 @@ class PingIndicator(BaseIndicator):
                 RawDataRow(
                     switch_hostname=record.switch_hostname,
                     is_reachable=record.is_reachable,
-                    success_rate=record.success_rate,
                     collected_at=record.collected_at,
                 )
             )

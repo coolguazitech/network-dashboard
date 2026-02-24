@@ -621,7 +621,11 @@
             </div>
           </div>
           <!-- Footer -->
-          <div class="px-5 py-3 border-t border-slate-700 text-right">
+          <div class="px-5 py-3 border-t border-slate-700 flex items-center justify-between">
+            <span v-if="timelineModal.lastCheckedAt" class="text-xs text-slate-500">
+              持續監控中 · 最後確認 {{ formatTime(timelineModal.lastCheckedAt) }}
+            </span>
+            <span v-else></span>
             <button @click="timelineModal.show = false" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">
               關閉
             </button>
@@ -692,6 +696,7 @@ export default {
         allNull: false,
         totalSpan: '',
         caseObj: null,
+        lastCheckedAt: null,
       },
       // 圖片上傳
       uploading: false,
@@ -1271,11 +1276,13 @@ export default {
       this.timelineModal.allNull = false
       this.timelineModal.totalSpan = ''
       this.timelineModal.caseObj = c
+      this.timelineModal.lastCheckedAt = null
 
       try {
         const { data } = await api.get(
           `/cases/${this.selectedMaintenanceId}/${c.id}/changes/${tag.attribute}`,
         )
+        this.timelineModal.lastCheckedAt = data.last_checked_at || null
         const entries = data.timeline || []
         const allNull = entries.length > 0 && entries.every(e => e.value === null)
         this.timelineModal.allNull = allNull

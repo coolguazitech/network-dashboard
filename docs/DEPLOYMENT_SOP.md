@@ -223,24 +223,27 @@ FETCHER_SOURCE__GNMSPING__BASE_URL=http://your-gnmsping-server:8001
 FETCHER_SOURCE__GNMSPING__TIMEOUT=60
 
 # ===== Endpoint 模板（名稱必須與 scheduler.yaml 的 fetcher key 一致）=====
-FETCHER_ENDPOINT__GET_GBIC_DETAILS=/api/v1/transceiver/{switch_ip}
-FETCHER_ENDPOINT__GET_CHANNEL_GROUP=/api/v1/port-channel/{switch_ip}
-FETCHER_ENDPOINT__GET_UPLINK_LLDP=/api/v1/{device_type}/uplink-lldp/{switch_ip}
-FETCHER_ENDPOINT__GET_UPLINK_CDP=/api/v1/{device_type}/uplink-cdp/{switch_ip}
-FETCHER_ENDPOINT__GET_ERROR_COUNT=/api/v1/error-count/{switch_ip}
-FETCHER_ENDPOINT__GET_STATIC_ACL=/api/v1/acl/static/{switch_ip}
-FETCHER_ENDPOINT__GET_DYNAMIC_ACL=/api/v1/acl/dynamic/{switch_ip}
-FETCHER_ENDPOINT__GET_ARP_TABLE=/api/v1/arp-table/{switch_ip}
-FETCHER_ENDPOINT__GET_MAC_TABLE=/api/v1/mac-table/{switch_ip}
-FETCHER_ENDPOINT__GET_FAN=/api/v1/fan/{switch_ip}
-FETCHER_ENDPOINT__GET_POWER=/api/v1/power/{switch_ip}
-FETCHER_ENDPOINT__GET_VERSION=/api/v1/version/{switch_ip}
+# FNA — 所有廠牌共用，IP 在 path 中
+FETCHER_ENDPOINT__GET_GBIC_DETAILS=/switch/network/get_gbic_details/{switch_ip}
+FETCHER_ENDPOINT__GET_CHANNEL_GROUP=/switch/network/get_channel_group/{switch_ip}
+FETCHER_ENDPOINT__GET_ERROR_COUNT=/switch/network/get_interface_error_count/{switch_ip}
+FETCHER_ENDPOINT__GET_STATIC_ACL=/switch/network/get_static_acl/{switch_ip}
+FETCHER_ENDPOINT__GET_DYNAMIC_ACL=/switch/network/get_dynamic_acl/{switch_ip}
+
+# DNA — 每個 device_type 用 __HPE/__IOS/__NXOS 後綴 + ?hosts={switch_ip}
+# （預設值已內建於 config.py，可不設定；若需覆蓋則按以下格式）
+FETCHER_ENDPOINT__GET_FAN__HPE=/api/v1/hpe/environment/display_fan?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_FAN__IOS=/api/v1/ios/environment/show_env_fan?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_FAN__NXOS=/api/v1/nxos/environment/show_environment_fan?hosts={switch_ip}
+# ... 其餘 6 個 DNA API 同理（完整範例見 .env.production）
 ```
 
 佔位符說明：
-- `{switch_ip}` → 設備 IP（自動從 FetchContext 帶入）
-- `{device_type}` → 設備類型（`hpe`/`ios`/`nxos`）
-- 其他自訂 key → 自動成為 query params
+- **FNA**：`{switch_ip}` → 設備 IP 在 URL path 中，Bearer token 認證
+  `GET {FNA_BASE_URL}/switch/network/get_gbic_details/10.1.1.1`
+- **DNA**：用 `__HPE`/`__IOS`/`__NXOS` 後綴設定 per-device-type endpoint，
+  IP 透過 `?hosts={switch_ip}` 顯式傳遞（模板含 `?` → 不自動附加其他 query params）
+  `GET {DNA_BASE_URL}/api/v1/hpe/environment/display_fan?hosts=10.1.1.1`
 
 ### 2.5 修改 Parser（核心工作）
 

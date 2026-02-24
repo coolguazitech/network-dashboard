@@ -877,46 +877,142 @@ app/
 
 ---
 
-## 3. 新增 Parser（保姆級步驟）
+## 3. DNA vs FNA 回傳格式差異（寫 Parser 前必讀）
+
+本系統的外部資料來源分為 **FNA** 和 **DNA** 兩種，它們的回傳格式截然不同，
+這直接影響你寫 Parser 的方式。
+
+### FNA 回傳格式
+
+FNA 回傳的是**純 CLI 文字**或**已處理的 CSV/表格文字**。
+Parser 必須用 regex 或逐行分析來提取欄位。
+
+### DNA 回傳格式（重要特性）
+
+DNA 的回傳有一個非常好的特性：**回傳本身是一個可以 JSON 化的字串**，
+JSON 化以後就已經是 TextFSM 的結構化結果了。
+
+DNA 回傳有三種情況：
+
+#### 情況 1：解析成功 — `result` 裡有結構化 dict list
+
+```json
+{
+  "result": [
+    {"fan_id": "1", "status": "Normal", "direction": "Back-to-front"},
+    {"fan_id": "2", "status": "Normal", "direction": "Front-to-back"}
+  ]
+}
+```
+
+**Parser 直接從 dict 取欄位即可，不需要 regex！**
+
+#### 情況 2：解析失敗 — 沒有 `result`，改用 `message` 告知原因
+
+```json
+{
+  "message": "Connection timeout to 10.1.1.1"
+}
+```
+
+**Parser 偵測到沒有 `result` → 回傳 `[]`。**
+
+#### 情況 3：有 `result` 但不符合 schema — 直接放原始 raw 文字
+
+當設備的 CLI 輸出不符合 TextFSM template 時，DNA 會直接把未處理的
+raw CLI 文字放入 `result`。此時 `result` 的值是字串而非 dict list。
+
+```json
+{
+  "result": "Slot 1:\nFanID    Status    ...\n1        Normal    ..."
+}
+```
+
+**Parser 需要 fallback 到 regex/逐行解析。**
+
+### DNA Parser 建議寫法
+
+```python
+import json
+
+def parse(self, raw_output: str) -> list[SomeData]:
+    if not raw_output or not raw_output.strip():
+        return []
+
+    # ── Step 1: 嘗試 JSON 解碼 ──
+    try:
+        data = json.loads(raw_output)
+    except (json.JSONDecodeError, ValueError):
+        # 不是 JSON → 當作純文字，走 regex 解析
+        return self._parse_text(raw_output)
+
+    # ── Step 2: 檢查是否有 result ──
+    if not isinstance(data, dict):
+        return []
+
+    result = data.get("result")
+    if result is None:
+        # 有 message 無 result → 解析失敗，回傳空
+        return []
+
+    # ── Step 3: 判斷 result 的型別 ──
+    if isinstance(result, list):
+        # ✅ TextFSM 結構化結果 → 直接 mapping
+        return self._parse_structured(result)
+    elif isinstance(result, str):
+        # ⚠️ Schema 不匹配，收到原始 CLI 文字 → regex fallback
+        return self._parse_text(result)
+
+    return []
+```
+
+> **給 AI 的提示**：撰寫 DNA parser 時，請優先實作 `_parse_structured()` 路徑，
+> 因為大多數情況下 DNA 會回傳結構化的 TextFSM 結果。
+> `_parse_text()` 是 fallback，只在 DNA 無法解析時才會觸發。
+> FNA parser 則只需要 `_parse_text()` 路徑。
+
+---
+
+## 4. 新增 Parser（保姆級步驟）
 
 ### Step 1：確認你的目標
 
 你需要回答三個問題：
 1. **哪種設備？** → `DeviceType.HPE` / `CISCO_IOS` / `CISCO_NXOS`
 2. **哪種指標？** → `"transceiver"` / `"fan"` / `"power"` / `"version"` / ...
-3. **API 回傳什麼格式？** → 先 curl 看 raw output
+3. **API 回傳什麼格式？** → 先 curl 看 raw output（注意 DNA 是 JSON 包裝）
 
 ### Step 2：建立檔案
 
 ```bash
-# 命名規則：{vendor}_{indicator}.py
-touch app/parsers/plugins/hpe_version.py
+# 命名規則：get_{api}_{device}_{source}_parser.py
+touch app/parsers/plugins/get_version_hpe_dna_parser.py
 ```
 
 ### Step 3：撰寫 Parser
 
 ```python
-# app/parsers/plugins/hpe_version.py
+# app/parsers/plugins/get_version_hpe_dna_parser.py
 
+import re
 from app.core.enums import DeviceType
 from app.parsers.protocols import BaseParser, VersionData
 from app.parsers.registry import parser_registry
 
 
-class HpeVersionParser(BaseParser[VersionData]):
-    """HPE 設備韌體版本解析器。"""
+class GetVersionHpeDnaParser(BaseParser[VersionData]):
+    """HPE 設備韌體版本解析器（DNA）。"""
 
     # ── class attributes ──
     device_type = DeviceType.HPE         # 可選：設 None 則為通用 Parser（如 PingParser）
-    indicator_type = "version"           # ★ 必填，必須與 scheduler.yaml 一致
-    command = "display version"
+    command = "get_version_hpe_dna"      # ★ 必填，Registry 查詢的 key
 
     def parse(self, raw_output: str) -> list[VersionData]:
         """
         解析 HPE 版本資訊。
 
         Tips:
-        - raw_output 是 API 回傳的原始文字
+        - raw_output 是 API 回傳的原始文字（DNA 是 JSON 包裝）
         - 用 split('\n') 逐行解析
         - 用 re.search() 匹配欄位
         - 無法解析的行 → continue（不要 raise）
@@ -925,21 +1021,18 @@ class HpeVersionParser(BaseParser[VersionData]):
         results = []
 
         # 範例解析邏輯：
-        import re
-        version_match = re.search(r'Version\s+:\s+(.+)', raw_output)
-        model_match = re.search(r'Model\s+:\s+(.+)', raw_output)
+        version_match = re.search(r'Version\s+(\S+)', raw_output)
 
         if version_match:
             results.append(VersionData(
-                version=version_match.group(1).strip(),
-                model=model_match.group(1).strip() if model_match else None,
+                version=version_match.group(1).strip().rstrip(","),
             ))
 
         return results
 
 
 # ── 檔案底部：註冊到 registry ──
-parser_registry.register(HpeVersionParser())
+parser_registry.register(GetVersionHpeDnaParser())
 ```
 
 ### Step 4：在 `__init__.py` 加入 import
@@ -966,11 +1059,11 @@ print(p.parse('Version : KB.16.11.0006\nModel : 5412R'))
 
 ---
 
-## 4. 新增全新指標類型
+## 5. 新增全新指標類型
 
 如果你要新增一個目前不存在的指標（如 `acl`）：
 
-### 4.1 定義 ParsedData 模型
+### 5.1 定義 ParsedData 模型
 
 在 `app/parsers/protocols.py` 中新增：
 
@@ -981,7 +1074,7 @@ class AclData(ParsedData):
     acl_number: str | None = None
 ```
 
-### 4.2 新增 scheduler.yaml entry
+### 5.2 新增 scheduler.yaml entry
 
 ```yaml
 # config/scheduler.yaml
@@ -992,13 +1085,13 @@ fetchers:
     description: "ACL 規則查詢"
 ```
 
-### 4.3 新增 .env endpoint
+### 5.3 新增 .env endpoint
 
 ```bash
 FETCHER_ENDPOINT__ACL=/api/v1/acl/{switch_ip}
 ```
 
-### 4.4 撰寫 Parser
+### 5.4 撰寫 Parser
 
 ```python
 # app/parsers/plugins/hpe_acl.py
@@ -1009,7 +1102,7 @@ class HpeAclParser(BaseParser[AclData]):
     # ...
 ```
 
-### 4.5 撰寫 Indicator（若需判定通過/失敗）
+### 5.5 撰寫 Indicator（若需判定通過/失敗）
 
 在 `app/indicators/` 中新增評估器：
 
@@ -1023,7 +1116,7 @@ class AclIndicator(BaseIndicator):
 
 ---
 
-## 5. 新增外部 API Source
+## 6. 新增外部 API Source
 
 如果你的外部 API 不在現有 FNA / DNA / GNMSPING 之中：
 
@@ -1057,7 +1150,7 @@ fetchers:
 
 ---
 
-## 6. 通用 Parser（device_type=None）
+## 7. 通用 Parser（device_type=None）
 
 某些指標的解析邏輯與設備廠牌無關（如 Ping），可建立通用 Parser：
 
@@ -1079,7 +1172,7 @@ Registry 查詢邏輯：
 
 ---
 
-## 7. Mock 開發模式
+## 8. Mock 開發模式
 
 開發時透過 `docker-compose.dev.yaml` 啟動獨立的 Mock API Server（`mock_server/`），
 主應用的 `FETCHER_SOURCE__*__BASE_URL` 指向 Mock Server，ConfiguredFetcher 照常呼叫。
@@ -1092,29 +1185,29 @@ Mock API Server 特色：
 
 ---
 
-## 8. 除錯技巧
+## 9. 除錯技巧
 
-### 8.1 Parser 不載入
+### 9.1 Parser 不載入
 
 確認以下三項：
 1. `__init__.py` 有 `from . import your_module`
 2. 檔案底部有 `parser_registry.register(YourParser())`
 3. 沒有 import error（進容器用 `python -c "from app.parsers.plugins import *"` 測試）
 
-### 8.2 指標顯示「無採集數據」
+### 9.2 指標顯示「無採集數據」
 
 可能原因：
 - Parser 的 `indicator_type` 與 `scheduler.yaml` 的 fetcher name 不一致
 - Parser `parse()` 回傳空列表（API 格式不匹配）
 - 設備的 `device_type` 沒有對應的 Parser
 
-### 8.3 紫色狀態（採集異常）
+### 9.3 紫色狀態（採集異常）
 
 - Fetcher 回傳 `FetchResult(success=False)`
 - 通常是外部 API 連線失敗、timeout 或回傳非 200
 - 檢查 `.env` 中的 `FETCHER_SOURCE__xxx__BASE_URL` 和網路連通性
 
-### 8.4 查看即時 Logs
+### 9.4 查看即時 Logs
 
 ```bash
 docker-compose logs -f app 2>&1 | grep -E "(ERROR|WARNING|fetcher|parser)"
@@ -1122,20 +1215,20 @@ docker-compose logs -f app 2>&1 | grep -E "(ERROR|WARNING|fetcher|parser)"
 
 ---
 
-## 9. 快速參考
+## 10. 快速參考
 
 ### ParsedData 模型對照表
 
 | 指標 | ParsedData 類別 | 必填欄位 | 可選欄位（可為空/有預設值） |
 |------|----------------|---------|--------------------------|
-| transceiver | `TransceiverData` | interface_name | tx_power, rx_power, temperature, voltage |
-| fan | `FanStatusData` | fan_id, status | speed_rpm, speed_percent |
-| power | `PowerData` | ps_id, status | input_status, output_status, capacity_watts, actual_output_watts |
-| version | `VersionData` | version | model, serial_number, uptime |
-| uplink | `NeighborData` | local_interface, remote_hostname, remote_interface | remote_platform |
-| port_channel | `PortChannelData` | interface_name, status, members | protocol, member_status |
-| error_count | `InterfaceErrorData` | interface_name | crc_errors(=0), input_errors(=0), output_errors(=0), collisions(=0), giants(=0), runts(=0) |
-| ping | `PingData` | target, is_reachable, success_rate | avg_rtt_ms |
+| transceiver | `TransceiverData` | interface_name, channels | temperature, voltage |
+| fan | `FanStatusData` | fan_id, status | — |
+| power | `PowerData` | ps_id, status | — |
+| version | `VersionData` | version | — |
+| uplink | `NeighborData` | local_interface, remote_hostname, remote_interface | — |
+| port_channel | `PortChannelData` | interface_name, status, members | member_status |
+| error_count | `InterfaceErrorData` | interface_name | crc_errors(=0) |
+| ping | `PingResultData` | target, is_reachable | — |
 
 > **必填** = Parser 必須給值，否則 Pydantic 驗證報錯。**可選** = 帶 `| None` 或有預設值，不傳不會報錯。
 

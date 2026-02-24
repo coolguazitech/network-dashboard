@@ -349,9 +349,6 @@ class MockDataGenerator:
                 maintenance_id=maintenance_id,
                 collected_at=now,
                 version=version,
-                model=f"Catalyst {random.choice(['9300', '9400', '9500'])}",
-                serial_number=f"SN{random.randint(100000, 999999)}",
-                uptime=f"{random.randint(1, 365)} days",
             )
             records.append(record)
 

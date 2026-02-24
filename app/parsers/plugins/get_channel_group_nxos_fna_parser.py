@@ -8,7 +8,6 @@ port-channel interface, status, protocol, and member details.
 class PortChannelData(ParsedData):
     interface_name: str                      # e.g. "Po1", "Bridge-Aggregation1"
     status: str                              # auto-normalized → LinkStatus (up/down/unknown)
-    protocol: str | None = None              # auto-normalized → AggregationProtocol (lacp/pagp/static/none)
     members: list[str]                       # member interface names
     member_status: dict[str, str] | None     # {interface: "up"|"down"}, optional
 === End ParsedData Model ===
@@ -140,7 +139,6 @@ class GetChannelGroupNxosFnaParser(BaseParser[PortChannelData]):
         return PortChannelData(
             interface_name=group["po_name"],
             status=self._flags_to_status(group["flags"]),
-            protocol=self._normalize_protocol(group["protocol"]),
             members=members,
             member_status=member_status if member_status else None,
         )

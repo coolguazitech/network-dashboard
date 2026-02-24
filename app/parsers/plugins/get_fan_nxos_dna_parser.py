@@ -7,8 +7,6 @@ Parses Cisco NXOS ``show environment fan`` table output to extract fan status.
 class FanStatusData(ParsedData):
     fan_id: str                              # e.g. "Fan 1/1", "FAN 1", "Fan1(sys_fan1)"
     status: str                              # auto-normalized → OperationalStatus
-    speed_rpm: int | None = None             # optional fan speed in RPM
-    speed_percent: int | None = None         # optional fan speed in %
 
 Valid status values: ok, good, normal, online, active, fail, absent, unknown
 Status is auto-normalized (case-insensitive): "Normal"→"normal", "OK"→"ok", "Absent"→"absent"
@@ -106,8 +104,6 @@ class GetFanNxosDnaParser(BaseParser[FanStatusData]):
                 FanStatusData(
                     fan_id=fan_id,
                     status=status,
-                    speed_rpm=None,
-                    speed_percent=None,
                 )
             )
 

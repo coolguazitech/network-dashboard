@@ -1,5 +1,21 @@
-"""Mock: 設備連通性 (ping_batch)。"""
+"""Mock: 設備連通性 (ping_batch)。
+
+產出與真實 Ping API 相同的 JSON 格式::
+
+    {
+        "result": {
+            "10.0.0.1": {
+                "min_rtt": 1.1, "avg_rtt": 1.2, "max_rtt": 1.3,
+                "rtts": [1.1, 1.2, 1.3],
+                "packets_sent": 3, "packets_received": 3,
+                "packet_loss": 0, "jitter": 0.1, "is_alive": true
+            }
+        }
+    }
+"""
 from __future__ import annotations
+
+import json
 
 
 def generate(
@@ -8,23 +24,33 @@ def generate(
     switch_ip: str = "10.0.0.1",
     **_kw: object,
 ) -> str:
-    unreachable = fails
+    if fails:
+        result = {
+            switch_ip: {
+                "min_rtt": 0,
+                "avg_rtt": 0,
+                "max_rtt": 0,
+                "rtts": [],
+                "packets_sent": 3,
+                "packets_received": 0,
+                "packet_loss": 100.0,
+                "jitter": 0,
+                "is_alive": False,
+            }
+        }
+    else:
+        result = {
+            switch_ip: {
+                "min_rtt": 1.1,
+                "avg_rtt": 1.2,
+                "max_rtt": 1.3,
+                "rtts": [1.1, 1.2, 1.3],
+                "packets_sent": 3,
+                "packets_received": 3,
+                "packet_loss": 0,
+                "jitter": 0.1,
+                "is_alive": True,
+            }
+        }
 
-    if unreachable:
-        return (
-            f"PING {switch_ip} ({switch_ip}): 56 data bytes\n"
-            f"\n"
-            f"--- {switch_ip} ping statistics ---\n"
-            f"3 packets transmitted, 0 packets received, 100.0% packet loss\n"
-        )
-
-    return (
-        f"PING {switch_ip} ({switch_ip}): 56 data bytes\n"
-        f"64 bytes from {switch_ip}: icmp_seq=0 ttl=64 time=1.2 ms\n"
-        f"64 bytes from {switch_ip}: icmp_seq=1 ttl=64 time=1.1 ms\n"
-        f"64 bytes from {switch_ip}: icmp_seq=2 ttl=64 time=1.3 ms\n"
-        f"\n"
-        f"--- {switch_ip} ping statistics ---\n"
-        f"3 packets transmitted, 3 packets received, 0.0% packet loss\n"
-        f"round-trip min/avg/max = 1.1/1.2/1.3 ms\n"
-    )
+    return json.dumps({"result": result})

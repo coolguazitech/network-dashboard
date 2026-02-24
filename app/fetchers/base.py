@@ -7,7 +7,7 @@ Fetcher base classes.
 - FetchResult: fetch 回傳結果
 
 ConfiguredFetcher 繼承 BaseFetcher，在 fetch() 中根據
-.env 的設定呼叫外部 API（GET + 佔位符路徑 + auto query params）。
+.env 的設定呼叫外部 API（GET + 佔位符路徑 / query params）。
 
 ★ 開發指南：如何新增一個 Fetcher
 =================================
@@ -29,7 +29,8 @@ ConfiguredFetcher 繼承 BaseFetcher，在 fetch() 中根據
        b. 在 app/core/config.py 的 FetcherSourceConfig 加對應的欄位
     2. 在 .env 加一筆 FETCHER_ENDPOINT__{NAME}=... endpoint 模板
        支援佔位符: {switch_ip}, {device_type}, {tenant_group} 等
-       （ctx.params 中的任意 key 亦可用；未消耗的變數自動成為 query params）
+       （ctx.params 中的任意 key 亦可用）
+       模板含 '?' → 顯式 query params；不含 '?' → 未消耗變數自動附加為 query params
     3. 在 app/parsers/plugins/ 寫對應的 Parser
     4. 完成！ConfiguredFetcher 自動處理 GET 呼叫。
 
@@ -76,7 +77,8 @@ class FetchContext(BaseModel):
 
     可選欄位：
     - params 字典中的任意 key 也可作為佔位符
-    - 未被佔位符消耗的變數自動成為 query params
+    - 模板含 '?' → 顯式 query params（Production DNA 用 ?hosts={switch_ip}）
+    - 模板不含 '?' → 未消耗變數自動附加為 query params（Mock 相容）
 
     Attributes:
         switch_ip: 目標 switch IP（必傳）

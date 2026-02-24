@@ -25,13 +25,11 @@ def _make_device(hostname: str, ip: str) -> dict:
 
 def _make_collected_entry(
     is_reachable: bool,
-    success_rate: float = 100.0,
     last_check_at: datetime | None = None,
 ) -> dict:
     """建立 _get_collected_results 回傳格式的設備狀態字典。"""
     return {
         "is_reachable": is_reachable,
-        "success_rate": success_rate,
         "last_check_at": last_check_at,
     }
 
@@ -54,9 +52,9 @@ class TestPingIndicatorEvaluate:
             _make_device("SW-NEW-003", "10.1.2.3"),
         ]
         collected = {
-            "SW-NEW-001": _make_collected_entry(True, 100.0),
-            "SW-NEW-002": _make_collected_entry(True, 95.0),
-            "SW-NEW-003": _make_collected_entry(True, 80.0),
+            "SW-NEW-001": _make_collected_entry(True),
+            "SW-NEW-002": _make_collected_entry(True),
+            "SW-NEW-003": _make_collected_entry(True),
         }
 
         with patch.object(indicator, "_get_expected_devices", new_callable=AsyncMock) as mock_exp, \
@@ -90,9 +88,9 @@ class TestPingIndicatorEvaluate:
             _make_device("SW-NEW-003", "10.1.2.3"),
         ]
         collected = {
-            "SW-NEW-001": _make_collected_entry(True, 100.0, ts),
-            "SW-NEW-002": _make_collected_entry(False, 0.0, ts),
-            "SW-NEW-003": _make_collected_entry(True, 90.0, ts),
+            "SW-NEW-001": _make_collected_entry(True, ts),
+            "SW-NEW-002": _make_collected_entry(False, ts),
+            "SW-NEW-003": _make_collected_entry(True, ts),
         }
 
         with patch.object(indicator, "_get_expected_devices", new_callable=AsyncMock) as mock_exp, \
@@ -113,7 +111,6 @@ class TestPingIndicatorEvaluate:
         assert fail["device"] == "SW-NEW-002"
         assert fail["reason"] == "Ping 不可達"
         assert fail["data"]["is_reachable"] is False
-        assert fail["data"]["success_rate"] == 0.0
         assert fail["data"]["last_check_at"] == str(ts)
 
     @pytest.mark.asyncio
@@ -179,8 +176,8 @@ class TestPingIndicatorEvaluate:
             _make_device("SW-NEW-003", "10.1.2.3"),
         ]
         collected = {
-            "SW-NEW-001": _make_collected_entry(True, 100.0),
-            "SW-NEW-003": _make_collected_entry(True, 100.0),
+            "SW-NEW-001": _make_collected_entry(True),
+            "SW-NEW-003": _make_collected_entry(True),
             # SW-NEW-002 缺失
         }
 
@@ -219,8 +216,8 @@ class TestPingIndicatorEvaluate:
         # SW-NEW-001: 最佳結果是 reachable（雖然可能有多筆 record）
         # SW-NEW-002: 最佳結果仍是 not reachable
         collected = {
-            "SW-NEW-001": _make_collected_entry(True, 100.0),
-            "SW-NEW-002": _make_collected_entry(False, 30.0),
+            "SW-NEW-001": _make_collected_entry(True),
+            "SW-NEW-002": _make_collected_entry(False),
         }
 
         with patch.object(indicator, "_get_expected_devices", new_callable=AsyncMock) as mock_exp, \
@@ -255,11 +252,11 @@ class TestPingIndicatorEvaluate:
             for i in range(1, 6)
         ]
         collected = {
-            "SW-NEW-001": _make_collected_entry(True, 100.0),
-            "SW-NEW-002": _make_collected_entry(True, 90.0),
-            "SW-NEW-003": _make_collected_entry(False, 10.0),
-            "SW-NEW-004": _make_collected_entry(True, 85.0),
-            "SW-NEW-005": _make_collected_entry(False, 0.0),
+            "SW-NEW-001": _make_collected_entry(True),
+            "SW-NEW-002": _make_collected_entry(True),
+            "SW-NEW-003": _make_collected_entry(False),
+            "SW-NEW-004": _make_collected_entry(True),
+            "SW-NEW-005": _make_collected_entry(False),
         }
 
         with patch.object(indicator, "_get_expected_devices", new_callable=AsyncMock) as mock_exp, \
@@ -305,7 +302,7 @@ class TestPingIndicatorEvaluate:
             for i in range(1, 16)  # 15 台設備
         ]
         collected = {
-            f"SW-NEW-{i:03d}": _make_collected_entry(True, 100.0)
+            f"SW-NEW-{i:03d}": _make_collected_entry(True)
             for i in range(1, 16)
         }
 
@@ -330,7 +327,7 @@ class TestPingIndicatorEvaluate:
 
         expected = [_make_device("SW-NEW-001", "10.1.2.1")]
         collected = {
-            "SW-NEW-001": _make_collected_entry(False, 0.0, None),
+            "SW-NEW-001": _make_collected_entry(False, None),
         }
 
         with patch.object(indicator, "_get_expected_devices", new_callable=AsyncMock) as mock_exp, \
@@ -355,8 +352,8 @@ class TestPingIndicatorEvaluate:
             _make_device("SW-NEW-002", "10.1.2.2"),
         ]
         collected = {
-            "SW-NEW-001": _make_collected_entry(True, 100.0),
-            "SW-NEW-002": _make_collected_entry(False, 0.0),
+            "SW-NEW-001": _make_collected_entry(True),
+            "SW-NEW-002": _make_collected_entry(False),
         }
 
         with patch.object(indicator, "_get_expected_devices", new_callable=AsyncMock) as mock_exp, \

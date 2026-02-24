@@ -2,7 +2,7 @@
 Parser for 'get_power_nxos_dna' API.
 
 Parses Cisco NXOS `show environment power` tabular output to extract
-power supply status, capacity, and actual output wattage.
+power supply status.
 
 Real CLI command: show environment power
 Platforms: Nexus 9000, 7000, 5000 series
@@ -11,10 +11,6 @@ Platforms: Nexus 9000, 7000, 5000 series
 class PowerData(ParsedData):
     ps_id: str                               # e.g. "PS1", "Power Supply 1"
     status: str                              # auto-normalized → OperationalStatus
-    input_status: str | None = None          # optional
-    output_status: str | None = None         # optional
-    capacity_watts: float | None = None      # optional, >= 0
-    actual_output_watts: float | None = None # optional, >= 0
 
 Valid status values: ok, good, normal, online, active, fail, absent, unknown
 === End ParsedData Model ===
@@ -93,19 +89,6 @@ class GetPowerNxosDnaParser(BaseParser[PowerData]):
         re.MULTILINE | re.IGNORECASE,
     )
 
-    @staticmethod
-    def _parse_watts(value: str | None) -> float | None:
-        """Parse a wattage value, stripping 'W' suffix."""
-        if value is None:
-            return None
-        value = value.strip().rstrip("Ww").strip()
-        if value in ("--", "N/A", "n/a", ""):
-            return None
-        try:
-            return float(value)
-        except ValueError:
-            return None
-
     def parse(self, raw_output: str) -> list[PowerData]:
         results: list[PowerData] = []
         seen_ids: set[str] = set()
@@ -114,8 +97,6 @@ class GetPowerNxosDnaParser(BaseParser[PowerData]):
         for match in self.STANDARD_ROW_PATTERN.finditer(raw_output):
             ps_num = match.group("id")
             ps_id = f"PS-{ps_num}"
-            actual = self._parse_watts(match.group("actual"))
-            capacity = self._parse_watts(match.group("capacity"))
             status = match.group("status")
 
             if ps_id not in seen_ids:
@@ -123,8 +104,6 @@ class GetPowerNxosDnaParser(BaseParser[PowerData]):
                 results.append(PowerData(
                     ps_id=ps_id,
                     status=status,
-                    capacity_watts=capacity,
-                    actual_output_watts=actual,
                 ))
 
         # Try "PS-N" format
@@ -133,7 +112,6 @@ class GetPowerNxosDnaParser(BaseParser[PowerData]):
             # Normalize to "PS-N" format
             if not ps_id.startswith("PS-"):
                 ps_id = ps_id.replace("PS", "PS-")
-            actual = self._parse_watts(match.group("actual"))
             status = match.group("status")
 
             if ps_id not in seen_ids:
@@ -141,7 +119,6 @@ class GetPowerNxosDnaParser(BaseParser[PowerData]):
                 results.append(PowerData(
                     ps_id=ps_id,
                     status=status,
-                    actual_output_watts=actual,
                 ))
 
         # Fallback: flexible format with "W" unit markers
@@ -149,8 +126,6 @@ class GetPowerNxosDnaParser(BaseParser[PowerData]):
             for match in self.FLEXIBLE_ROW_PATTERN.finditer(raw_output):
                 ps_num = match.group("id")
                 ps_id = f"PS-{ps_num}"
-                actual = self._parse_watts(match.group("actual"))
-                capacity = self._parse_watts(match.group("capacity"))
                 status = match.group("status")
 
                 if ps_id not in seen_ids:
@@ -158,8 +133,6 @@ class GetPowerNxosDnaParser(BaseParser[PowerData]):
                     results.append(PowerData(
                         ps_id=ps_id,
                         status=status,
-                        capacity_watts=capacity,
-                        actual_output_watts=actual,
                     ))
 
         return results

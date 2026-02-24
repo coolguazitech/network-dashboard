@@ -327,13 +327,24 @@ class TestDynamicAclGenerator:
 
 class TestPingBatchGenerator:
     def test_reachable(self):
+        import json
         from mock_server.generators.ping_batch import generate
 
         output = generate("hpe", switch_ip="10.0.0.1")
-        assert "0.0% packet loss" in output
+        data = json.loads(output)
+        assert "result" in data
+        stats = data["result"]["10.0.0.1"]
+        assert stats["is_alive"] is True
+        assert stats["packet_loss"] == 0
+        assert stats["packets_received"] == 3
 
     def test_unreachable(self):
+        import json
         from mock_server.generators.ping_batch import generate
 
         output = generate("hpe", fails=True, switch_ip="10.0.0.1")
-        assert "100.0% packet loss" in output
+        data = json.loads(output)
+        stats = data["result"]["10.0.0.1"]
+        assert stats["is_alive"] is False
+        assert stats["packet_loss"] == 100.0
+        assert stats["packets_received"] == 0

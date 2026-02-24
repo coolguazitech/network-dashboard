@@ -9,7 +9,6 @@ class TransceiverChannelData(BaseModel):
     channel: int                             # 1-4 (SFP=1, QSFP=1~4)
     tx_power: float | None = None            # dBm, range -40.0 ~ 10.0
     rx_power: float | None = None            # dBm, range -40.0 ~ 10.0
-    bias_current_ma: float | None = None     # mA, >= 0
 
 class TransceiverData(ParsedData):
     interface_name: str                      # e.g. "GigabitEthernet1/0/1"
@@ -220,7 +219,6 @@ class GetGbicDetailsHpeFnaParser(BaseParser[TransceiverData]):
                 channel=channel_num,
                 tx_power=tx_power,
                 rx_power=rx_power,
-                bias_current_ma=bias_current,
             ))
 
         # Fallback: SFP single-row format (Temp Voltage Bias RX TX on one line)
@@ -235,7 +233,6 @@ class GetGbicDetailsHpeFnaParser(BaseParser[TransceiverData]):
                         channel=1,
                         tx_power=tx_power,
                         rx_power=rx_power,
-                        bias_current_ma=bias_current,
                     ))
 
         return channels

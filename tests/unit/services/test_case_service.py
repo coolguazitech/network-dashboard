@@ -481,16 +481,14 @@ class TestAutoResolveReachable:
         assert resolved == 0
 
     @pytest.mark.asyncio
-    async def test_auto_resolve_custom_stable_minutes(self):
-        """Custom stable_minutes parameter should be respected."""
+    async def test_auto_resolve_multiple_cases(self):
+        """Should resolve multiple matching cases and commit."""
         service = CaseService()
         session = _make_mock_session()
 
         session.execute = AsyncMock(return_value=_make_rowcount_result(3))
 
-        resolved = await service.auto_resolve_reachable(
-            "MAINT-001", session, stable_minutes=30,
-        )
+        resolved = await service.auto_resolve_reachable("MAINT-001", session)
 
         assert resolved == 3
         session.commit.assert_awaited_once()
@@ -537,8 +535,6 @@ class TestAutoResolveReachable:
         assert "maintenance_id" in compiled_sql
         # Should filter on last_ping_reachable
         assert "last_ping_reachable" in compiled_sql
-        # Should filter on ping_reachable_since
-        assert "ping_reachable_since" in compiled_sql
 
     @pytest.mark.asyncio
     async def test_auto_resolve_sets_status_to_resolved(self):

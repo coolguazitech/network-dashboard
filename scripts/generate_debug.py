@@ -254,6 +254,22 @@ data, and its current output. Then decide:
 5. Keep the `parser_registry.register(...)` call at the bottom
 6. Keep the `=== ParsedData Model ===` block in the module docstring
 7. Return the COMPLETE file — no `...`, no "rest unchanged"
+
+**Parsing Strategy Rules (MANDATORY):**
+8. NEVER try to parse the entire raw output with a single regex.
+   Break the parsing into multiple steps:
+   - Step 1: Split raw output into blocks/sections (splitlines, re.split, etc.)
+   - Step 2: Process each block/line individually
+   - Step 3: Extract fields from each line with simple patterns
+9. Prefer str.split(), str.startswith(), `in` checks over complex regex.
+   A 3-line if/split/append is better than a 100-char regex with 5 capture groups.
+10. If the raw data could have multiple formats, write separate _parse_xxx()
+    methods for each format with a detection check in parse().
+11. Each regex should match at most ONE logical element (one field, one line).
+    If you need more than 3 capture groups in one regex, you're doing it wrong —
+    split the line first, then extract fields individually.
+12. For tabular data: detect the header line to find column positions,
+    then parse data rows relative to those positions. Do not hardcode column widths.
 {extra_notes_section}
 ## Current Status
 

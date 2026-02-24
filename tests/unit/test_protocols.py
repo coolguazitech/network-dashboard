@@ -112,9 +112,13 @@ class TestMacTableData:
         )
         assert d.mac_address == "00:0C:29:AA:BB:01"
 
-    def test_vlan_range(self):
+    def test_vlan_default_zero(self):
+        d = MacTableData(mac_address="AA:BB:CC:DD:EE:FF", interface_name="Gi1/0/1")
+        assert d.vlan_id == 0
+
+    def test_vlan_range_rejected(self):
         with pytest.raises(Exception):
-            MacTableData(mac_address="AA:BB:CC:DD:EE:FF", interface_name="Gi1/0/1", vlan_id=0)
+            MacTableData(mac_address="AA:BB:CC:DD:EE:FF", interface_name="Gi1/0/1", vlan_id=-1)
         with pytest.raises(Exception):
             MacTableData(mac_address="AA:BB:CC:DD:EE:FF", interface_name="Gi1/0/1", vlan_id=4095)
 
@@ -142,15 +146,8 @@ class TestFanStatusData:
 
 class TestVersionData:
     def test_basic(self):
-        d = VersionData(version="15.2(4)E10", model="WS-C3750X", serial_number="FDO1234")
+        d = VersionData(version="15.2(4)E10")
         assert d.version == "15.2(4)E10"
-        assert d.model == "WS-C3750X"
-
-    def test_optional_fields(self):
-        d = VersionData(version="1.0")
-        assert d.model is None
-        assert d.serial_number is None
-        assert d.uptime is None
 
 
 class TestPortChannelData:
@@ -159,20 +156,6 @@ class TestPortChannelData:
             interface_name="Po1", status="UP", members=["Gi1/0/1"]
         )
         assert d.status == "up"
-
-    def test_protocol_normalization(self):
-        d = PortChannelData(
-            interface_name="Po1", status="up", protocol="LACP",
-            members=["Gi1/0/1"],
-        )
-        assert d.protocol == "lacp"
-
-    def test_unknown_protocol(self):
-        d = PortChannelData(
-            interface_name="Po1", status="up", protocol="WeirdProto",
-            members=["Gi1/0/1"],
-        )
-        assert d.protocol == "none"
 
     def test_member_status_normalization(self):
         d = PortChannelData(
@@ -187,18 +170,10 @@ class TestPowerData:
         d = PowerData(ps_id="PS 1/1", status="Normal")
         assert d.status == "normal"
 
-    def test_sub_status_normalization(self):
-        d = PowerData(
-            ps_id="PS 1/1", status="ok",
-            input_status="OK", output_status="OK",
-        )
-        assert d.input_status == "ok"
-        assert d.output_status == "ok"
-
-    def test_none_sub_status(self):
+    def test_basic(self):
         d = PowerData(ps_id="PS 1/1", status="ok")
-        assert d.input_status is None
-        assert d.output_status is None
+        assert d.ps_id == "PS 1/1"
+        assert d.status == "ok"
 
 
 class TestInterfaceStatusData:
@@ -225,8 +200,6 @@ class TestInterfaceErrorData:
     def test_defaults_to_zero(self):
         d = InterfaceErrorData(interface_name="GE1/0/1")
         assert d.crc_errors == 0
-        assert d.input_errors == 0
-        assert d.output_errors == 0
 
     def test_negative_rejected(self):
         with pytest.raises(Exception):
@@ -240,7 +213,7 @@ class TestNeighborData:
             remote_hostname="CORE-SW-01",
             remote_interface="Gi0/0/1",
         )
-        assert d.remote_platform is None
+        assert d.remote_hostname == "CORE-SW-01"
 
 
 class TestAclData:
@@ -255,12 +228,12 @@ class TestAclData:
 
 class TestPingResultData:
     def test_reachable(self):
-        d = PingResultData(target="10.0.0.1", is_reachable=True, success_rate=100.0)
+        d = PingResultData(target="10.0.0.1", is_reachable=True)
         assert d.is_reachable is True
 
     def test_unreachable(self):
         d = PingResultData(target="10.0.0.1", is_reachable=False)
-        assert d.success_rate == 0.0
+        assert d.is_reachable is False
 
     def test_ip_validation(self):
         d = PingResultData(target="192.168.1.1", is_reachable=True)
@@ -269,12 +242,13 @@ class TestPingResultData:
 
 class TestTransceiverData:
     def test_basic(self):
+        from app.parsers.protocols import TransceiverChannelData
+
         d = TransceiverData(
             interface_name="GE1/0/1",
-            tx_power=-2.5,
-            rx_power=-3.1,
             temperature=36.0,
             voltage=3.3,
+            channels=[TransceiverChannelData(channel=1, tx_power=-2.5, rx_power=-3.1)],
         )
-        assert d.tx_power == -2.5
+        assert d.channels[0].tx_power == -2.5
         assert d.temperature == 36.0

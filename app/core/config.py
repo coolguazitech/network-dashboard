@@ -53,29 +53,60 @@ class FetcherEndpointConfig(BaseModel):
     屬性名必須與 scheduler.yaml 的 fetcher key 完全一致（get_* 命名）。
     ConfiguredFetcher 透過 getattr(settings.fetcher_endpoint, fetch_type) 查找。
 
-    支援佔位符: {switch_ip}, {device_type}, {tenant_group} 等。
-    佔位符會從 FetchContext 帶入路徑；未被消耗的變數自動成為 query params。
+    FNA endpoint: str 型別，所有廠牌共用，支援 {switch_ip} 佔位符。
+    DNA endpoint: str | dict[str, str] 型別：
+      - dict 模式（production）: key 為 device_type ("hpe"/"ios"/"nxos")
+        .env 用 __HPE/__IOS/__NXOS 後綴設定：
+          FETCHER_ENDPOINT__GET_FAN__HPE=/api/v1/hpe/environment/display_fan
+      - str 模式（mock）: 單一模板，所有 device_type 共用
+        .env 直接設定：FETCHER_ENDPOINT__GET_FAN=/api/get_fan
 
-    .env 設定範例::
-
-        FETCHER_ENDPOINT__GET_FAN=/api/v1/fan/{switch_ip}
-        FETCHER_ENDPOINT__GET_GBIC_DETAILS=/api/v1/transceiver/{switch_ip}
+    佔位符會從 FetchContext 帶入路徑。
+    模板含 '?' → 顯式 query params（如 ?hosts={switch_ip}）；
+    模板不含 '?' → 未消耗變數自動附加為 query params（Mock 相容）。
     """
 
-    # FNA (5)
-    get_gbic_details: str = "/api/v1/transceiver/{switch_ip}"
-    get_channel_group: str = "/api/v1/port-channel/{switch_ip}"
-    get_error_count: str = "/api/v1/error-count/{switch_ip}"
-    get_static_acl: str = "/api/v1/acl/static/{switch_ip}"
-    get_dynamic_acl: str = "/api/v1/acl/dynamic/{switch_ip}"
-    # DNA (7)
-    get_mac_table: str = "/api/v1/mac-table/{switch_ip}"
-    get_fan: str = "/api/v1/fan/{switch_ip}"
-    get_power: str = "/api/v1/power/{switch_ip}"
-    get_version: str = "/api/v1/version/{switch_ip}"
-    get_interface_status: str = "/api/v1/interface-status/{switch_ip}"
-    get_uplink_lldp: str = "/api/v1/{device_type}/uplink-lldp/{switch_ip}"
-    get_uplink_cdp: str = "/api/v1/{device_type}/uplink-cdp/{switch_ip}"
+    # FNA (5) — 所有廠牌共用，IP 在 path 中
+    get_gbic_details: str = "/switch/network/get_gbic_details/{switch_ip}"
+    get_channel_group: str = "/switch/network/get_channel_group/{switch_ip}"
+    get_error_count: str = "/switch/network/get_interface_error_count/{switch_ip}"
+    get_static_acl: str = "/switch/network/get_static_acl/{switch_ip}"
+    get_dynamic_acl: str = "/switch/network/get_dynamic_acl/{switch_ip}"
+    # DNA (7) — per-device-type，IP 透過 ?hosts={switch_ip} 顯式帶入
+    get_mac_table: str | dict[str, str] = {
+        "hpe": "/api/v1/hpe/macaddress/display_macaddress?hosts={switch_ip}",
+        "ios": "/api/v1/ios/macaddress/show_mac_address_table?hosts={switch_ip}",
+        "nxos": "/api/v1/nxos/macaddress/show_mac_address_table?hosts={switch_ip}",
+    }
+    get_fan: str | dict[str, str] = {
+        "hpe": "/api/v1/hpe/environment/display_fan?hosts={switch_ip}",
+        "ios": "/api/v1/ios/environment/show_env_fan?hosts={switch_ip}",
+        "nxos": "/api/v1/nxos/environment/show_environment_fan?hosts={switch_ip}",
+    }
+    get_power: str | dict[str, str] = {
+        "hpe": "/api/v1/hpe/environment/display_power?hosts={switch_ip}",
+        "ios": "/api/v1/ios/environment/show_env_power?hosts={switch_ip}",
+        "nxos": "/api/v1/nxos/environment/show_environment_power?hosts={switch_ip}",
+    }
+    get_version: str | dict[str, str] = {
+        "hpe": "/api/v1/hpe/version/display_version?hosts={switch_ip}",
+        "ios": "/api/v1/ios/version/show_version?hosts={switch_ip}",
+        "nxos": "/api/v1/nxos/version/show_version?hosts={switch_ip}",
+    }
+    get_interface_status: str | dict[str, str] = {
+        "hpe": "/api/v1/hpe/interface/display_interface_brief?hosts={switch_ip}",
+        "ios": "/api/v1/ios/interface/show_interface_status?hosts={switch_ip}",
+        "nxos": "/api/v1/nxos/interface/show_interface_status?hosts={switch_ip}",
+    }
+    get_uplink_lldp: str | dict[str, str] = {
+        "hpe": "/api/v1/hpe/neighbor/display_lldp_neighbor-information_list?hosts={switch_ip}",
+        "ios": "/api/v1/ios/neighbor/show_lldp_neighbors?hosts={switch_ip}",
+        "nxos": "/api/v1/nxos/neighbor/show_lldp_neighbors?hosts={switch_ip}",
+    }
+    get_uplink_cdp: str | dict[str, str] = {
+        "ios": "/api/v1/ios/neighbor/show_cdp_neighbors?hosts={switch_ip}",
+        "nxos": "/api/v1/nxos/neighbor/show_cdp_neighbors?hosts={switch_ip}",
+    }
 
 
 class MinioConfig(BaseModel):

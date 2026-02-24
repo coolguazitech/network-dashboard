@@ -26,7 +26,7 @@ ParsedData 子類別一覽：
     TransceiverData      - 光模組診斷（巢狀 channels: 每通道 Tx/Rx/Bias + 模組層溫度/電壓）
     InterfaceErrorData   - 介面 CRC 錯誤計數（inbound+outbound 加總）
     FanStatusData        - 風扇狀態（status 自動正規化為 OperationalStatus）
-    VersionData          - 韌體版本（version, model, serial_number）
+    VersionData          - 韌體版本（version）
     NeighborData         - 鄰居資訊（CDP/LLDP）
     PortChannelData      - Port-Channel/LAG 資訊（成員、狀態、協議）
     PowerData            - 電源供應器狀態
@@ -44,7 +44,6 @@ from typing import Any, Generic, TypeVar
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.enums import (
-    AggregationProtocol,
     DeviceType,
     DuplexMode,
     LinkStatus,
@@ -126,7 +125,6 @@ class TransceiverChannelData(BaseModel):
     channel: int = Field(ge=1, le=4, description="通道編號 (SFP=1, QSFP=1~4)")
     tx_power: float | None = Field(None, ge=-40.0, le=10.0, description="發射功率 (dBm)")
     rx_power: float | None = Field(None, ge=-40.0, le=10.0, description="接收功率 (dBm)")
-    bias_current_ma: float | None = Field(None, ge=0.0, description="偏置電流 (mA)")
 
 
 class TransceiverData(ParsedData):
@@ -160,8 +158,6 @@ class FanStatusData(ParsedData):
 
     fan_id: str
     status: str = Field(description="正規化為 OperationalStatus 枚舉值")
-    speed_rpm: int | None = Field(None, ge=0)
-    speed_percent: int | None = Field(None, ge=0, le=100)
 
     @field_validator("status", mode="before")
     @classmethod
@@ -173,9 +169,6 @@ class VersionData(ParsedData):
     """韌體版本資料。"""
 
     version: str
-    model: str | None = None
-    serial_number: str | None = None
-    uptime: str | None = None
 
 
 class NeighborData(ParsedData):
@@ -184,7 +177,6 @@ class NeighborData(ParsedData):
     local_interface: str
     remote_hostname: str
     remote_interface: str
-    remote_platform: str | None = None
 
 
 class PortChannelData(ParsedData):
@@ -192,7 +184,6 @@ class PortChannelData(ParsedData):
 
     interface_name: str
     status: str = Field(description="正規化為 LinkStatus 枚舉值")
-    protocol: str | None = Field(None, description="正規化為 AggregationProtocol 枚舉值")
     members: list[str]
     member_status: dict[str, str] | None = None
 
@@ -200,18 +191,6 @@ class PortChannelData(ParsedData):
     @classmethod
     def normalize_status(cls, v: Any) -> str:
         return _normalize_link_status(v)
-
-    @field_validator("protocol", mode="before")
-    @classmethod
-    def normalize_protocol(cls, v: Any) -> str | None:
-        if v is None:
-            return None
-        if isinstance(v, str):
-            v = v.strip().lower()
-        try:
-            return AggregationProtocol(v).value
-        except ValueError:
-            return AggregationProtocol.NONE.value
 
     @field_validator("member_status", mode="before")
     @classmethod
@@ -226,21 +205,10 @@ class PowerData(ParsedData):
 
     ps_id: str
     status: str = Field(description="正規化為 OperationalStatus 枚舉值")
-    input_status: str | None = None
-    output_status: str | None = None
-    capacity_watts: float | None = Field(None, ge=0.0)
-    actual_output_watts: float | None = Field(None, ge=0.0)
 
     @field_validator("status", mode="before")
     @classmethod
     def normalize_status(cls, v: Any) -> str:
-        return _normalize_operational_status(v)
-
-    @field_validator("input_status", "output_status", mode="before")
-    @classmethod
-    def normalize_sub_status(cls, v: Any) -> str | None:
-        if v is None:
-            return None
         return _normalize_operational_status(v)
 
 
@@ -299,8 +267,6 @@ class PingResultData(ParsedData):
 
     target: str
     is_reachable: bool
-    success_rate: float = 0.0
-    avg_rtt_ms: float | None = None
 
     @field_validator("target", mode="before")
     @classmethod
@@ -370,7 +336,7 @@ class BaseParser(ABC, Generic[TResult]):
         將原始 CLI 輸出解析為結構化資料。
 
         Args:
-            raw_output: Fetcher 從設備取回的原始 CLI 輸出字串。
+            raw_output: Fetcher 從設備取回的原始字串。
                        可能包含表頭、分隔線、空行等，parser 需要自行過濾。
 
         Returns:
@@ -378,6 +344,18 @@ class BaseParser(ABC, Generic[TResult]):
                           - 正常：回傳一或多筆資料
                           - 無資料：回傳空列表 []（不是 error）
                           - 不要 raise exception，遇到無法解析的行就 continue 跳過
+
+        DNA 回傳格式提示（給 AI / 開發者）：
+            DNA API 的 raw_output 是一個可 JSON 化的字串，JSON 後即為 TextFSM 結果。
+            三種情況：
+            1. 成功：{"result": [list of dicts]} → 直接從 dict 取欄位，不需 regex
+            2. 失敗：{"message": "原因"} → 沒有 result，回傳 []
+            3. Schema 不匹配：{"result": "原始 CLI 文字"} → fallback 到 regex 解析
+
+            DNA parser 建議先 json.loads() 嘗試取 result，
+            若 result 是 list[dict] 則直接 mapping，
+            若 result 是 str 則 fallback 到文字解析。
+            FNA parser 的 raw_output 是純文字，直接用 regex 解析即可。
         """
         ...
 

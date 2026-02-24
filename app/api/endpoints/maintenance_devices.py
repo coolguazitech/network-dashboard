@@ -1104,7 +1104,7 @@ async def reachability_status(
     """
     取得各設備最新 Ping 可達性狀態（從 PingRecord 讀取）。
 
-    回傳格式：{ hostname: { is_reachable, success_rate, last_check_at } }
+    回傳格式：{ hostname: { is_reachable, last_check_at } }
     """
     from app.repositories.typed_records import PingRecordRepo
 
@@ -1119,7 +1119,6 @@ async def reachability_status(
         if existing is None or (r.is_reachable and not existing["is_reachable"]):
             status[hostname] = {
                 "is_reachable": r.is_reachable,
-                "success_rate": r.success_rate,
                 "last_check_at": r.collected_at.isoformat() if r.collected_at else None,
             }
 

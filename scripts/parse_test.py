@@ -102,9 +102,9 @@ def format_record_summary(record: object) -> str:
     if class_name == "FanStatusData":
         return f"  {d.get('fan_id', '?')}: status={d.get('status', '?')}"
     elif class_name == "PowerData":
-        return f"  {d.get('ps_id', '?')}: status={d.get('status', '?')}, watts={d.get('actual_output_watts', '?')}"
+        return f"  {d.get('ps_id', '?')}: status={d.get('status', '?')}"
     elif class_name == "VersionData":
-        return f"  version={d.get('version', '?')}, model={d.get('model', '?')}"
+        return f"  version={d.get('version', '?')}"
     elif class_name == "NeighborData":
         return f"  {d.get('local_interface', '?')} -> {d.get('remote_hostname', '?')} ({d.get('remote_interface', '?')})"
     elif class_name == "PortChannelData":

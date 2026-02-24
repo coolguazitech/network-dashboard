@@ -27,7 +27,9 @@ sources:
 endpoints:
   get_gbic_details:     "/switch/network/get_gbic_details/{ip}"
   get_channel_group:    "/switch/network/get_channel_group/{ip}"
-  # ...
+  get_error_count:      "/switch/network/get_interface_error_count/{ip}"
+  get_static_acl:       "/switch/network/get_static_acl/{ip}"
+  get_dynamic_acl:      "/switch/network/get_dynamic_acl/{ip}"
 ```
 
 **DNA** — 每個 device_type 的指令不同，用字典格式分開填：
@@ -37,10 +39,10 @@ endpoints:
     ios:  "/api/v1/ios/version/show_version"
     nxos: "/api/v1/nxos/version/show_version"
   get_fan:
-    hpe:  "/api/v1/hpe/fan/display_fan"
-    ios:  "/api/v1/ios/fan/show_fan"
-    nxos: "/api/v1/nxos/fan/show_fan"
-  # ...
+    hpe:  "/api/v1/hpe/environment/display_fan"
+    ios:  "/api/v1/ios/environment/show_env_fan"
+    nxos: "/api/v1/nxos/environment/show_environment_fan"
+  # ...（完整 endpoint 見 config/api_test.yaml）
 ```
 
 > 支援佔位符：`{ip}` = 交換機 IP
@@ -85,7 +87,7 @@ make fetch-dry
 
 檢查輸出的 URL 是否正確：
 - FNA: `GET http://xxx/switch/network/get_gbic_details/10.x.x.x`
-- DNA: `GET http://xxx/api/v1/hpe/fan?hosts=10.x.x.x`
+- DNA: `GET http://xxx/api/v1/hpe/environment/display_fan?hosts=10.x.x.x`
 - 沒填的 endpoint 會顯示 `Skipped: endpoint not configured`
 - 如果路徑不對，回去改 `config/api_test.yaml` 的 `endpoints` 區塊
 

@@ -127,21 +127,34 @@ GNMSPING__BASE_URLS__F14=http://<GNMSPING-F14伺服器IP>:<port>
 GNMSPING__BASE_URLS__F12=http://<GNMSPING-F12伺服器IP>:<port>
 
 # ===== Endpoint 路徑（必改）=====
-# FNA — 所有廠牌共用（5 個 API）
+# FNA — 所有廠牌共用（5 個 API），IP 在 path 中
 FETCHER_ENDPOINT__GET_GBIC_DETAILS=/switch/network/get_gbic_details/{switch_ip}
 FETCHER_ENDPOINT__GET_CHANNEL_GROUP=/switch/network/get_channel_group/{switch_ip}
-FETCHER_ENDPOINT__GET_ERROR_COUNT=/switch/network/get_error_count/{switch_ip}
+FETCHER_ENDPOINT__GET_ERROR_COUNT=/switch/network/get_interface_error_count/{switch_ip}
 FETCHER_ENDPOINT__GET_STATIC_ACL=/switch/network/get_static_acl/{switch_ip}
 FETCHER_ENDPOINT__GET_DYNAMIC_ACL=/switch/network/get_dynamic_acl/{switch_ip}
 
-# DNA — 每個 device_type 各自的 endpoint
-FETCHER_ENDPOINT__GET_MAC_TABLE=/api/v1/{device_type}/mac-table/{switch_ip}
-FETCHER_ENDPOINT__GET_FAN=/api/v1/{device_type}/fan/{switch_ip}
-FETCHER_ENDPOINT__GET_POWER=/api/v1/{device_type}/power/{switch_ip}
-FETCHER_ENDPOINT__GET_VERSION=/api/v1/{device_type}/version/{switch_ip}
-FETCHER_ENDPOINT__GET_INTERFACE_STATUS=/api/v1/{device_type}/interface-status/{switch_ip}
-FETCHER_ENDPOINT__GET_UPLINK_LLDP=/api/v1/{device_type}/uplink-lldp/{switch_ip}
-FETCHER_ENDPOINT__GET_UPLINK_CDP=/api/v1/{device_type}/uplink-cdp/{switch_ip}
+# DNA — 每個 device_type 用 __HPE/__IOS/__NXOS 後綴 + ?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_MAC_TABLE__HPE=/api/v1/hpe/macaddress/display_macaddress?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_MAC_TABLE__IOS=/api/v1/ios/macaddress/show_mac_address_table?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_MAC_TABLE__NXOS=/api/v1/nxos/macaddress/show_mac_address_table?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_FAN__HPE=/api/v1/hpe/environment/display_fan?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_FAN__IOS=/api/v1/ios/environment/show_env_fan?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_FAN__NXOS=/api/v1/nxos/environment/show_environment_fan?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_POWER__HPE=/api/v1/hpe/environment/display_power?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_POWER__IOS=/api/v1/ios/environment/show_env_power?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_POWER__NXOS=/api/v1/nxos/environment/show_environment_power?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_VERSION__HPE=/api/v1/hpe/version/display_version?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_VERSION__IOS=/api/v1/ios/version/show_version?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_VERSION__NXOS=/api/v1/nxos/version/show_version?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_INTERFACE_STATUS__HPE=/api/v1/hpe/interface/display_interface_brief?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_INTERFACE_STATUS__IOS=/api/v1/ios/interface/show_interface_status?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_INTERFACE_STATUS__NXOS=/api/v1/nxos/interface/show_interface_status?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_UPLINK_LLDP__HPE=/api/v1/hpe/neighbor/display_lldp_neighbor-information_list?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_UPLINK_LLDP__IOS=/api/v1/ios/neighbor/show_lldp_neighbors?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_UPLINK_LLDP__NXOS=/api/v1/nxos/neighbor/show_lldp_neighbors?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_UPLINK_CDP__IOS=/api/v1/ios/neighbor/show_cdp_neighbors?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_UPLINK_CDP__NXOS=/api/v1/nxos/neighbor/show_cdp_neighbors?hosts={switch_ip}
 ```
 
 啟動（不需要 `--profile mock`）：
@@ -220,7 +233,7 @@ curl -v -H "Authorization: Bearer <FNA_TOKEN>" \
 
 # 測試 DNA 連通（不需認證）
 # DNA API：get_mac_table, get_fan, get_power, get_version, get_interface_status, get_uplink_lldp, get_uplink_cdp
-curl -v "http://<DNA伺服器IP>:<port>/api/v1/hpe/fan/display_fan?hosts=10.1.1.1"
+curl -v "http://<DNA伺服器IP>:<port>/api/v1/hpe/environment/display_fan?hosts=10.1.1.1"
 
 # 測試 GNMSPING 連通（POST + JSON body）
 curl -v -X POST "http://<GNMSPING伺服器IP>:<port>/api/v1/ping" \
@@ -309,40 +322,40 @@ sources:
 # ── Endpoint 路徑 ──
 endpoints:
   # FNA（所有廠牌共用）
-  get_gbic_details:     "/switch/network/get_gbic_details/{ip}"       # ★ 填入
-  get_channel_group:    "/switch/network/get_channel_group/{ip}"      # ★ 填入
-  get_error_count:      "/switch/network/get_error_count/{ip}"        # ★ 填入
-  get_static_acl:       "/switch/network/get_static_acl/{ip}"        # ★ 填入
-  get_dynamic_acl:      "/switch/network/get_dynamic_acl/{ip}"       # ★ 填入
+  get_gbic_details:     "/switch/network/get_gbic_details/{ip}"
+  get_channel_group:    "/switch/network/get_channel_group/{ip}"
+  get_error_count:      "/switch/network/get_interface_error_count/{ip}"
+  get_static_acl:       "/switch/network/get_static_acl/{ip}"
+  get_dynamic_acl:      "/switch/network/get_dynamic_acl/{ip}"
 
   # DNA（每個 device_type 各自的 endpoint）
   get_mac_table:
-    hpe:  "/api/v1/hpe/mac-table/display_mac_table"                  # ★ 填入
-    ios:  "/api/v1/ios/mac-table/show_mac_table"
-    nxos: "/api/v1/nxos/mac-table/show_mac_table"
+    hpe:  "/api/v1/hpe/macaddress/display_macaddress"
+    ios:  "/api/v1/ios/macaddress/show_mac_address_table"
+    nxos: "/api/v1/nxos/macaddress/show_mac_address_table"
   get_fan:
-    hpe:  "/api/v1/hpe/fan/display_fan"
-    ios:  "/api/v1/ios/fan/show_fan"
-    nxos: "/api/v1/nxos/fan/show_fan"
+    hpe:  "/api/v1/hpe/environment/display_fan"
+    ios:  "/api/v1/ios/environment/show_env_fan"
+    nxos: "/api/v1/nxos/environment/show_environment_fan"
   get_power:
-    hpe:  "/api/v1/hpe/power/display_power"
-    ios:  "/api/v1/ios/power/show_power"
-    nxos: "/api/v1/nxos/power/show_power"
+    hpe:  "/api/v1/hpe/environment/display_power"
+    ios:  "/api/v1/ios/environment/show_env_power"
+    nxos: "/api/v1/nxos/environment/show_environment_power"
   get_version:
     hpe:  "/api/v1/hpe/version/display_version"
     ios:  "/api/v1/ios/version/show_version"
     nxos: "/api/v1/nxos/version/show_version"
   get_interface_status:
-    hpe:  "/api/v1/hpe/interface-status/display_interface"
-    ios:  "/api/v1/ios/interface-status/show_interface"
-    nxos: "/api/v1/nxos/interface-status/show_interface"
+    hpe:  "/api/v1/hpe/interface/display_interface_brief"
+    ios:  "/api/v1/ios/interface/show_interface_status"
+    nxos: "/api/v1/nxos/interface/show_interface_status"
   get_uplink_lldp:
-    hpe:  "/api/v1/hpe/uplink-lldp/display_lldp"
-    ios:  "/api/v1/ios/uplink-lldp/show_lldp"
-    nxos: "/api/v1/nxos/uplink-lldp/show_lldp"
-  get_uplink_cdp:
-    ios:  "/api/v1/ios/uplink-cdp/show_cdp"
-    nxos: "/api/v1/nxos/uplink-cdp/show_cdp"
+    hpe:  "/api/v1/hpe/neighbor/display_lldp_neighbor-information_list"
+    ios:  "/api/v1/ios/neighbor/show_lldp_neighbors"
+    nxos: "/api/v1/nxos/neighbor/show_lldp_neighbors"
+  get_uplink_cdp:                                 # HPE 沒有 CDP
+    ios:  "/api/v1/ios/neighbor/show_cdp_neighbors"
+    nxos: "/api/v1/nxos/neighbor/show_cdp_neighbors"
 
 # ── 測試目標（每種廠牌至少一台）──
 targets:
@@ -374,8 +387,8 @@ make fetch-dry
 預期輸出類似：
 
 ```
-GET http://fna-server:8001/switch/network/get_fan/10.1.1.1
-GET http://dna-server:8001/api/v1/hpe/fan/display_fan?hosts=10.1.1.1
+GET http://fna-server:8001/switch/network/get_gbic_details/10.1.1.1
+GET http://dna-server:8001/api/v1/hpe/environment/display_fan?hosts=10.1.1.1
 ...
 ```
 
@@ -506,6 +519,26 @@ vi app/parsers/plugins/get_fan_ios_dna_parser.py
 
 3. **整個檔案內容替換**為 AI 回覆的程式碼（不要只改部分！）
 4. 儲存
+
+#### 進階技巧：先問策略，再要程式碼
+
+如果 AI 第一次產出的 parser 仍無法正確解析，嘗試分兩步驟互動：
+
+**第一步 — 只問策略**（不要求寫程式）：
+
+在 bundle 最後額外補充一段：
+
+> 先不要寫程式碼。請分析 raw data 的結構，列出你的解析策略：
+> 1. 資料有幾種格式？怎麼偵測？
+> 2. 每種格式分別怎麼拆解？用什麼方法（split、regex、逐行判斷）？
+> 3. 每個欄位怎麼提取？
+
+**第二步 — 確認策略後再寫程式碼**：
+
+確認策略合理後：
+
+> 按照上述策略實作 parser。每個步驟對應一個獨立的 method。
+> 每個 regex 只負責一件事，不要試圖用一個 regex 解決所有問題。
 
 #### Step 3: 重新測試
 
@@ -715,7 +748,7 @@ docker logs netora_app -f --tail 100
 docker exec -it netora_app bash
 
 # 測試 API 連通性（容器內）
-curl -v "http://<FNA_URL>/switch/network/get_fan/10.1.1.1"
+curl -v "http://<FNA_URL>/switch/network/get_gbic_details/10.1.1.1"
 
 # DB 備份
 docker exec netora_db mysqldump -u root -p<密碼> netora > backup_$(date +%Y%m%d).sql

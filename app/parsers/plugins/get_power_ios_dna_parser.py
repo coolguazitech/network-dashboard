@@ -10,10 +10,6 @@ Platforms: Catalyst 2960, 3560, 3750, 3850, 9200, 9300, 9500
 class PowerData(ParsedData):
     ps_id: str                               # e.g. "PS1", "Power Supply 1"
     status: str                              # auto-normalized → OperationalStatus
-    input_status: str | None = None          # optional
-    output_status: str | None = None         # optional
-    capacity_watts: float | None = None      # optional, >= 0
-    actual_output_watts: float | None = None # optional, >= 0
 
 Valid status values: ok, good, normal, online, active, fail, absent, unknown
 === End ParsedData Model ===

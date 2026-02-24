@@ -594,7 +594,7 @@ export default {
       deviceSearchTimeout: null,
       selectedDevices: [],
       reachabilityInterval: null,  // 自動測試可達性 interval ID (每10秒)
-      reachabilityStatus: {},  // hostname -> { is_reachable, success_rate, last_check_at }
+      reachabilityStatus: {},  // hostname -> { is_reachable, last_check_at }
       clientPingInterval: null,  // Client 清單 Ping 狀態輪詢 interval ID (每15秒)
 
       // Client 清單 (原 MAC 清單)

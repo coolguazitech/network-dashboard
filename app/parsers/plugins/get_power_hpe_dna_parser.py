@@ -11,10 +11,6 @@ Platforms: HPE Comware (5710, 5940, 5945, 5130, etc.)
 class PowerData(ParsedData):
     ps_id: str                               # e.g. "PS1", "Power Supply 1"
     status: str                              # auto-normalized → OperationalStatus
-    input_status: str | None = None          # optional
-    output_status: str | None = None         # optional
-    capacity_watts: float | None = None      # optional, >= 0
-    actual_output_watts: float | None = None # optional, >= 0
 
 Valid status values: ok, good, normal, online, active, fail, absent, unknown
 === End ParsedData Model ===
@@ -89,19 +85,6 @@ class GetPowerHpeDnaParser(BaseParser[PowerData]):
         re.MULTILINE | re.IGNORECASE,
     )
 
-    @staticmethod
-    def _parse_watts(value: str | None) -> float | None:
-        """Parse a wattage value, returning None for placeholder values."""
-        if value is None:
-            return None
-        value = value.strip().rstrip("W").rstrip("w")
-        if value in ("--", "N/A", "n/a", ""):
-            return None
-        try:
-            return float(value)
-        except ValueError:
-            return None
-
     def parse(self, raw_output: str) -> list[PowerData]:
         results: list[PowerData] = []
 
@@ -111,18 +94,10 @@ class GetPowerHpeDnaParser(BaseParser[PowerData]):
             for match in ps_matches:
                 ps_id = match.group("ps_id")
                 status = match.group("status")
-                input_status = match.group("input")
-                output_status = match.group("output")
-                capacity = self._parse_watts(match.group("capacity"))
-                actual = self._parse_watts(match.group("actual"))
 
                 results.append(PowerData(
                     ps_id=f"PS {ps_id}",
                     status=status,
-                    input_status=input_status,
-                    output_status=output_status,
-                    capacity_watts=capacity,
-                    actual_output_watts=actual,
                 ))
             return results
 
@@ -135,7 +110,6 @@ class GetPowerHpeDnaParser(BaseParser[PowerData]):
         for match in self.DATA_ROW_PATTERN.finditer(raw_output):
             power_id = match.group("power_id")
             state = match.group("state")
-            power_val = match.group("power")
 
             # Determine which slot this row belongs to
             row_pos = match.start()
@@ -149,14 +123,9 @@ class GetPowerHpeDnaParser(BaseParser[PowerData]):
             # Format ps_id as "PS {slot}/{power_id}"
             ps_id = f"PS {current_slot}/{power_id}"
 
-            # Parse actual power output from the Power(W) column
-            actual_output = self._parse_watts(power_val)
-
             results.append(PowerData(
                 ps_id=ps_id,
                 status=state,
-                capacity_watts=None,
-                actual_output_watts=actual_output,
             ))
 
         return results

@@ -15,7 +15,15 @@ Fetcher Registry.
 
 2. .env 的 endpoint 模板::
 
-       FETCHER_ENDPOINT__GET_FAN=/api/v1/fan/{switch_ip}
+       # FNA — 單一字串:
+       FETCHER_ENDPOINT__GET_GBIC_DETAILS=/switch/network/get_gbic_details/{switch_ip}
+
+       # DNA — per-device-type（用 __HPE/__IOS/__NXOS 後綴）:
+       FETCHER_ENDPOINT__GET_FAN__HPE=/api/v1/hpe/environment/display_fan
+       FETCHER_ENDPOINT__GET_FAN__IOS=/api/v1/ios/environment/show_env_fan
+
+       # DNA — Mock 模式可用單一字串覆蓋:
+       FETCHER_ENDPOINT__GET_FAN=/api/get_fan
 
 目前已註冊的 fetch_type（12 個）:
     FNA (5): get_gbic_details, get_channel_group, get_error_count,

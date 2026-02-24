@@ -260,7 +260,6 @@ class PortChannelRecord(Base):
 
     interface_name: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(50))
-    protocol: Mapped[str | None] = mapped_column(String(50), nullable=True)
     members: Mapped[list | None] = mapped_column(JSON, nullable=True)
     member_status: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
@@ -284,7 +283,6 @@ class NeighborRecord(Base):
     local_interface: Mapped[str] = mapped_column(String(100))
     remote_hostname: Mapped[str] = mapped_column(String(255))
     remote_interface: Mapped[str] = mapped_column(String(100))
-    remote_platform: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     def __repr__(self) -> str:
         return f"<NeighborRecord {self.switch_hostname}:{self.local_interface}>"
@@ -392,8 +390,6 @@ class FanRecord(Base):
 
     fan_id: Mapped[str] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(50))
-    speed_rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    speed_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     def __repr__(self) -> str:
         return f"<FanRecord {self.switch_hostname}:{self.fan_id}>"
@@ -414,10 +410,6 @@ class PowerRecord(Base):
 
     ps_id: Mapped[str] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(50))
-    input_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    output_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    capacity_watts: Mapped[float | None] = mapped_column(Float, nullable=True)
-    actual_output_watts: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     def __repr__(self) -> str:
         return f"<PowerRecord {self.switch_hostname}:{self.ps_id}>"
@@ -437,9 +429,6 @@ class VersionRecord(Base):
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
     version: Mapped[str] = mapped_column(String(255))
-    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    serial_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    uptime: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     def __repr__(self) -> str:
         return f"<VersionRecord {self.switch_hostname}:{self.version}>"
@@ -460,8 +449,6 @@ class PingRecord(Base):
 
     target: Mapped[str] = mapped_column(String(255))
     is_reachable: Mapped[bool] = mapped_column(Boolean)
-    success_rate: Mapped[float] = mapped_column(Float)
-    avg_rtt_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     def __repr__(self) -> str:
         return f"<PingRecord {self.switch_hostname}:{self.target}>"

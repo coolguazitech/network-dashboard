@@ -89,37 +89,46 @@ url = "http://gnms-api:8001" + "/api/v1/ping/f18/10.1.1.1"
 # 結果: "http://gnms-api:8001/api/v1/ping/f18/10.1.1.1"
 ```
 
-## 步驟 5️⃣：未使用的變數變成 Query Params
+## 步驟 5️⃣：Query Params 處理
 
-**檔案位置**: [app/fetchers/configured.py:103-105](app/fetchers/configured.py#L103-L105)
+**檔案位置**: [app/fetchers/configured.py](app/fetchers/configured.py)
 
 ```python
-# 未被佔位符消耗的變數
+# Query params 規則：
+# 模板含 '?' → 顯式模式：query params 已在 URL 中，不再附加
+# 模板不含 '?' → 自動模式：未消耗的變數自動成為 query params
+
+# 本範例的模板 "/api/v1/ping/{tenant_group}/{ip}" 不含 '?' → 自動模式
+# 未被佔位符消耗的變數自動附加：
 query_params = {
     "switch_ip": "10.1.1.1",   # 未使用（已經用 {ip} 代替）
     "hostname": "SW-FAB-001",  # 未使用
     "device_type": "hpe",      # 未使用
 }
+
+# 若改為 DNA 範例（模板含 '?'）：
+# 模板: "/api/v1/hpe/environment/display_fan?hosts={switch_ip}"
+# → query_params = {}（顯式模式，不自動附加）
 ```
 
 ## 步驟 6️⃣：發送最終 HTTP 請求
 
-**檔案位置**: [app/fetchers/configured.py:114-117](app/fetchers/configured.py#L114-L117)
+**檔案位置**: [app/fetchers/configured.py](app/fetchers/configured.py)
 
 ```python
+# 自動模式範例（模板不含 '?'）
 resp = await client.get(
     "http://gnms-api:8001/api/v1/ping/f18/10.1.1.1",
-    params={
-        "switch_ip": "10.1.1.1",
-        "hostname": "SW-FAB-001",
-        "device_type": "hpe"
-    }
+    params={"switch_ip": "10.1.1.1", "hostname": "SW-FAB-001", "device_type": "hpe"},
 )
-```
+# → GET http://gnms-api:8001/api/v1/ping/f18/10.1.1.1?switch_ip=10.1.1.1&hostname=SW-FAB-001&device_type=hpe
 
-**實際發送的完整 URL**:
-```
-GET http://gnms-api:8001/api/v1/ping/f18/10.1.1.1?switch_ip=10.1.1.1&hostname=SW-FAB-001&device_type=hpe
+# 顯式模式範例（DNA 模板含 '?hosts={switch_ip}'）
+resp = await client.get(
+    "http://dna:8001/api/v1/hpe/environment/display_fan?hosts=10.1.1.1",
+    params={},
+)
+# → GET http://dna:8001/api/v1/hpe/environment/display_fan?hosts=10.1.1.1
 ```
 
 ## 步驟 7️⃣：API 返回數據 → Parser 解析

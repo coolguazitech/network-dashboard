@@ -9,7 +9,6 @@ class NeighborData(ParsedData):
     local_interface: str                     # local port, e.g. "GigabitEthernet0/1"
     remote_hostname: str                     # neighbor device name
     remote_interface: str                    # neighbor port
-    remote_platform: str | None = None       # optional platform description
 === End ParsedData Model ===
 
 === Real CLI Command ===
@@ -77,10 +76,6 @@ class GetUplinkLldpHpeDnaParser(BaseParser[NeighborData]):
     PORT_ID_PATTERN = re.compile(
         r'^\s*Port ID\s*:\s*(?P<value>.+?)\s*$', re.MULTILINE
     )
-    SYSTEM_DESC_PATTERN = re.compile(
-        r'^\s*System description\s*:\s*(?P<value>.+?)\s*$', re.MULTILINE
-    )
-
     def parse(self, raw_output: str) -> list[NeighborData]:
         """
         Parse HPE LLDP neighbor output into NeighborData records.
@@ -156,19 +151,10 @@ class GetUplinkLldpHpeDnaParser(BaseParser[NeighborData]):
         if not remote_interface:
             return None
 
-        # Extract remote platform (System description) - optional
-        remote_platform: str | None = None
-        system_desc_match = self.SYSTEM_DESC_PATTERN.search(block)
-        if system_desc_match:
-            desc = system_desc_match.group("value").strip()
-            if desc:
-                remote_platform = desc
-
         return NeighborData(
             local_interface=local_interface,
             remote_hostname=remote_hostname,
             remote_interface=remote_interface,
-            remote_platform=remote_platform,
         )
 
 

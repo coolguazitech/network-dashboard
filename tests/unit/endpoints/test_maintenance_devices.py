@@ -501,7 +501,6 @@ class TestReachabilityStatus:
         ping_record = MagicMock()
         ping_record.switch_hostname = "SW-NEW-001"
         ping_record.is_reachable = True
-        ping_record.success_rate = 100.0
         ping_record.collected_at = datetime(2025, 1, 15, 10, 0)
 
         mock_repo = AsyncMock()

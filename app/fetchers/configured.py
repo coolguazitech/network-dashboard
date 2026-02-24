@@ -9,16 +9,26 @@ ConfiguredFetcher — 泛用 Fetcher，從 .env 讀取設定。
 HTTP 行為：
 - 所有 API 統一使用 GET
 - endpoint 模板從 settings.fetcher_endpoint.{fetch_type} 讀取
-- 模板中的佔位符 {switch_ip}, {tenant_group} 等會從 FetchContext 帶入路徑
+- 模板中的佔位符 {switch_ip}, {tenant_group} 等會從 FetchContext 帶入
   （固定欄位 switch_ip / device_type / tenant_group + ctx.params 中的任意 key 皆可用）
-- 未被佔位符消耗的變數自動成為 query params
 - base_url 和 timeout 從 settings.fetcher_source.{source} 讀取
 
-範例：
-    endpoint 模板: /api/v1/transceiver/{switch_ip}
-    FetchContext:   switch_ip="10.1.1.1", device_type="hpe"
+Query params 規則：
+- 模板含 '?' → 顯式模式：query params 已寫在模板中，不自動附加
+- 模板不含 '?' → 自動模式：未消耗的變數自動成為 query params（mock server 相容）
 
-    → GET http://fna:8001/api/v1/transceiver/10.1.1.1?device_type=hpe
+範例（FNA — IP 在 path 中）:
+    模板: /switch/network/get_gbic_details/{switch_ip}
+    → GET http://fna:8001/switch/network/get_gbic_details/10.1.1.1
+      Authorization: Bearer <token>
+
+範例（DNA — 顯式 query params）:
+    模板: /api/v1/hpe/environment/display_fan?hosts={switch_ip}
+    → GET http://dna:8001/api/v1/hpe/environment/display_fan?hosts=10.1.1.1
+
+範例（Mock — 自動附加 query params）:
+    模板: /api/get_fan
+    → GET http://mock:9999/api/get_fan?switch_ip=10.1.1.1&device_type=hpe&...
 """
 from __future__ import annotations
 
@@ -72,11 +82,19 @@ class ConfiguredFetcher(BaseFetcher):
             )
 
         # ── Endpoint template ──
-        endpoint_template = getattr(
+        # FNA: str (e.g. "/switch/network/get_fan/{switch_ip}")
+        # DNA: str | dict[str, str] — dict 時以 device_type 為 key 查找
+        endpoint_raw = getattr(
             settings.fetcher_endpoint,
             self.fetch_type,
             "",
         )
+        if isinstance(endpoint_raw, dict):
+            endpoint_template = endpoint_raw.get(
+                ctx.device_type.api_value, "",
+            )
+        else:
+            endpoint_template = endpoint_raw or ""
         if not endpoint_template:
             return FetchResult(
                 raw_output="",
@@ -109,10 +127,15 @@ class ConfiguredFetcher(BaseFetcher):
         )
         url = source_config.base_url.rstrip("/") + endpoint
 
-        # ── Remaining vars → query params ──
-        query_params: dict[str, object] = {
-            k: v for k, v in all_vars.items() if k not in placeholders
-        }
+        # ── Query params ──
+        # 顯式模式（模板含 '?'）：query params 已在 URL 中，不再附加
+        # 自動模式（模板不含 '?'）：未消耗的變數自動成為 query params（mock 相容）
+        if "?" in endpoint_template:
+            query_params: dict[str, object] = {}
+        else:
+            query_params = {
+                k: v for k, v in all_vars.items() if k not in placeholders
+            }
 
         # ── Headers (FNA Bearer token) ──
         headers: dict[str, str] = {}

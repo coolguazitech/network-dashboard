@@ -696,17 +696,14 @@ class SchedulerService:
             if not line or line.startswith("IP,"):
                 continue
             parts = line.split(",")
-            if len(parts) < 3:
+            if len(parts) < 2:
                 continue
             try:
                 ip = parts[0].strip()
                 reachable = parts[1].strip().lower() == "true"
-                latency = float(parts[2].strip()) if parts[2].strip() else 0.0
                 results.append(PingResultData(
                     target=ip,
                     is_reachable=reachable,
-                    success_rate=100.0 if reachable else 0.0,
-                    avg_rtt_ms=latency if reachable else None,
                 ))
             except (ValueError, IndexError):
                 continue

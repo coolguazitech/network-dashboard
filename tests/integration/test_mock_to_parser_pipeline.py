@@ -455,11 +455,23 @@ class TestPingBatchPipeline:
         parser = PingBatchParser()
         results = parser.parse(raw)
 
-        # Should parse at least 1 ping result
-        assert len(results) >= 1
-        for r in results:
-            assert r.target
-            assert isinstance(r.is_reachable, bool)
+        assert len(results) == 1
+        r = results[0]
+        assert r.target == "10.0.0.1"
+        assert r.is_reachable is True
+
+    def test_unreachable(self):
+        from mock_server.generators.ping_batch import generate
+        from app.parsers.plugins.ping_batch_parser import PingBatchParser
+
+        raw = generate("hpe", fails=True, switch_ip="10.0.0.1")
+        parser = PingBatchParser()
+        results = parser.parse(raw)
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.target == "10.0.0.1"
+        assert r.is_reachable is False
 
 
 class TestPortNameConsistency:

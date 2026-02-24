@@ -9,7 +9,6 @@ class NeighborData(ParsedData):
     local_interface: str                     # local port, e.g. "GigabitEthernet0/1"
     remote_hostname: str                     # neighbor device name
     remote_interface: str                    # neighbor port
-    remote_platform: str | None = None       # optional platform description
 === End ParsedData Model ===
 
 === Real CLI Command ===
@@ -70,10 +69,6 @@ class GetUplinkLldpNxosDnaParser(BaseParser[NeighborData]):
     SYSTEM_NAME_PATTERN = re.compile(
         r'^\s*System Name:\s*(?P<value>.+?)\s*$', re.MULTILINE
     )
-    SYSTEM_DESC_PATTERN = re.compile(
-        r'^\s*System Description:\s*(?P<value>.+?)\s*$', re.MULTILINE
-    )
-
     def parse(self, raw_output: str) -> list[NeighborData]:
         """
         Parse NX-OS LLDP neighbor output into NeighborData records.
@@ -133,19 +128,10 @@ class GetUplinkLldpNxosDnaParser(BaseParser[NeighborData]):
         if not remote_hostname or "not advertised" in remote_hostname.lower():
             return None
 
-        # Extract remote platform (System Description) - optional
-        remote_platform: str | None = None
-        desc_match = self.SYSTEM_DESC_PATTERN.search(block)
-        if desc_match:
-            desc = desc_match.group("value").strip()
-            if desc and "not advertised" not in desc.lower():
-                remote_platform = desc
-
         return NeighborData(
             local_interface=local_interface,
             remote_hostname=remote_hostname,
             remote_interface=remote_interface,
-            remote_platform=remote_platform,
         )
 
 

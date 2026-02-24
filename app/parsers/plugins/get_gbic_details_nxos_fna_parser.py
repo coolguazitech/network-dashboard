@@ -11,7 +11,6 @@ class TransceiverChannelData(BaseModel):
     channel: int                             # 1-4 (SFP=1, QSFP=1~4)
     tx_power: float | None = None            # dBm, range -40.0 ~ 10.0
     rx_power: float | None = None            # dBm, range -40.0 ~ 10.0
-    bias_current_ma: float | None = None     # mA, >= 0
 
 class TransceiverData(ParsedData):
     interface_name: str                      # e.g. "GigabitEthernet1/0/1"
@@ -179,7 +178,6 @@ class GetGbicDetailsNxosFnaParser(BaseParser[TransceiverData]):
             channel=1,
             tx_power=float(tx_m.group('val')) if tx_m else None,
             rx_power=float(rx_m.group('val')) if rx_m else None,
-            bias_current_ma=float(current_m.group('val')) if current_m else None,
         )
 
         return TransceiverData(
@@ -202,7 +200,6 @@ class GetGbicDetailsNxosFnaParser(BaseParser[TransceiverData]):
         for lane_m in self.QSFP_LANE_PATTERN.finditer(block):
             channels.append(TransceiverChannelData(
                 channel=int(lane_m.group('lane')),
-                bias_current_ma=float(lane_m.group('bias')),
                 tx_power=float(lane_m.group('tx')),
                 rx_power=float(lane_m.group('rx')),
             ))

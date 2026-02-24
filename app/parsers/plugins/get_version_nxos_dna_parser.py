@@ -1,8 +1,7 @@
 """
 Parser for 'get_version_nxos_dna' API.
 
-Parses Cisco NXOS `show version` output to extract firmware version,
-model, serial number, and uptime information.
+Parses Cisco NXOS `show version` output to extract firmware version.
 
 Real CLI command: show version
 Platforms: Nexus 9000, 7000, 5000 series
@@ -10,9 +9,6 @@ Platforms: Nexus 9000, 7000, 5000 series
 === ParsedData Model (DO NOT REMOVE) ===
 class VersionData(ParsedData):
     version: str                             # firmware version string
-    model: str | None = None                 # device model number
-    serial_number: str | None = None         # serial number
-    uptime: str | None = None                # uptime string
 === End ParsedData Model ===
 
 === Real CLI Command ===
@@ -50,9 +46,6 @@ class GetVersionNxosDnaParser(BaseParser[VersionData]):
 
     Notes:
     - Version: ``NXOS: version X.Y(Z)`` or ``NXOS: version X.Y.Z``
-    - Model: ``cisco NexusXXXX CYYYYY Chassis`` under Hardware section
-    - Serial: ``Processor Board ID X``
-    - Uptime: ``Kernel uptime is X`` (NX-OS native) or ``Uptime is X``
     """
 
     device_type = DeviceType.CISCO_NXOS
@@ -70,38 +63,6 @@ class GetVersionNxosDnaParser(BaseParser[VersionData]):
         re.IGNORECASE,
     )
 
-    # Model patterns
-    # "cisco Nexus9000 C9336C-FX2 Chassis" or "cisco Nexus9000 C93180YC-FX"
-    # Must contain a product code (like C9336C-FX2), NOT "Operating System" or "Software"
-    MODEL_PATTERN = re.compile(
-        r"^\s*cisco\s+(?P<model>Nexus\d+\S*\s+\S+.*?)\s*$",
-        re.MULTILINE | re.IGNORECASE,
-    )
-    # Broader fallback: any line with "Chassis" under Hardware
-    CHASSIS_PATTERN = re.compile(
-        r"^\s*(?P<model>\S+.*?Chassis.*?)\s*$",
-        re.MULTILINE | re.IGNORECASE,
-    )
-
-    # Serial number pattern
-    # "Processor Board ID SAL2345ABCD"
-    PROCESSOR_ID_PATTERN = re.compile(
-        r"Processor\s+Board\s+ID\s+(?P<serial>\S+)",
-        re.IGNORECASE,
-    )
-
-    # Uptime patterns
-    # "Kernel uptime is 60 day(s), 5 hour(s), 30 minute(s)"
-    KERNEL_UPTIME_PATTERN = re.compile(
-        r"Kernel\s+uptime\s+is\s+(?P<uptime>.+?)(?:\s*$)",
-        re.MULTILINE | re.IGNORECASE,
-    )
-    # "Uptime is 0 weeks, 1 day, 3 hours"
-    UPTIME_PATTERN = re.compile(
-        r"(?<!\w)[Uu]ptime\s+is\s+(?P<uptime>.+?)(?:\s*$)",
-        re.MULTILINE,
-    )
-
     def parse(self, raw_output: str) -> list[VersionData]:
         if not raw_output or not raw_output.strip():
             return []
@@ -110,15 +71,8 @@ class GetVersionNxosDnaParser(BaseParser[VersionData]):
         if not version:
             return []
 
-        model = self._extract_model(raw_output)
-        serial_number = self._extract_serial(raw_output)
-        uptime = self._extract_uptime(raw_output)
-
         return [VersionData(
             version=version,
-            model=model,
-            serial_number=serial_number,
-            uptime=uptime,
         )]
 
     def _extract_version(self, output: str) -> str | None:
@@ -132,47 +86,6 @@ class GetVersionNxosDnaParser(BaseParser[VersionData]):
         match = self.SYSTEM_VERSION_PATTERN.search(output)
         if match:
             return match.group("version")
-
-        return None
-
-    def _extract_model(self, output: str) -> str | None:
-        """Extract model/chassis string from output."""
-        # Try "cisco Nexus..." line first
-        match = self.MODEL_PATTERN.search(output)
-        if match:
-            model = match.group("model").strip()
-            # Clean up trailing Chassis/etc. text but keep it informative
-            return model
-
-        # Fallback to line with "Chassis"
-        match = self.CHASSIS_PATTERN.search(output)
-        if match:
-            model = match.group("model").strip()
-            # Filter out false positives
-            if "copyright" in model.lower() or "http" in model.lower():
-                return None
-            return model
-
-        return None
-
-    def _extract_serial(self, output: str) -> str | None:
-        """Extract serial number from output."""
-        match = self.PROCESSOR_ID_PATTERN.search(output)
-        if match:
-            return match.group("serial")
-        return None
-
-    def _extract_uptime(self, output: str) -> str | None:
-        """Extract uptime string from output."""
-        # Try "Kernel uptime is X" first (more specific)
-        match = self.KERNEL_UPTIME_PATTERN.search(output)
-        if match:
-            return match.group("uptime").strip()
-
-        # Fall back to generic "Uptime is X"
-        match = self.UPTIME_PATTERN.search(output)
-        if match:
-            return match.group("uptime").strip()
 
         return None
 
