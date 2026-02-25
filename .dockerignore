@@ -82,6 +82,7 @@ logs/
 *.db
 *.sqlite3
 
+
 # Temporary files
 tmp/
 temp/

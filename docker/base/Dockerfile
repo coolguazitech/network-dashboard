@@ -5,7 +5,7 @@
 # 建構指令：
 #   docker buildx build --platform linux/amd64 \
 #       -f docker/base/Dockerfile \
-#       -t coolguazi/network-dashboard-base:v1.1.0 \
+#       -t coolguazi/network-dashboard-base:v2.2.2 \
 #       --load .
 # =============================================================================
 
@@ -75,7 +75,7 @@ FROM --platform=$TARGETPLATFORM python:3.11-slim-trixie AS final
 
 # 標籤資訊
 LABEL maintainer="network-dashboard@example.com" \
-      version="1.1.0" \
+      version="2.2.2" \
       description="Network Dashboard Base Image - Python 3.11 + Dependencies"
 
 # 設定環境變數

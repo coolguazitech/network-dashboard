@@ -67,6 +67,19 @@ def get_active_seconds(maintenance_id: str) -> float:
     return accumulated
 
 
+def get_active_maintenance_id() -> str:
+    """取得目前活躍的歲修 ID（供 DNA 路由推斷用）。"""
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT maintenance_id FROM maintenance_configs "
+                "WHERE is_active = 1 LIMIT 1"
+            ),
+        ).fetchone()
+    return row[0] if row else ""
+
+
 def get_uplink_neighbors(
     maintenance_id: str, switch_ip: str,
 ) -> list[tuple[str, str, str]]:

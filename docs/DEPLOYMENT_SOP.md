@@ -1,11 +1,11 @@
 # NETORA 部署與開發 SOP
 
-> **最新版本**: `v1.2.0` (2026-02-09)
-> **重大更新**: 修復 ARP 來源處理邏輯，確保客戶端偵測狀態即時反映
+> **最新版本**: `v2.2.2` (2026-02-25)
+> **重大更新**: 修復 DNA endpoint 採集失敗、Mock server 鄰居推斷
 
 ## 目錄
 
-- [🚀 公司端快速更新](#公司端快速更新-v120)
+- [🚀 公司端快速更新](#公司端快速更新-v222)
 - [Part 1：無腦起服務（5 分鐘）](#part-1無腦起服務5-分鐘)
 - [Part 2：開發指南（外部 API 串接）](#part-2開發指南外部-api-串接)
 - [Part 3：打包 Image 重新推送](#part-3打包-image-重新推送)
@@ -13,20 +13,22 @@
 
 ---
 
-## 🚀 公司端快速更新 (v2.2.1)
+## 🚀 公司端快速更新 (v2.2.2)
 
 ### 更新內容摘要
 
-**版本**: `coolguazi/network-dashboard-base:v2.2.1`
+**版本**: `coolguazi/network-dashboard-base:v2.2.2`
 
 **關鍵修復**:
+- ✅ **[Production Bug]** 修復 DNA endpoint 全部 422 失敗（httpx `params={}` 會清除 URL 中的 query string）
+- ✅ 修復 Mock server DNA 路由未帶 maintenance_id，導致 UPLINK 鄰居查詢跳過
 - ✅ 修復 Ping 採集失敗（移除 DB 中未使用的 `success_rate`/`avg_rtt_ms` 欄位）
 - ✅ 修正歲修配置 API 500 錯誤（`PydanticSerializationError`）
 - ✅ 修正 GNMS Ping endpoint 路徑不一致
 - ✅ Alembic migration 自動清理 `ping_records` 多餘欄位
 - ✅ CVE 掃描通過（0 個 CRITICAL）
 
-**影響範圍**: Ping 採集、歲修配置 API
+**影響範圍**: 所有 DNA 採集（get_mac_table, get_fan, get_power, get_version, get_interface_status, get_uplink_lldp, get_uplink_cdp）、Ping 採集、歲修配置 API
 
 **DB Migration 注意**: 此版本包含 alembic migration `h3b4c5d6e7f8`，會自動移除 `ping_records` 表的 `success_rate` 和 `avg_rtt_ms` 欄位。Migration 在容器啟動時自動執行。
 
@@ -59,10 +61,10 @@ curl http://localhost:8000/health
 ### 回滾方案（如遇問題）
 
 ```bash
-# 回到上一版本 v1.1.0
-sed -i 's/network-dashboard-base:v1.2.0/network-dashboard-base:v1.1.0/' docker-compose.production.yml
-docker-compose -f docker-compose.production.yml pull
-docker-compose -f docker-compose.production.yml up -d
+# 回到上一版本 v2.2.1
+sed -i 's/network-dashboard-base:v2.2.2/network-dashboard-base:v2.2.1/' docker-compose.production.yml
+docker compose -f docker-compose.production.yml pull
+docker compose -f docker-compose.production.yml up -d
 ```
 
 ---

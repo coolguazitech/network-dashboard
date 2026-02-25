@@ -156,7 +156,7 @@ class ConfiguredFetcher(BaseFetcher):
 
                 try:
                     resp = await client.get(
-                        url, params=query_params,
+                        url, params=query_params or None,
                         headers=headers, timeout=timeout,
                     )
                     resp.raise_for_status()

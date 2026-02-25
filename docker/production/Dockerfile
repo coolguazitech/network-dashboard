@@ -6,16 +6,16 @@
 #
 # 建構指令：
 #   docker build \
-#       --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.0.0 \
+#       --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.2.2 \
 #       -f docker/production/Dockerfile \
-#       -t netora-production:v2.0.0 \
+#       -t netora-production:v2.2.2 \
 #       .
 # =============================================================================
 
 # 參數定義
 # BASE_IMAGE: 公司 registry 掃描通過後的完整 image URL
-# 例如: registry.company.com/netora/network-dashboard-base:v2.0.0
-ARG BASE_IMAGE=coolguazi/network-dashboard-base:v2.2.1
+# 例如: registry.company.com/netora/network-dashboard-base:v2.2.2
+ARG BASE_IMAGE=coolguazi/network-dashboard-base:v2.2.2
 
 # 使用基礎映像檔（公司 registry 或 DockerHub）
 FROM ${BASE_IMAGE}
@@ -33,6 +33,9 @@ COPY --chown=appuser:appgroup app/parsers/plugins/ /app/app/parsers/plugins/
 
 # 覆蓋設定檔（scheduler.yaml 等）
 COPY --chown=appuser:appgroup config/ /app/config/
+
+# 覆蓋 Alembic 遷移檔（確保新版 migration 被包含）
+COPY --chown=appuser:appgroup alembic/ /app/alembic/
 
 # 確保權限正確
 RUN chown -R appuser:appgroup /app

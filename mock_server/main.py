@@ -220,7 +220,9 @@ def _make_dna_handler(api_name: str, device_type: str):  # noqa: ANN202
     async def handler(
         hosts: str = Query(..., description="Switch IP"),
     ) -> Response:
-        return _generate_response(api_name, hosts, device_type, maintenance_id="")
+        # DNA 路由不帶 maintenance_id → 自動推斷活躍歲修
+        mid = db.get_active_maintenance_id()
+        return _generate_response(api_name, hosts, device_type, maintenance_id=mid)
 
     handler.__name__ = f"dna_{api_name}_{device_type}"
     handler.__qualname__ = f"dna_{api_name}_{device_type}"
