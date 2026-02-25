@@ -32,19 +32,27 @@
 
 **DB Migration 注意**: 此版本包含 alembic migration `h3b4c5d6e7f8`，會自動移除 `ping_records` 表的 `success_rate` 和 `avg_rtt_ms` 欄位。Migration 在容器啟動時自動執行。
 
-### 在公司機器上執行（3 分鐘）
+### 在公司機器上執行（5 分鐘）
+
+> **前提**：新版 image 已提交公司 registry 掃描通過。
+> 公司環境無法 `git clone`/`git pull`，需從 GitHub 下載 ZIP。
 
 ```bash
-# 1. 進入專案目錄
+# 1. 從 GitHub 下載最新 ZIP（在可上網的電腦操作，再傳到公司機器）
+#    GitHub → Code → Download ZIP
+
+# 2. 在公司機器上解壓並替換程式碼
+unzip netora-main.zip
+cp -r netora-main/* /path/to/netora/
 cd /path/to/netora
 
-# 2. 拉取新版 image
-docker compose -f docker-compose.production.yml pull
+# 3. 更新 .env 中的 image 版本號（如果 registry URL 有變）
+#    確認 APP_IMAGE 指向公司 registry 的新版本
 
-# 3. 重啟服務（alembic migration 自動執行）
+# 4. 重啟服務（alembic migration 自動執行）
 docker compose -f docker-compose.production.yml up -d
 
-# 4. 確認服務正常
+# 5. 確認服務正常
 docker compose -f docker-compose.production.yml ps
 curl http://localhost:8000/health
 ```
@@ -83,8 +91,10 @@ docker compose -f docker-compose.production.yml up -d
 ### 步驟
 
 ```bash
-# 1. 拉取程式碼
-git clone <repo-url> netora && cd netora
+# 1. 取得程式碼
+#    開發環境: git clone <repo-url> netora && cd netora
+#    公司環境: 從 GitHub 下載 ZIP 並解壓
+unzip netora-main.zip && mv netora-main netora && cd netora
 
 # 2. 建立環境設定
 cp .env.production .env
@@ -148,9 +158,10 @@ docker-compose -f docker-compose.production.yml restart
 ### 更新版本
 
 ```bash
-# 修改 docker-compose.production.yml 中的 image 版本號（如 v1.2.0 → v1.3.0）
-docker-compose -f docker-compose.production.yml pull
-docker-compose -f docker-compose.production.yml up -d
+# 1. 從 GitHub 下載最新 ZIP 並解壓替換程式碼
+# 2. 確認 .env 中 APP_IMAGE 指向新版 image
+# 3. 重啟服務
+docker compose -f docker-compose.production.yml up -d
 ```
 
 ---
@@ -161,7 +172,7 @@ docker-compose -f docker-compose.production.yml up -d
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  Base Image (coolguazi/network-dashboard-base:v2.2.1) │
+│  Base Image (coolguazi/network-dashboard-base:v2.2.2) │
 │                                                       │
 │  包含完整系統：                                         │
 │  • Python 3.11 + 所有 pip 依賴                         │
@@ -362,17 +373,17 @@ Parser 的回傳類型必須是以下之一（不能改欄位名）：
 修改完 Parser/Fetcher 代碼後：
 
 ```bash
-# 使用遞增版本號（當前最新: v1.2.0）
-bash scripts/build-and-push.sh v1.3.0
+# 使用遞增版本號（當前最新: v2.2.2）
+bash scripts/build-and-push.sh v2.2.2
 ```
 
 此腳本會依序：
 
 1. **Build** — `docker buildx build` 產出 image
-2. **CVE Scan** — Trivy 掃描 HIGH/CRITICAL 漏洞（報告存為 `trivy-report-v1.3.0.txt`）
+2. **CVE Scan** — Trivy 掃描 HIGH/CRITICAL 漏洞（報告存為 `trivy-report-v2.2.2.txt`）
    - ✅ 0 個 CRITICAL 才允許推送
    - ⚠️ HIGH 漏洞記錄但不阻擋（通常為系統函式庫）
-3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v2.2.1` + `:latest`）
+3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v2.2.2` + `:latest`）
 
 ### 3.2 手動打包
 
@@ -380,28 +391,31 @@ bash scripts/build-and-push.sh v1.3.0
 # Build
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.2.1 \
+    -t coolguazi/network-dashboard-base:v2.2.2 \
     --load .
 
 # CVE Scan（可選）
-trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v2.2.1
+trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v2.2.2
 
 # Push
 docker login
-docker push coolguazi/network-dashboard-base:v2.2.1
-docker tag coolguazi/network-dashboard-base:v2.2.1 coolguazi/network-dashboard-base:latest
+docker push coolguazi/network-dashboard-base:v2.2.2
+docker tag coolguazi/network-dashboard-base:v2.2.2 coolguazi/network-dashboard-base:latest
 docker push coolguazi/network-dashboard-base:latest
 ```
 
 ### 3.3 公司端更新
 
-在部署的機器上：
+> 公司環境無外網，不能 `docker pull` / `git pull`。更新流程：
+
+1. **外部**：Build 新版 image → push DockerHub → 提交公司 registry 掃描
+2. **外部**：從 GitHub 下載最新程式碼 ZIP
+3. **公司**：解壓 ZIP 替換程式碼
+4. **公司**：確認 `.env` 中 `APP_IMAGE` 指向公司 registry 的新版 image
+5. **公司**：重啟服務
 
 ```bash
-# 修改 docker-compose.production.yml 中的 image 版本號
-# 然後：
-docker-compose -f docker-compose.production.yml pull
-docker-compose -f docker-compose.production.yml up -d
+docker compose -f docker-compose.production.yml up -d
 ```
 
 ### 3.4 Docker 檔案結構
@@ -487,9 +501,9 @@ docker-compose -f docker-compose.production.yml up -d
 # .env 中設定 FETCHER_SOURCE__*__BASE_URL 指向真實 API
 docker-compose -f docker-compose.production.yml restart app
 
-# ========== 公司端更新（當前版本 v1.2.0） ==========
-# 修改 docker-compose.production.yml 中的版本號
-sed -i 's/v[0-9.]*\+/v1.3.0/' docker-compose.production.yml
-docker-compose -f docker-compose.production.yml pull
-docker-compose -f docker-compose.production.yml up -d
+# ========== 公司端更新（當前版本 v2.2.2） ==========
+# 1. 從 GitHub 下載最新 ZIP 並解壓替換程式碼
+# 2. 確認 .env 中 APP_IMAGE 指向公司 registry 的新版 image
+# 3. 重啟服務
+docker compose -f docker-compose.production.yml up -d
 ```

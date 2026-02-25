@@ -22,7 +22,7 @@ FROM ${BASE_IMAGE}
 
 # 標籤資訊
 LABEL maintainer="network-dashboard@company.com" \
-      version="2.2.1" \
+      version="2.2.2" \
       description="Network Dashboard Production - Real Parser plugins"
 
 # 切換到 root 以複製檔案
