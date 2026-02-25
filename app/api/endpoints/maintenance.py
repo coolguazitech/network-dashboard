@@ -810,7 +810,10 @@ async def get_maintenance_config(
     if not config:
         return {"maintenance_id": maintenance_id, "anchor_time": None}
 
-    return config.__dict__
+    return {
+        k: v for k, v in config.__dict__.items()
+        if not k.startswith("_")
+    }
 
 
 @router.put("/config/{maintenance_id}")

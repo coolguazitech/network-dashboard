@@ -15,14 +15,14 @@
 # 參數定義
 # BASE_IMAGE: 公司 registry 掃描通過後的完整 image URL
 # 例如: registry.company.com/netora/network-dashboard-base:v2.0.0
-ARG BASE_IMAGE=coolguazi/network-dashboard-base:v2.0.0
+ARG BASE_IMAGE=coolguazi/network-dashboard-base:v2.2.1
 
 # 使用基礎映像檔（公司 registry 或 DockerHub）
 FROM ${BASE_IMAGE}
 
 # 標籤資訊
 LABEL maintainer="network-dashboard@company.com" \
-      version="2.0.0" \
+      version="2.2.1" \
       description="Network Dashboard Production - Real Parser plugins"
 
 # 切換到 root 以複製檔案

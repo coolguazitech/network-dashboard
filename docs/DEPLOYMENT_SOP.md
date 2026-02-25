@@ -13,19 +13,22 @@
 
 ---
 
-## 🚀 公司端快速更新 (v1.2.0)
+## 🚀 公司端快速更新 (v2.2.1)
 
 ### 更新內容摘要
 
-**版本**: `coolguazi/network-dashboard-base:v1.2.0`
+**版本**: `coolguazi/network-dashboard-base:v2.2.1`
 
 **關鍵修復**:
-- ✅ 修復客戶端比較頁面資料不同步問題
-- ✅ 修正 Mock Fetcher 不尊重 ARP 來源配置的 bug
-- ✅ 實現完整快照機制（每 30 秒確保資料一致性）
-- ✅ CVE 掃描通過（0 個 CRITICAL，4 個 HIGH 系統函式庫漏洞可接受）
+- ✅ 修復 Ping 採集失敗（移除 DB 中未使用的 `success_rate`/`avg_rtt_ms` 欄位）
+- ✅ 修正歲修配置 API 500 錯誤（`PydanticSerializationError`）
+- ✅ 修正 GNMS Ping endpoint 路徑不一致
+- ✅ Alembic migration 自動清理 `ping_records` 多餘欄位
+- ✅ CVE 掃描通過（0 個 CRITICAL）
 
-**影響範圍**: 客戶端偵測與比較功能
+**影響範圍**: Ping 採集、歲修配置 API
+
+**DB Migration 注意**: 此版本包含 alembic migration `h3b4c5d6e7f8`，會自動移除 `ping_records` 表的 `success_rate` 和 `avg_rtt_ms` 欄位。Migration 在容器啟動時自動執行。
 
 ### 在公司機器上執行（3 分鐘）
 
@@ -33,25 +36,22 @@
 # 1. 進入專案目錄
 cd /path/to/netora
 
-# 2. 修改 docker-compose.production.yml 的 image 版本
-sed -i 's/network-dashboard-base:v[0-9.]*\+/network-dashboard-base:v1.2.0/' docker-compose.production.yml
+# 2. 拉取新版 image
+docker compose -f docker-compose.production.yml pull
 
-# 3. 拉取新版 image
-docker-compose -f docker-compose.production.yml pull
+# 3. 重啟服務（alembic migration 自動執行）
+docker compose -f docker-compose.production.yml up -d
 
-# 4. 重啟服務（零停機時間約 10 秒）
-docker-compose -f docker-compose.production.yml up -d
-
-# 5. 確認服務正常
-docker-compose -f docker-compose.production.yml ps
+# 4. 確認服務正常
+docker compose -f docker-compose.production.yml ps
 curl http://localhost:8000/health
 ```
 
 ### 驗證更新
 
-1. 登入系統後，前往「客戶端比較」頁面
-2. 移除所有 ARP 來源
-3. 等待 30 秒後重新整理
+1. 確認 health check 回傳 `scheduler_running: true`
+2. 等待 60 秒，檢查系統日誌無 `success_rate` 相關錯誤
+3. 前往「歲修設定」頁面，確認可正常開啟
 4. **預期結果**: 所有客戶端應顯示「未偵測」狀態
 5. 重新加入 ARP 來源，等待 30 秒
 6. **預期結果**: 客戶端應從「未偵測」變為「已偵測」
@@ -159,7 +159,7 @@ docker-compose -f docker-compose.production.yml up -d
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  Base Image (coolguazi/network-dashboard-base:v1.2.0) │
+│  Base Image (coolguazi/network-dashboard-base:v2.2.1) │
 │                                                       │
 │  包含完整系統：                                         │
 │  • Python 3.11 + 所有 pip 依賴                         │
@@ -370,7 +370,7 @@ bash scripts/build-and-push.sh v1.3.0
 2. **CVE Scan** — Trivy 掃描 HIGH/CRITICAL 漏洞（報告存為 `trivy-report-v1.3.0.txt`）
    - ✅ 0 個 CRITICAL 才允許推送
    - ⚠️ HIGH 漏洞記錄但不阻擋（通常為系統函式庫）
-3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v1.3.0` + `:latest`）
+3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v2.2.1` + `:latest`）
 
 ### 3.2 手動打包
 
@@ -378,16 +378,16 @@ bash scripts/build-and-push.sh v1.3.0
 # Build
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v1.3.0 \
+    -t coolguazi/network-dashboard-base:v2.2.1 \
     --load .
 
 # CVE Scan（可選）
-trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v1.3.0
+trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v2.2.1
 
 # Push
 docker login
-docker push coolguazi/network-dashboard-base:v1.3.0
-docker tag coolguazi/network-dashboard-base:v1.3.0 coolguazi/network-dashboard-base:latest
+docker push coolguazi/network-dashboard-base:v2.2.1
+docker tag coolguazi/network-dashboard-base:v2.2.1 coolguazi/network-dashboard-base:latest
 docker push coolguazi/network-dashboard-base:latest
 ```
 

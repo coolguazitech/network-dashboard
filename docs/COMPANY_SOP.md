@@ -846,7 +846,7 @@ app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
 | `AclData` | ACL | interface_name | acl_number |
 | `MacTableData` | MAC 表 | mac_address, interface_name | vlan_id(=0) |
 | `InterfaceStatusData` | 介面狀態 | interface_name, link_status | speed, duplex |
-| `PingResultData` | Ping | target, is_reachable, success_rate | avg_rtt_ms |
+| `PingResultData` | Ping | target, is_reachable | — |
 
 > status 欄位（如 FanStatusData.status）會自動正規化：
 > `"OK"` / `"Ok"` / `"ok"` → `"ok"` ;  `"Normal"` → `"normal"`

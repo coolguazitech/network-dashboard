@@ -128,7 +128,7 @@ services:
       FETCHER_SOURCE__FNA__BASE_URL: http://mock-api:9999
       FETCHER_SOURCE__DNA__BASE_URL: http://mock-api:9999
       # GNMS Ping per-tenant（開發環境全部指向 mock）
-      GNMSPING__ENDPOINT: /api/gnms_ping
+      GNMSPING__ENDPOINT: /api/v1/ping
       GNMSPING__BASE_URLS__F18: http://mock-api:9999
       GNMSPING__BASE_URLS__F6: http://mock-api:9999
       GNMSPING__BASE_URLS__AP: http://mock-api:9999
