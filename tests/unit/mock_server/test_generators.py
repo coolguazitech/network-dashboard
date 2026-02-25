@@ -322,7 +322,10 @@ class TestDynamicAclGenerator:
 
         output = generate("hpe")
         assert "Interface,ACL" in output
-        assert "MAC-AUTH" in output
+        # Generator produces CSV with numeric ACL numbers (e.g. "GE1/0/1,3561")
+        lines = output.strip().splitlines()
+        assert len(lines) > 1  # header + data rows
+        assert "GE1/0/1" in output
 
 
 class TestPingBatchGenerator:
