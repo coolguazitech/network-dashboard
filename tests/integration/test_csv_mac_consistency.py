@@ -62,6 +62,9 @@ class TestCsvMacConsistency:
         Every client MAC (except ghost) should appear in at least one
         NEW switch's MAC table.
         """
+        import random
+        random.seed(0)  # 固定 seed 避免 NOT_DETECTED_PROB 隨機丟失
+
         ghost_mac = "00:11:22:99:99:99"
 
         # Collect all MACs found across all new switches
@@ -100,6 +103,9 @@ class TestCsvMacConsistency:
         Every client MAC (except ghost) should appear in at least one
         OLD switch's MAC table.
         """
+        import random
+        random.seed(0)  # 固定 seed 避免 NOT_DETECTED_PROB 隨機丟失
+
         ghost_mac = "00:11:22:99:99:99"
 
         found_macs: set[str] = set()
@@ -159,6 +165,15 @@ class TestCsvMacConsistency:
         mock_network_state.csv entries should match the hash-based
         distribution from the generator.
         """
+        from unittest.mock import patch
+
+        # 停用隨機性：此測試驗證確定性 hash 分配邏輯，不應受 per-MAC 隨機影響
+        with patch("mock_server.generators.mac_table.NOT_DETECTED_PROB", 0), \
+             patch("mock_server.generators.mac_table.VLAN_CHANGE_PROB", 0), \
+             patch("mock_server.generators.mac_table.PORT_CHANGE_PROB", 0):
+            self._verify_hash_distribution(devices)
+
+    def _verify_hash_distribution(self, devices: list[dict]) -> None:
         network_state = _load_csv("mock_network_state.csv")
 
         # Build expected: for each (mac, switch_hostname) pair, verify it

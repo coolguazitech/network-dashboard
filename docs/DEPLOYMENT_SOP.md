@@ -1,7 +1,7 @@
 # NETORA 部署與開發 SOP
 
-> **最新版本**: `v2.2.2` (2026-02-25)
-> **重大更新**: 修復 DNA endpoint 採集失敗、Mock server 鄰居推斷
+> **最新版本**: `v2.2.3` (2026-02-26)
+> **重大更新**: Mock server 加入 per-MAC 獨立隨機屬性變化
 
 ## 目錄
 
@@ -13,11 +13,11 @@
 
 ---
 
-## 🚀 公司端快速更新 (v2.2.2)
+## 🚀 公司端快速更新 (v2.2.3)
 
 ### 更新內容摘要
 
-**版本**: `coolguazi/network-dashboard-base:v2.2.2`
+**版本**: `coolguazi/network-dashboard-base:v2.2.3`
 
 **關鍵修復**:
 - ✅ **[Production Bug]** 修復 DNA endpoint 全部 422 失敗（httpx `params={}` 會清除 URL 中的 query string）
@@ -70,7 +70,7 @@ curl http://localhost:8000/health
 
 ```bash
 # 回到上一版本 v2.2.1
-sed -i 's/network-dashboard-base:v2.2.2/network-dashboard-base:v2.2.1/' docker-compose.production.yml
+sed -i 's/network-dashboard-base:v2.2.3/network-dashboard-base:v2.2.1/' docker-compose.production.yml
 docker compose -f docker-compose.production.yml pull
 docker compose -f docker-compose.production.yml up -d
 ```
@@ -172,7 +172,7 @@ docker compose -f docker-compose.production.yml up -d
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  Base Image (coolguazi/network-dashboard-base:v2.2.2) │
+│  Base Image (coolguazi/network-dashboard-base:v2.2.3) │
 │                                                       │
 │  包含完整系統：                                         │
 │  • Python 3.11 + 所有 pip 依賴                         │
@@ -373,17 +373,17 @@ Parser 的回傳類型必須是以下之一（不能改欄位名）：
 修改完 Parser/Fetcher 代碼後：
 
 ```bash
-# 使用遞增版本號（當前最新: v2.2.2）
-bash scripts/build-and-push.sh v2.2.2
+# 使用遞增版本號（當前最新: v2.2.3）
+bash scripts/build-and-push.sh v2.2.3
 ```
 
 此腳本會依序：
 
 1. **Build** — `docker buildx build` 產出 image
-2. **CVE Scan** — Trivy 掃描 HIGH/CRITICAL 漏洞（報告存為 `trivy-report-v2.2.2.txt`）
+2. **CVE Scan** — Trivy 掃描 HIGH/CRITICAL 漏洞（報告存為 `trivy-report-v2.2.3.txt`）
    - ✅ 0 個 CRITICAL 才允許推送
    - ⚠️ HIGH 漏洞記錄但不阻擋（通常為系統函式庫）
-3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v2.2.2` + `:latest`）
+3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v2.2.3` + `:latest`）
 
 ### 3.2 手動打包
 
@@ -391,16 +391,16 @@ bash scripts/build-and-push.sh v2.2.2
 # Build
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.2.2 \
+    -t coolguazi/network-dashboard-base:v2.2.3 \
     --load .
 
 # CVE Scan（可選）
-trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v2.2.2
+trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v2.2.3
 
 # Push
 docker login
-docker push coolguazi/network-dashboard-base:v2.2.2
-docker tag coolguazi/network-dashboard-base:v2.2.2 coolguazi/network-dashboard-base:latest
+docker push coolguazi/network-dashboard-base:v2.2.3
+docker tag coolguazi/network-dashboard-base:v2.2.3 coolguazi/network-dashboard-base:latest
 docker push coolguazi/network-dashboard-base:latest
 ```
 
@@ -501,7 +501,7 @@ docker-compose -f docker-compose.production.yml up -d
 # .env 中設定 FETCHER_SOURCE__*__BASE_URL 指向真實 API
 docker-compose -f docker-compose.production.yml restart app
 
-# ========== 公司端更新（當前版本 v2.2.2） ==========
+# ========== 公司端更新（當前版本 v2.2.3） ==========
 # 1. 從 GitHub 下載最新 ZIP 並解壓替換程式碼
 # 2. 確認 .env 中 APP_IMAGE 指向公司 registry 的新版 image
 # 3. 重啟服務

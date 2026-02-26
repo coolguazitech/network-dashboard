@@ -1,6 +1,20 @@
 """Mock: 介面狀態 (get_interface_status)。"""
 from __future__ import annotations
 
+import random
+
+from mock_server.generators._probabilities import (
+    DUPLEX_CHANGE_PROB,
+    HPE_DUPLEXES,
+    HPE_SPEEDS,
+    IOS_DUPLEXES,
+    IOS_SPEEDS,
+    LINK_DOWN_PROB,
+    NXOS_DUPLEXES,
+    NXOS_SPEEDS,
+    SPEED_CHANGE_PROB,
+)
+
 # 20 個介面，涵蓋不同類型
 _HPE_INTERFACES = [
     ("GE1/0/1", 1), ("GE1/0/2", 1), ("GE1/0/3", 100),
@@ -33,6 +47,11 @@ _NXOS_INTERFACES = [
 ]
 
 
+def _is_uplink(intf: str) -> bool:
+    """Uplink / aggregation 介面不做隨機變化。"""
+    return intf.startswith(("XGE", "BAGG", "Te", "Po", "Eth1/49"))
+
+
 def generate(device_type: str, fails: bool = False, **_kw: object) -> str:
     if device_type == "nxos":
         return _generate_nxos(fails)
@@ -54,11 +73,19 @@ def _generate_hpe(fails: bool) -> str:
     for i, (intf, pvid) in enumerate(_HPE_INTERFACES):
         if fails and i in (2, 3, 4):
             link, speed, duplex = "DOWN", "auto", "A"
-        elif intf.startswith("XGE") or intf.startswith("BAGG"):
+        elif _is_uplink(intf):
             link, speed, duplex = "UP", "10G(a)", "F(a)"
         else:
             link, speed, duplex = "UP", "1G(a)", "F(a)"
-        intf_type = "T" if intf.startswith(("XGE", "BAGG")) else "A"
+            # per-interface 隨機變化（只對一般介面）
+            if not fails:
+                if random.random() < LINK_DOWN_PROB:
+                    link = "DOWN"
+                if random.random() < SPEED_CHANGE_PROB:
+                    speed = random.choice(HPE_SPEEDS)
+                if random.random() < DUPLEX_CHANGE_PROB:
+                    duplex = random.choice(HPE_DUPLEXES)
+        intf_type = "T" if _is_uplink(intf) else "A"
         lines.append(
             f"{intf:<20} {link:<5}{speed:<8}{duplex:<7}{intf_type:<5}{pvid}"
         )
@@ -72,11 +99,19 @@ def _generate_ios(fails: bool) -> str:
     for i, (intf, vlan) in enumerate(_IOS_INTERFACES):
         if fails and i in (2, 3, 4):
             status, duplex, speed = "notconnect", "auto", "auto"
-        elif intf.startswith("Te") or intf.startswith("Po"):
+        elif _is_uplink(intf):
             status, duplex, speed = "connected", "full", "10G"
             vlan = "trunk"
         else:
             status, duplex, speed = "connected", "a-full", "a-1000"
+            # per-interface 隨機變化
+            if not fails:
+                if random.random() < LINK_DOWN_PROB:
+                    status = "notconnect"
+                if random.random() < SPEED_CHANGE_PROB:
+                    speed = random.choice(IOS_SPEEDS)
+                if random.random() < DUPLEX_CHANGE_PROB:
+                    duplex = random.choice(IOS_DUPLEXES)
         name = ""
         vlan_str = str(vlan) if isinstance(vlan, int) else vlan
         lines.append(
@@ -92,11 +127,19 @@ def _generate_nxos(fails: bool) -> str:
     for i, (intf, vlan) in enumerate(_NXOS_INTERFACES):
         if fails and i in (2, 3, 4):
             status, duplex, speed = "notconnec", "auto", "auto"
-        elif intf == "Eth1/49" or intf.startswith("Po"):
+        elif _is_uplink(intf):
             status, duplex, speed = "connected", "full", "10G"
             vlan = "trunk"
         else:
             status, duplex, speed = "connected", "full", "1000"
+            # per-interface 隨機變化
+            if not fails:
+                if random.random() < LINK_DOWN_PROB:
+                    status = "notconnec"
+                if random.random() < SPEED_CHANGE_PROB:
+                    speed = random.choice(NXOS_SPEEDS)
+                if random.random() < DUPLEX_CHANGE_PROB:
+                    duplex = random.choice(NXOS_DUPLEXES)
         vlan_str = str(vlan) if isinstance(vlan, int) else vlan
         lines.append(
             f"{intf:<14}{'':<19}{status:<10}{vlan_str:<10}{duplex:<8}{speed:<8}1000base-T"

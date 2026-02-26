@@ -127,14 +127,17 @@ class TestGnmsPingGenerator:
         output = generate("hpe")
         assert "IP,Reachable,Latency_ms" in output
 
-    def test_deterministic(self):
+    def test_deterministic_with_seed(self):
+        import random
         from mock_server.generators.gnms_ping import generate
 
+        random.seed(42)
         output1 = generate(
             "hpe",
             switch_ips="10.0.0.1,10.0.0.2",
             failure_rate=0.05,
         )
+        random.seed(42)
         output2 = generate(
             "hpe",
             switch_ips="10.0.0.1,10.0.0.2",

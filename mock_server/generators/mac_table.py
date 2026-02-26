@@ -6,6 +6,14 @@
 from __future__ import annotations
 
 import hashlib
+import random
+
+from mock_server.generators._probabilities import (
+    NOT_DETECTED_PROB,
+    PORT_CHANGE_PROB,
+    VALID_VLANS,
+    VLAN_CHANGE_PROB,
+)
 
 
 def generate(
@@ -58,12 +66,25 @@ def _assign_macs_to_ports(
 
         # 用 MAC + switch_ip 的 hash 決定是否在本台 switch
         h = hashlib.md5(f"{raw_mac}:{switch_ip}".encode()).hexdigest()
-        # 約 1/3 的 MAC 會在本台 switch
+        # 約 1/3 的 MAC 會在本台 switch（確定性，不隨機）
         if int(h[:2], 16) >= 85:
             continue
 
+        # 小機率：MAC 暫時消失（per-MAC 獨立）
+        if random.random() < NOT_DETECTED_PROB:
+            continue
+
+        # 基線 port / VLAN（確定性 hash）
         port_idx = int(h[2:4], 16) % 24 + 1
-        vlan_id = [10, 20, 100, 200][int(h[4:6], 16) % 4]
+        vlan_id = VALID_VLANS[int(h[4:6], 16) % len(VALID_VLANS)]
+
+        # 小機率：VLAN 變化（per-MAC 獨立）
+        if random.random() < VLAN_CHANGE_PROB:
+            vlan_id = random.choice(VALID_VLANS)
+
+        # 小機率：port 變化（per-MAC 獨立）
+        if random.random() < PORT_CHANGE_PROB:
+            port_idx = random.randint(1, 24)
 
         entries.append({
             "mac": _format_mac(raw_mac, device_type),

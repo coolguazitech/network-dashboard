@@ -76,9 +76,13 @@ class TestAssignMacsToPorts:
         {"mac_address": f"00:11:22:E0:01:{i:02X}"} for i in range(1, 21)
     ]
 
-    def test_deterministic(self):
-        """Same input always produces same output."""
+    def test_deterministic_with_seed(self):
+        """Same input + same seed always produces same output."""
+        import random
+
+        random.seed(42)
         r1 = _assign_macs_to_ports("10.1.2.11", self.SAMPLE_MACS, "ios")
+        random.seed(42)
         r2 = _assign_macs_to_ports("10.1.2.11", self.SAMPLE_MACS, "ios")
         assert r1 == r2
 
@@ -93,13 +97,18 @@ class TestAssignMacsToPorts:
 
     def test_approximately_one_third(self):
         """Roughly 1/3 of MACs should land on each switch (with some variance)."""
+        import random
+
+        # Seed to neutralize NOT_DETECTED_PROB noise
+        random.seed(0)
         # Use larger sample for statistics
         big_macs = [{"mac_address": f"AA:BB:CC:DD:{i // 256:02X}:{i % 256:02X}"}
                      for i in range(300)]
         result = _assign_macs_to_ports("10.1.2.11", big_macs, "ios")
         ratio = len(result) / len(big_macs)
-        # Should be roughly 1/3 (85/256 ≈ 0.332), allow 0.2-0.5 range
-        assert 0.2 < ratio < 0.5, f"Ratio {ratio} outside expected range"
+        # Should be roughly 1/3 (85/256 ≈ 0.332), allow 0.15-0.5 range
+        # (NOT_DETECTED_PROB may drop a few even with seed)
+        assert 0.15 < ratio < 0.5, f"Ratio {ratio} outside expected range"
 
     def test_port_idx_range(self):
         """Port indices should be 1-24."""

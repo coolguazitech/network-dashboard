@@ -1,6 +1,6 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.2.2 (2026-02-25)
+> **版本**: v2.2.3 (2026-02-26)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
 
 ---
@@ -26,16 +26,16 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.2.2` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.2.3` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.2.2` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.2.3` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
 掃描通過後會拿到公司內部的 image URL，例如：
 
 ```
-registry.company.com/netora/network-dashboard-base:v2.2.2
+registry.company.com/netora/network-dashboard-base:v2.2.3
 registry.company.com/netora/netora-mariadb:10.11
 ...
 ```
@@ -64,17 +64,17 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.2.2
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.2.3
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.2.2
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.2.3
 ```
 
 拉取 image：
 
 ```bash
-docker pull registry.company.com/netora/network-dashboard-base:v2.2.2
+docker pull registry.company.com/netora/network-dashboard-base:v2.2.3
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.2.2
+docker pull registry.company.com/netora/netora-mock-server:v2.2.3
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 
@@ -106,7 +106,7 @@ DB_ROOT_PASSWORD=<強密碼>
 JWT_SECRET=<隨機字串>
 
 # ===== Image URL（必改）=====
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.2.2
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.2.3
 
 # ===== 真實 API 來源（必改）=====
 # FNA: Bearer token 認證; DNA: 不需認證; 皆無 SSL
@@ -597,9 +597,9 @@ cd netora
 
 # BASE_IMAGE = 公司 registry 掃描通過後的 URL
 docker build \
-    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.2.2 \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.2.3 \
     -f docker/production/Dockerfile \
-    -t netora-production:v2.2.2 \
+    -t netora-production:v2.2.3 \
     .
 ```
 
@@ -613,7 +613,7 @@ docker build \
 > ```bash
 > docker buildx build --platform linux/amd64 \
 >     -f docker/base/Dockerfile \
->     -t netora-production:v2.2.2 \
+>     -t netora-production:v2.2.3 \
 >     --load .
 > ```
 
@@ -622,7 +622,7 @@ docker build \
 編輯 `.env`：
 
 ```ini
-APP_IMAGE=netora-production:v2.2.2
+APP_IMAGE=netora-production:v2.2.3
 ```
 
 或直接改 `docker-compose.production.yml` 的 `image` 欄位。
@@ -709,9 +709,9 @@ print(f'Total: {len(parser_registry._parsers)} parsers')
 在公司外面：
 
 ```bash
-docker save coolguazi/network-dashboard-base:v2.2.2 | gzip > netora-app-v2.2.2.tar.gz
+docker save coolguazi/network-dashboard-base:v2.2.3 | gzip > netora-app-v2.2.3.tar.gz
 docker save coolguazi/netora-mariadb:10.11 | gzip > netora-mariadb-10.11.tar.gz
-docker save coolguazi/netora-mock-server:v2.2.2 | gzip > netora-mock-server-v2.2.2.tar.gz
+docker save coolguazi/netora-mock-server:v2.2.3 | gzip > netora-mock-server-v2.2.3.tar.gz
 docker save coolguazi/netora-seaweedfs:4.13 | gzip > netora-seaweedfs-4.13.tar.gz
 docker save coolguazi/netora-phpmyadmin:5.2 | gzip > netora-phpmyadmin-5.2.tar.gz
 ```
@@ -719,9 +719,9 @@ docker save coolguazi/netora-phpmyadmin:5.2 | gzip > netora-phpmyadmin-5.2.tar.g
 帶 tar.gz 到公司後：
 
 ```bash
-docker load < netora-app-v2.2.2.tar.gz
+docker load < netora-app-v2.2.3.tar.gz
 docker load < netora-mariadb-10.11.tar.gz
-docker load < netora-mock-server-v2.2.2.tar.gz
+docker load < netora-mock-server-v2.2.3.tar.gz
 docker load < netora-seaweedfs-4.13.tar.gz
 docker load < netora-phpmyadmin-5.2.tar.gz
 ```
@@ -867,7 +867,7 @@ app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
 ```
 # ===== Phase 1: 起服務 =====
 unzip netora-main.zip && cd netora-main
-docker pull <公司registry>/network-dashboard-base:v2.2.2
+docker pull <公司registry>/network-dashboard-base:v2.2.3
 cp .env.production .env
 # 編輯 .env：密碼 + APP_IMAGE + API URL + Token + endpoint
 docker-compose -f docker-compose.production.yml up -d
@@ -890,10 +890,10 @@ make parse-debug                            # 產生 AI bundle
 
 # ===== Phase 3: 最終部署 =====
 docker build \
-    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.2.2 \
+    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.2.3 \
     -f docker/production/Dockerfile \
-    -t netora-production:v2.2.2 .
-# 編輯 .env: APP_IMAGE=netora-production:v2.2.2
+    -t netora-production:v2.2.3 .
+# 編輯 .env: APP_IMAGE=netora-production:v2.2.3
 docker-compose -f docker-compose.production.yml down
 docker-compose -f docker-compose.production.yml up -d
 # alembic 自動執行
