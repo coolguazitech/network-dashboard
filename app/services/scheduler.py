@@ -36,7 +36,15 @@ class SchedulerService:
                 "misfire_grace_time": 30,
             },
         )
-        self.collection_service = ApiCollectionService()
+        # Switch collection service based on COLLECTION_MODE
+        from app.core.config import settings
+        if settings.collection_mode == "snmp":
+            from app.snmp.collection_service import SnmpCollectionService
+            self.collection_service = SnmpCollectionService()  # type: ignore[assignment]
+            logger.info("Using SNMP collection mode")
+        else:
+            self.collection_service = ApiCollectionService()
+            logger.info("Using API collection mode")
         self._jobs: dict[str, str] = {}  # job_name -> job_id
 
     def add_collection_job(

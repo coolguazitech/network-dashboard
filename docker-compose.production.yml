@@ -17,7 +17,7 @@ services:
   app:
     # ★ 改成公司 registry 掃描通過後的 image URL
     # 例如: registry.company.com/netora/network-dashboard-base:v2.2.3
-    image: ${APP_IMAGE:-coolguazi/network-dashboard-base:v2.2.3}
+    image: ${APP_IMAGE:-coolguazi/network-dashboard-base:v2.3.0}
     container_name: netora_app
     restart: unless-stopped
     depends_on:

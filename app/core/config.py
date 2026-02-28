@@ -7,9 +7,12 @@ Nested config（如 FetcherSourceConfig）使用 ``__`` 分隔符：
     FETCHER_SOURCE__FNA__BASE_URL=http://...
     FETCHER_SOURCE__FNA__TIMEOUT=30
 """
-from functools import lru_cache
+from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from functools import lru_cache
+from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -185,6 +188,48 @@ class Settings(BaseSettings):
         default=24,
         description="JWT token expiration time in hours",
     )
+
+    # Collection Mode
+    collection_mode: str = Field(
+        default="api",
+        description="Collection mode: 'api' (REST API fetchers) or 'snmp' (direct SNMP polling)",
+    )
+
+    # SNMP Settings (only used when collection_mode=snmp)
+    snmp_communities: list[str] = Field(
+        default=["tccd03ro", "public"],
+        description="SNMP v2c community strings to try, in order",
+    )
+    snmp_port: int = Field(default=161, description="SNMP target port")
+    snmp_timeout: float = Field(
+        default=5.0, description="SNMP PDU timeout in seconds",
+    )
+    snmp_retries: int = Field(
+        default=2, description="SNMP PDU retry count (pysnmp transport layer)",
+    )
+    snmp_max_repetitions: int = Field(
+        default=25, description="SNMP GETBULK max-repetitions per PDU",
+    )
+    snmp_concurrency: int = Field(
+        default=10, description="Max concurrent SNMP device collections",
+    )
+    snmp_walk_timeout: float = Field(
+        default=120.0, description="Overall timeout for a single SNMP walk (seconds)",
+    )
+    snmp_collector_retries: int = Field(
+        default=2, description="Collector-level retry count on timeout",
+    )
+    snmp_mock: bool = Field(
+        default=False,
+        description="Use mock SNMP engine (no real devices needed)",
+    )
+
+    @field_validator("snmp_communities", mode="before")
+    @classmethod
+    def _parse_communities(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            return [c.strip() for c in v.split(",") if c.strip()]
+        return v  # type: ignore[return-value]
 
     # Application
     app_name: str = Field(

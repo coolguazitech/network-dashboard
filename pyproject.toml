@@ -21,6 +21,7 @@ dependencies = [
     "bcrypt>=4.1.0",
     "PyJWT>=2.8.0",
     "miniopy-async>=1.20.0",
+    "pysnmp-lextudio>=6.1.0",
 ]
 
 [project.optional-dependencies]
@@ -91,7 +92,7 @@ disallow_incomplete_defs = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["yaml.*", "pymysql.*"]
+module = ["yaml.*", "pymysql.*", "pysnmp.*", "pyasn1.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

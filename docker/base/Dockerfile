@@ -5,7 +5,7 @@
 # 建構指令：
 #   docker buildx build --platform linux/amd64 \
 #       -f docker/base/Dockerfile \
-#       -t coolguazi/network-dashboard-base:v2.2.2 \
+#       -t coolguazi/network-dashboard-base:v2.3.0 \
 #       --load .
 # =============================================================================
 
@@ -75,7 +75,7 @@ FROM --platform=$TARGETPLATFORM python:3.11-slim-trixie AS final
 
 # 標籤資訊
 LABEL maintainer="network-dashboard@example.com" \
-      version="2.2.2" \
+      version="2.3.0" \
       description="Network Dashboard Base Image - Python 3.11 + Dependencies"
 
 # 設定環境變數
@@ -119,6 +119,9 @@ COPY --chown=appuser:appgroup app/repositories/ app/repositories/
 COPY --chown=appuser:appgroup app/services/ app/services/
 COPY --chown=appuser:appgroup app/indicators/ app/indicators/
 COPY --chown=appuser:appgroup app/main.py app/
+
+# 複製 SNMP 收集模組（支援 SNMP mock + 真實 SNMP 模式）
+COPY --chown=appuser:appgroup app/snmp/ app/snmp/
 
 # 複製 fetchers（含 configured.py，支援 mock + 真實 API 模式）
 COPY --chown=appuser:appgroup app/fetchers/ app/fetchers/
