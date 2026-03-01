@@ -1161,6 +1161,42 @@ print(f'Total: {len(parser_registry._parsers)} parsers')
 
 > **關鍵**：項目 1-4 是 SNMP 模式專屬需求。確認後可以在公司用 `scripts/snmp_verify.sh` 一鍵驗證 OID 相容性。
 
+### 如果 SNMP 有問題，帶回來的資料（手抄 checklist）
+
+> 公司不能傳檔案出來，以下每項只需手抄 1-3 行即可。
+
+```
+=== 必帶（每項一行）===
+
+1. sysObjectID（每個廠牌各一台，共 2-3 行）：
+   snmpget -v2c -c <community> <IP> 1.3.6.1.2.1.1.2.0
+   → 手抄回傳值，例如: 1.3.6.1.4.1.25506.11.1.136
+
+2. sysDescr（每個廠牌各一台，手抄前 100 字）：
+   snmpget -v2c -c <community> <IP> 1.3.6.1.2.1.1.1.0
+   → 手抄 "HPE Comware Software..." 到型號為止
+
+3. docker logs 錯誤（手抄最後 3-5 行 ERROR）：
+   docker logs netora_app 2>&1 | grep "ERROR\|Traceback" | tail -5
+
+=== 選帶（某個指標資料不對時）===
+
+4. 該指標的 snmpwalk 前 3 行（判斷 OID 格式用）：
+   snmpwalk -v2c -c <community> <IP> <OID> | head -3
+   → 手抄 3 行即可（含完整 OID = value 格式）
+
+5. SNMP community 測試結果（一個字：成功 or timeout）：
+   snmpget -v2c -c <community> <IP> 1.3.6.1.2.1.1.1.0
+
+6. vendor 欄位值（從 Dashboard 設備清單看）：
+   每台設備的 vendor 是 "HPE"、"Cisco-IOS"、還是 "Cisco-NXOS"？
+   → 必須精確匹配，大小寫敏感
+```
+
+> **重要**：`vendor` 欄位必須在 CSV 匯入時正確填寫（`HPE` / `Cisco-IOS` / `Cisco-NXOS`）。
+> SNMP 模式完全依賴此欄位決定用哪組 OID 採集。如果是空值會默認為 HPE，
+> 導致 Cisco 設備的 fan/power/transceiver 採集到空資料。
+
 ---
 
 ## 附錄 A：故障排查

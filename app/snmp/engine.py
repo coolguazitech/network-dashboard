@@ -6,11 +6,10 @@ SNMP Engine — pysnmp asyncio wrapper.
 - walk()     — 走訪整個 OID 子樹（自動使用 GETBULK）
 - get_bulk() — 單次 GETBULK 請求
 
-所有操作都是 async，使用 pysnmp-lextudio v6+ 的 asyncio API。
+所有操作都是 async，使用 pysnmp-lextudio v6.x 的 asyncio API。
 
 NOTE: pysnmp imports are deferred to AsyncSnmpEngine.__init__() so that
-mock mode (SNMP_MOCK=true) works even when pysnmp.hlapi.v3arch is not
-installed.
+mock mode (SNMP_MOCK=true) works even when pysnmp is not installed.
 """
 from __future__ import annotations
 
@@ -55,26 +54,22 @@ class SnmpEngineConfig:
 
 class AsyncSnmpEngine:
     """
-    Thin async wrapper around pysnmp-lextudio v3arch asyncio API.
+    Thin async wrapper around pysnmp-lextudio v6.x asyncio API.
 
     Thread-safe: uses a single shared pysnmp SnmpEngine instance.
     """
 
     def __init__(self, config: SnmpEngineConfig | None = None) -> None:
-        from pysnmp.hlapi.v3arch.asyncio import (
-            SnmpEngine as PySnmpEngine,
-        )
+        from pysnmp.hlapi.asyncio import SnmpEngine as PySnmpEngine
 
         self._config = config or SnmpEngineConfig()
         self._engine = PySnmpEngine()
 
-    async def _make_transport(
-        self, target: SnmpTarget,
-    ) -> Any:
-        """Create UDP transport for target."""
-        from pysnmp.hlapi.v3arch.asyncio import UdpTransportTarget
+    def _make_transport(self, target: SnmpTarget) -> Any:
+        """Create UDP transport for target (synchronous in v6)."""
+        from pysnmp.hlapi.asyncio import UdpTransportTarget
 
-        return await UdpTransportTarget.create(
+        return UdpTransportTarget(
             (target.ip, target.port),
             timeout=target.timeout,
             retries=target.retries,
@@ -93,20 +88,20 @@ class AsyncSnmpEngine:
             SnmpTimeoutError: if request times out.
             SnmpError: on other SNMP errors.
         """
-        from pysnmp.hlapi.v3arch.asyncio import (
+        from pysnmp.hlapi.asyncio import (
             CommunityData,
             ContextData,
             ObjectIdentity,
             ObjectType,
-            get_cmd,
+            getCmd,
         )
 
-        transport = await self._make_transport(target)
+        transport = self._make_transport(target)
         object_types = [
             ObjectType(ObjectIdentity(oid)) for oid in oids
         ]
 
-        error_indication, error_status, error_index, var_binds = await get_cmd(
+        error_indication, error_status, error_index, var_binds = await getCmd(
             self._engine,
             CommunityData(target.community),
             transport,
@@ -171,16 +166,16 @@ class AsyncSnmpEngine:
         max_repetitions: int | None,
     ) -> list[tuple[str, str]]:
         """Internal walk implementation."""
-        from pysnmp.hlapi.v3arch.asyncio import (
+        from pysnmp.hlapi.asyncio import (
             CommunityData,
             ContextData,
             ObjectIdentity,
             ObjectType,
-            bulk_cmd,
+            bulkCmd,
         )
 
         max_rep = max_repetitions or self._config.max_repetitions
-        transport = await self._make_transport(target)
+        transport = self._make_transport(target)
         results: list[tuple[str, str]] = []
         prefix = oid_prefix.rstrip(".")
 
@@ -191,7 +186,7 @@ class AsyncSnmpEngine:
 
         while True:
             error_indication, error_status, error_index, var_bind_table = (
-                await bulk_cmd(
+                await bulkCmd(
                     self._engine,
                     community,
                     transport,
