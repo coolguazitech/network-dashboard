@@ -296,6 +296,67 @@ class TestNeighborLldpCollector:
         assert len(parsed_items) == 1
         assert parsed_items[0].remote_interface == "Gi0/1"
 
+    @pytest.mark.asyncio
+    async def test_lldp_large_timemark_index(self, target, engine, session_cache):
+        """
+        Real HPE FF 5945: LLDP index has large TimeMark values.
+        E.g., suffix '1338488631.45.1' — 3 parts, large TimeMark.
+        Must parse correctly and match across tables.
+        """
+        engine.walk = AsyncMock(side_effect=lambda t, oid: {
+            LLDP_REM_SYS_NAME: [
+                (f"{LLDP_REM_SYS_NAME}.1338488631.45.1", "hpe-core-switch"),
+            ],
+            LLDP_REM_PORT_ID: [
+                (f"{LLDP_REM_PORT_ID}.1338488631.45.1", "Ethernet1/49"),
+            ],
+            LLDP_REM_PORT_DESC: [
+                (f"{LLDP_REM_PORT_DESC}.1338488631.45.1", "Ethernet1/49 uplink"),
+            ],
+            LLDP_LOC_PORT_DESC: [
+                (f"{LLDP_LOC_PORT_DESC}.45", "Twenty-FiveGigE1/0/45"),
+            ],
+        }[oid])
+
+        collector = NeighborLldpCollector()
+        raw_text, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert len(parsed_items) == 1
+        assert parsed_items[0].local_interface == "Twenty-FiveGigE1/0/45"
+        assert parsed_items[0].remote_hostname == "hpe-core-switch"
+        assert parsed_items[0].remote_interface == "Ethernet1/49 uplink"
+
+    @pytest.mark.asyncio
+    async def test_lldp_multiple_neighbors_mixed_index_lengths(self, target, engine, session_cache):
+        """
+        Real device scenario: two LLDP neighbors with different index lengths.
+        One neighbor has local port 45 (3-part index), another has local port 2146.
+        Both should be parsed correctly.
+        """
+        engine.walk = AsyncMock(side_effect=lambda t, oid: {
+            LLDP_REM_SYS_NAME: [
+                (f"{LLDP_REM_SYS_NAME}.21013.2146.1", "switch-A"),
+                (f"{LLDP_REM_SYS_NAME}.1338488631.45.1", "switch-B"),
+            ],
+            LLDP_REM_PORT_ID: [
+                (f"{LLDP_REM_PORT_ID}.21013.2146.1", "GigabitEthernet1/0/3"),
+                (f"{LLDP_REM_PORT_ID}.1338488631.45.1", "Ethernet1/49"),
+            ],
+            LLDP_REM_PORT_DESC: [],
+            LLDP_LOC_PORT_DESC: [
+                (f"{LLDP_LOC_PORT_DESC}.2146", "BAGG1"),
+                (f"{LLDP_LOC_PORT_DESC}.45", "Twenty-FiveGigE1/0/45"),
+            ],
+        }[oid])
+
+        collector = NeighborLldpCollector()
+        raw_text, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert len(parsed_items) == 2
+        names = {p.remote_hostname for p in parsed_items}
+        assert "switch-A" in names
+        assert "switch-B" in names
+
 
 # =====================================================================
 # 3. InterfaceStatusCollector
@@ -651,6 +712,71 @@ class TestChannelGroupCollector:
         assert item.member_status["GigabitEthernet1/0/1"] == "up"
         assert item.member_status["GigabitEthernet1/0/2"] == "down"
 
+    @pytest.mark.asyncio
+    async def test_channel_group_hex_string_oper_state(self, target, engine, session_cache):
+        """
+        Real HPE FF 5945: dot3adAggPortActorOperState returns OCTET STRING,
+        pysnmp renders as hex string (e.g. '0x3d'). Must parse correctly.
+        0x3D = 00111101 binary. Bit 3 (0x08) = set -> synced -> 'up'.
+        0x05 = 00000101 binary. Bit 3 (0x08) = unset -> not synced -> 'down'.
+        """
+        def walk_side_effect(t, oid):
+            if oid == DOT3AD_AGG_PORT_ATTACHED_AGG_ID:
+                return [
+                    (f"{DOT3AD_AGG_PORT_ATTACHED_AGG_ID}.49", "500"),
+                    (f"{DOT3AD_AGG_PORT_ATTACHED_AGG_ID}.50", "500"),
+                ]
+            elif oid == DOT3AD_AGG_PORT_ACTOR_OPER_STATE:
+                # pysnmp hex string rendering of OCTET STRING
+                return [
+                    (f"{DOT3AD_AGG_PORT_ACTOR_OPER_STATE}.49", "0x3d"),  # bit3 set
+                    (f"{DOT3AD_AGG_PORT_ACTOR_OPER_STATE}.50", "0x05"),  # bit3 unset
+                ]
+            elif oid == IF_OPER_STATUS:
+                return [
+                    (f"{IF_OPER_STATUS}.500", "1"),
+                ]
+            return []
+
+        engine.walk = AsyncMock(side_effect=walk_side_effect)
+
+        collector = ChannelGroupCollector()
+        raw_text, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert len(parsed_items) == 1
+        item = parsed_items[0]
+        assert item.member_status["GigabitEthernet1/0/1"] == "up"
+        assert item.member_status["GigabitEthernet1/0/2"] == "down"
+
+    @pytest.mark.asyncio
+    async def test_channel_group_raw_hex_oper_state(self, target, engine, session_cache):
+        """
+        Fallback: ActorOperState as raw hex without 0x prefix (e.g., '3D').
+        0x3D = 61 decimal. Bit 3 (0x08) is set -> synced -> 'up'.
+        """
+        def walk_side_effect(t, oid):
+            if oid == DOT3AD_AGG_PORT_ATTACHED_AGG_ID:
+                return [
+                    (f"{DOT3AD_AGG_PORT_ATTACHED_AGG_ID}.49", "500"),
+                ]
+            elif oid == DOT3AD_AGG_PORT_ACTOR_OPER_STATE:
+                return [
+                    (f"{DOT3AD_AGG_PORT_ACTOR_OPER_STATE}.49", "3D"),  # raw hex
+                ]
+            elif oid == IF_OPER_STATUS:
+                return [
+                    (f"{IF_OPER_STATUS}.500", "1"),
+                ]
+            return []
+
+        engine.walk = AsyncMock(side_effect=walk_side_effect)
+
+        collector = ChannelGroupCollector()
+        raw_text, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert len(parsed_items) == 1
+        assert parsed_items[0].member_status["GigabitEthernet1/0/1"] == "up"
+
 
 # =====================================================================
 # 6. VersionCollector
@@ -913,6 +1039,59 @@ class TestTransceiverCollector:
         assert channel.channel == 1
         assert channel.tx_power == pytest.approx(-5.0, abs=0.01)
         assert channel.rx_power == pytest.approx(-8.0, abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_transceiver_hpe_copper_sfp(self, target, engine, session_cache):
+        """
+        Real HPE FF 5945: copper SFP28 modules return 'Copper' string
+        for hh3cTransceiverCurRXPower, and no data for TX/temperature/voltage.
+        Should produce no transceiver entries (no valid DOM data).
+        """
+        engine.walk = AsyncMock(side_effect=lambda t, oid: {
+            HH3C_TRANSCEIVER_TEMPERATURE: [],  # No Such Instance
+            HH3C_TRANSCEIVER_VOLTAGE: [],       # No Such Instance
+            HH3C_TRANSCEIVER_TX_POWER: [],       # No Such Instance
+            HH3C_TRANSCEIVER_RX_POWER: [
+                (f"{HH3C_TRANSCEIVER_RX_POWER}.49", "Copper"),  # non-numeric!
+            ],
+        }[oid])
+
+        collector = TransceiverCollector()
+        raw_text, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert raw_text
+        # "Copper" is skipped, no valid data -> no transceiver entries
+        assert len(parsed_items) == 0
+
+    @pytest.mark.asyncio
+    async def test_transceiver_hpe_mixed_optical_copper(self, target, engine, session_cache):
+        """
+        Mix of optical (ifIndex 49, valid DOM) and copper (ifIndex 50, 'Copper').
+        Only optical transceiver should appear in results.
+        """
+        engine.walk = AsyncMock(side_effect=lambda t, oid: {
+            HH3C_TRANSCEIVER_TEMPERATURE: [
+                (f"{HH3C_TRANSCEIVER_TEMPERATURE}.49", "45"),
+            ],
+            HH3C_TRANSCEIVER_VOLTAGE: [
+                (f"{HH3C_TRANSCEIVER_VOLTAGE}.49", "330"),
+            ],
+            HH3C_TRANSCEIVER_TX_POWER: [
+                (f"{HH3C_TRANSCEIVER_TX_POWER}.49", "-500"),
+            ],
+            HH3C_TRANSCEIVER_RX_POWER: [
+                (f"{HH3C_TRANSCEIVER_RX_POWER}.49", "-800"),
+                (f"{HH3C_TRANSCEIVER_RX_POWER}.50", "Copper"),  # non-numeric
+            ],
+        }[oid])
+
+        collector = TransceiverCollector()
+        raw_text, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert raw_text
+        assert len(parsed_items) == 1
+        assert parsed_items[0].interface_name == "GigabitEthernet1/0/1"
+        assert parsed_items[0].temperature == 45.0
 
 
 # =====================================================================

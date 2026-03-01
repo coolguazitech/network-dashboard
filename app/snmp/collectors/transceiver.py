@@ -87,13 +87,21 @@ class TransceiverCollector(BaseSnmpCollector):
         ifindex_map = await session_cache.get_ifindex_map(target.ip)
 
         # Build per-ifIndex value dicts
+        # NOTE: Copper SFP modules return non-numeric values like "Copper"
+        # instead of DOM data. We must skip those entries.
         temps: dict[int, float] = {}
         for oid_str, val_str in temp_varbinds:
             idx = self.safe_int(
                 self.extract_index(oid_str, HH3C_TRANSCEIVER_TEMPERATURE), -1,
             )
             if idx >= 0:
-                temps[idx] = float(self.safe_int(val_str))  # 1 degree C
+                try:
+                    temps[idx] = float(int(val_str))  # 1 degree C
+                except (ValueError, TypeError):
+                    logger.debug(
+                        "Transceiver: non-numeric temperature '%s' for ifIndex %d",
+                        val_str, idx,
+                    )
 
         volts: dict[int, float] = {}
         for oid_str, val_str in volt_varbinds:
@@ -101,7 +109,13 @@ class TransceiverCollector(BaseSnmpCollector):
                 self.extract_index(oid_str, HH3C_TRANSCEIVER_VOLTAGE), -1,
             )
             if idx >= 0:
-                volts[idx] = self.safe_int(val_str) / 100.0  # 0.01V -> V
+                try:
+                    volts[idx] = int(val_str) / 100.0  # 0.01V -> V
+                except (ValueError, TypeError):
+                    logger.debug(
+                        "Transceiver: non-numeric voltage '%s' for ifIndex %d",
+                        val_str, idx,
+                    )
 
         tx_powers: dict[int, float] = {}
         for oid_str, val_str in tx_varbinds:
@@ -109,7 +123,13 @@ class TransceiverCollector(BaseSnmpCollector):
                 self.extract_index(oid_str, HH3C_TRANSCEIVER_TX_POWER), -1,
             )
             if idx >= 0:
-                tx_powers[idx] = self.safe_int(val_str) / 100.0  # 0.01 dBm -> dBm
+                try:
+                    tx_powers[idx] = int(val_str) / 100.0  # 0.01 dBm -> dBm
+                except (ValueError, TypeError):
+                    logger.debug(
+                        "Transceiver: non-numeric TX power '%s' for ifIndex %d",
+                        val_str, idx,
+                    )
 
         rx_powers: dict[int, float] = {}
         for oid_str, val_str in rx_varbinds:
@@ -117,7 +137,13 @@ class TransceiverCollector(BaseSnmpCollector):
                 self.extract_index(oid_str, HH3C_TRANSCEIVER_RX_POWER), -1,
             )
             if idx >= 0:
-                rx_powers[idx] = self.safe_int(val_str) / 100.0  # 0.01 dBm -> dBm
+                try:
+                    rx_powers[idx] = int(val_str) / 100.0  # 0.01 dBm -> dBm
+                except (ValueError, TypeError):
+                    logger.debug(
+                        "Transceiver: non-numeric RX power '%s' for ifIndex %d",
+                        val_str, idx,
+                    )
 
         # Build results: one TransceiverData per ifIndex with data
         all_ifindexes = set(temps) | set(volts) | set(tx_powers) | set(rx_powers)

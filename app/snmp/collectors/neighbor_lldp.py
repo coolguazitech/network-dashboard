@@ -42,15 +42,18 @@ class NeighborLldpCollector(BaseSnmpCollector):
         Parse LLDP remote table index from full OID.
 
         The index after the prefix is: {lldpRemTimeMark}.{lldpRemLocalPortNum}.{lldpRemIndex}
+        TimeMark is a single integer, but we accept >= 3 parts for robustness.
+        The last 2 parts are always lldpRemLocalPortNum and lldpRemIndex.
 
         Returns:
-            (time_mark, local_port_num, rem_index) or None if parsing fails.
+            (full_suffix_key, local_port_num, rem_index) or None if parsing fails.
         """
         suffix = oid_str[len(prefix) + 1:]  # skip the dot after prefix
         parts = suffix.split(".")
-        if len(parts) != 3:
+        if len(parts) < 3:
             return None
-        return parts[0], parts[1], parts[2]
+        # parts[-2] = lldpRemLocalPortNum, parts[-1] = lldpRemIndex
+        return suffix, parts[-2], parts[-1]
 
     async def collect(
         self,
@@ -74,16 +77,13 @@ class NeighborLldpCollector(BaseSnmpCollector):
                 local_port_map[port_num] = val_str
 
         # Build keyed dictionaries for remote entries
-        # Key = "{time_mark}.{local_port_num}.{rem_index}"
-        def _make_key(parts: tuple[str, str, str]) -> str:
-            return f"{parts[0]}.{parts[1]}.{parts[2]}"
-
+        # Key = full suffix (e.g. "21013.2146.1") for matching across tables
         rem_sys_names: dict[str, str] = {}
         rem_local_ports: dict[str, str] = {}  # key -> local_port_num
         for oid_str, val_str in rem_sys_name_varbinds:
             parsed = self._parse_lldp_remote_index(oid_str, LLDP_REM_SYS_NAME)
             if parsed:
-                key = _make_key(parsed)
+                key = parsed[0]  # full suffix
                 rem_sys_names[key] = val_str
                 rem_local_ports[key] = parsed[1]  # lldpRemLocalPortNum
 
@@ -91,13 +91,13 @@ class NeighborLldpCollector(BaseSnmpCollector):
         for oid_str, val_str in rem_port_id_varbinds:
             parsed = self._parse_lldp_remote_index(oid_str, LLDP_REM_PORT_ID)
             if parsed:
-                rem_port_ids[_make_key(parsed)] = val_str
+                rem_port_ids[parsed[0]] = val_str
 
         rem_port_descs: dict[str, str] = {}
         for oid_str, val_str in rem_port_desc_varbinds:
             parsed = self._parse_lldp_remote_index(oid_str, LLDP_REM_PORT_DESC)
             if parsed:
-                rem_port_descs[_make_key(parsed)] = val_str
+                rem_port_descs[parsed[0]] = val_str
 
         # Build results from remote sys name entries (primary key)
         results: list[ParsedData] = []

@@ -17,7 +17,7 @@ services:
   app:
     # ★ 改成公司 registry 掃描通過後的 image URL
     # 例如: registry.company.com/netora/network-dashboard-base:v2.2.3
-    image: ${APP_IMAGE:-coolguazi/network-dashboard-base:v2.5.1}
+    image: ${APP_IMAGE:-coolguazi/network-dashboard-base:v2.5.2}
     container_name: netora_app
     restart: unless-stopped
     depends_on:
@@ -98,7 +98,7 @@ services:
 
   # ── Mock API Server（僅 mock profile 啟用）──────────────────────────
   mock-api:
-    image: ${MOCK_IMAGE:-coolguazi/netora-mock-server:v2.5.1}
+    image: ${MOCK_IMAGE:-coolguazi/netora-mock-server:v2.5.2}
     container_name: netora_mock_api
     restart: unless-stopped
     profiles: ["mock"]

@@ -39,6 +39,31 @@ logger = logging.getLogger(__name__)
 _SYNC_BIT_MASK = 0x08  # bit 3 = 0b00001000
 
 
+def _parse_oper_state_byte(val_str: str) -> int:
+    """
+    Parse dot3adAggPortActorOperState value.
+
+    This OID is SYNTAX OCTET STRING (SIZE(1)), so pysnmp renders it
+    as hex (e.g. "0xa2") via prettyPrint(). We need to parse it back
+    to an integer for bitmask operations.
+    """
+    # Try decimal first (some agents return integer)
+    try:
+        return int(val_str)
+    except (ValueError, TypeError):
+        pass
+    # Try auto-detect base (handles "0xa2", "0o12", "0b101" prefixes)
+    try:
+        return int(val_str, 0)
+    except (ValueError, TypeError):
+        pass
+    # Try raw hex without prefix (e.g., "A2", "a2")
+    try:
+        return int(val_str, 16)
+    except (ValueError, TypeError):
+        return 0
+
+
 class ChannelGroupCollector(BaseSnmpCollector):
     """Collect Port-Channel (LAG) information via IEEE8023-LAG-MIB."""
 
@@ -69,12 +94,13 @@ class ChannelGroupCollector(BaseSnmpCollector):
                 member_to_agg[member_ifindex] = agg_ifindex
 
         # Parse dot3adAggPortActorOperState: member ifIndex -> oper state byte
+        # NOTE: This OID is OCTET STRING(1), pysnmp renders as hex string
         member_oper_state: dict[int, int] = {}
         for oid_str, val_str in oper_state_varbinds:
             idx_str = self.extract_index(oid_str, DOT3AD_AGG_PORT_ACTOR_OPER_STATE)
             member_ifindex = self.safe_int(idx_str, -1)
             if member_ifindex >= 0:
-                member_oper_state[member_ifindex] = self.safe_int(val_str)
+                member_oper_state[member_ifindex] = _parse_oper_state_byte(val_str)
 
         # Group members by aggregate ifIndex
         agg_members: dict[int, list[int]] = defaultdict(list)
