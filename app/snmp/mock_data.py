@@ -27,7 +27,9 @@ from app.snmp.oid_maps import (
     CISCO_ENV_FAN_STATE,
     CISCO_ENV_SUPPLY_DESCR,
     CISCO_ENV_SUPPLY_STATE,
+    CISCO_VTP_VLAN_STATE,
     DOT1D_BASE_PORT_IF_INDEX,
+    DOT1D_TP_FDB_PORT,
     DOT1Q_TP_FDB_PORT,
     DOT3AD_AGG_PORT_ACTOR_OPER_STATE,
     DOT3AD_AGG_PORT_ATTACHED_AGG_ID,
@@ -302,13 +304,22 @@ def mock_get(ip: str, oid: str) -> dict[str, Any]:
 
 # ── Table walk generators ────────────────────────────────────────
 
-def mock_walk(ip: str, oid_prefix: str) -> list[tuple[str, str]]:
+def mock_walk(
+    ip: str,
+    oid_prefix: str,
+    *,
+    community: str = "",
+) -> list[tuple[str, str]]:
     """Generate mock response for SNMP WALK (table OIDs).
 
     NOTE: Vendor-specific OID sections are NOT gated by vendor.
     The collector decides which OIDs to walk based on DB vendor,
     so we must return data for ANY recognised OID prefix regardless
     of what ``_get_vendor(ip)`` returns.
+
+    community: The SNMP community string. For Cisco IOS per-VLAN
+    walks, this will be "community@vlanID" — used to extract the
+    VLAN context for BRIDGE-MIB MAC table responses.
 
     Failures: ~5% chance per device per collection cycle (60s bucket).
     """
@@ -381,6 +392,21 @@ def mock_walk(ip: str, oid_prefix: str) -> list[tuple[str, str]]:
             for _, idx, _ in interfaces
             if idx <= 18  # only physical ports, not uplink/LAG
         ]
+
+    # ── CISCO-VTP-MIB (VLAN list) ─────────────────────────────
+    if oid_prefix == CISCO_VTP_VLAN_STATE:
+        # vtpVlanState.{domain=1}.{vlanID} = 1 (operational)
+        return [
+            (f"{CISCO_VTP_VLAN_STATE}.1.{v}", "1")
+            for v in _VALID_VLANS
+        ]
+
+    # ── BRIDGE-MIB per-VLAN MAC table (Cisco IOS) ──────────────
+    if oid_prefix == DOT1D_TP_FDB_PORT:
+        vlan_id = _extract_vlan_from_community(community)
+        return _mock_bridge_mac_table(
+            ip, vendor, interfaces, rng, fails, vlan_id,
+        )
 
     # ── LLDP-MIB ──────────────────────────────────────────────
     if oid_prefix == LLDP_REM_SYS_NAME:
@@ -458,6 +484,82 @@ def mock_walk(ip: str, oid_prefix: str) -> list[tuple[str, str]]:
 
     # Default: empty walk
     return []
+
+
+# ── Helpers (VLAN context) ────────────────────────────────────────
+
+def _extract_vlan_from_community(community: str) -> int | None:
+    """Extract VLAN ID from 'community@vlanID' format.
+
+    Returns None if community doesn't contain '@' (not per-VLAN context).
+    """
+    if "@" not in community:
+        return None
+    try:
+        return int(community.rsplit("@", 1)[1])
+    except (ValueError, IndexError):
+        return None
+
+
+# ── BRIDGE-MIB per-VLAN MAC table mock ────────────────────────────
+
+def _mock_bridge_mac_table(
+    ip: str,
+    vendor: str,
+    interfaces: list[tuple[str, int, int]],
+    rng: _random.Random,
+    fails: bool,
+    vlan_id: int | None,
+) -> list[tuple[str, str]]:
+    """Generate mock BRIDGE-MIB dot1dTpFdbPort entries for a single VLAN.
+
+    Index format: {o1}.{o2}.{o3}.{o4}.{o5}.{o6} = bridge_port
+    (no VLAN in index — VLAN is from community@vlanID context)
+    """
+    if fails or vlan_id is None:
+        return []
+
+    all_macs = _get_client_macs()
+    if not all_macs:
+        return []
+
+    try:
+        from sqlalchemy import create_engine, text
+        from app.core.config import settings
+
+        engine = create_engine(settings.database_url, pool_pre_ping=True)
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT DISTINCT new_ip_address "
+                     "FROM maintenance_device_list "
+                     "ORDER BY new_ip_address"),
+            ).fetchall()
+        device_ips = [r[0] for r in rows if r[0]]
+    except Exception:
+        device_ips = []
+
+    if not device_ips or ip not in device_ips:
+        device_ips = [ip]
+
+    results: list[tuple[str, str]] = []
+    for mac in all_macs:
+        assigned_ip = device_ips[_det_hash(mac, "device") % len(device_ips)]
+        if assigned_ip != ip:
+            continue
+
+        # Determine VLAN for this MAC — must match requested VLAN context
+        h = _det_hash(mac, "port")
+        mac_vlan = _VALID_VLANS[h % len(_VALID_VLANS)]
+        if mac_vlan != vlan_id:
+            continue
+
+        bridge_port = h % 18 + 1
+        octets = [int(o, 16) for o in mac.split(":")]
+        oct_str = ".".join(str(o) for o in octets)
+        oid = f"{DOT1D_TP_FDB_PORT}.{oct_str}"
+        results.append((oid, str(bridge_port)))
+
+    return results
 
 
 # ── MAC table mock ────────────────────────────────────────────────

@@ -17,11 +17,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 # Stub out pysnmp before importing app.snmp.engine, because the real
-# pysnmp-lextudio v3arch module is not installed in the test environment.
+# pysnmp-lextudio may not be installed in the test environment.
 _pysnmp_stub = ModuleType("pysnmp")
 _hlapi_stub = ModuleType("pysnmp.hlapi")
-_v3arch_stub = ModuleType("pysnmp.hlapi.v3arch")
-_asyncio_stub = ModuleType("pysnmp.hlapi.v3arch.asyncio")
+_asyncio_stub = ModuleType("pysnmp.hlapi.asyncio")
 
 for _attr in (
     "CommunityData",
@@ -29,8 +28,8 @@ for _attr in (
     "ObjectIdentity",
     "ObjectType",
     "UdpTransportTarget",
-    "bulk_cmd",
-    "get_cmd",
+    "bulkCmd",
+    "getCmd",
 ):
     setattr(_asyncio_stub, _attr, MagicMock())
 _asyncio_stub.SnmpEngine = MagicMock()  # aliased as PySnmpEngine
@@ -38,8 +37,7 @@ _asyncio_stub.SnmpEngine = MagicMock()  # aliased as PySnmpEngine
 for _mod_name, _mod in (
     ("pysnmp", _pysnmp_stub),
     ("pysnmp.hlapi", _hlapi_stub),
-    ("pysnmp.hlapi.v3arch", _v3arch_stub),
-    ("pysnmp.hlapi.v3arch.asyncio", _asyncio_stub),
+    ("pysnmp.hlapi.asyncio", _asyncio_stub),
 ):
     sys.modules.setdefault(_mod_name, _mod)
 
@@ -80,6 +78,9 @@ from app.snmp.oid_maps import (  # noqa: E402
     IF_HIGH_SPEED,
     DOT3_STATS_DUPLEX,
     DOT1Q_TP_FDB_PORT,
+    DOT1D_TP_FDB_PORT,
+    DOT1D_BASE_PORT_IF_INDEX,
+    CISCO_VTP_VLAN_STATE,
     DOT3AD_AGG_PORT_ATTACHED_AGG_ID,
     DOT3AD_AGG_PORT_ACTOR_OPER_STATE,
     SYS_DESCR,
@@ -467,6 +468,104 @@ class TestMacTableCollector:
         assert item1.mac_address == "0A:14:1E:28:32:3C"
         assert item1.interface_name == "GigabitEthernet1/0/2"
         assert item1.vlan_id == 200
+
+    @pytest.mark.asyncio
+    async def test_mac_table_cisco_ios_per_vlan(self, target, engine, session_cache):
+        """Cisco IOS: walks VTP VLANs, then per-VLAN BRIDGE-MIB with community@vlanID."""
+
+        async def walk_side_effect(t, oid, **kwargs):
+            # VTP VLAN list (standard community)
+            if oid == CISCO_VTP_VLAN_STATE:
+                return [
+                    (f"{CISCO_VTP_VLAN_STATE}.1.100", "1"),   # operational
+                    (f"{CISCO_VTP_VLAN_STATE}.1.200", "1"),   # operational
+                    (f"{CISCO_VTP_VLAN_STATE}.1.1002", "1"),  # reserved, skip
+                ]
+
+            # Per-VLAN bridge port map (community@vlanID)
+            if oid == DOT1D_BASE_PORT_IF_INDEX:
+                return [
+                    (f"{DOT1D_BASE_PORT_IF_INDEX}.1", "49"),
+                    (f"{DOT1D_BASE_PORT_IF_INDEX}.2", "50"),
+                ]
+
+            # Per-VLAN BRIDGE-MIB MAC table
+            if oid == DOT1D_TP_FDB_PORT:
+                if "@100" in t.community:
+                    return [
+                        (f"{DOT1D_TP_FDB_PORT}.0.1.2.3.4.5", "1"),  # bridge_port=1
+                    ]
+                elif "@200" in t.community:
+                    return [
+                        (f"{DOT1D_TP_FDB_PORT}.10.20.30.40.50.60", "2"),  # bridge_port=2
+                    ]
+                return []
+
+            return []
+
+        engine.walk = AsyncMock(side_effect=walk_side_effect)
+
+        collector = MacTableCollector()
+        raw_text, parsed_items = await collector.collect(
+            target, DeviceType.CISCO_IOS, session_cache, engine,
+        )
+
+        assert raw_text
+        assert len(parsed_items) == 2
+
+        # VLAN 100 entry
+        item0 = parsed_items[0]
+        assert item0.mac_address == "00:01:02:03:04:05"
+        assert item0.interface_name == "GigabitEthernet1/0/1"
+        assert item0.vlan_id == 100
+
+        # VLAN 200 entry
+        item1 = parsed_items[1]
+        assert item1.mac_address == "0A:14:1E:28:32:3C"
+        assert item1.interface_name == "GigabitEthernet1/0/2"
+        assert item1.vlan_id == 200
+
+    @pytest.mark.asyncio
+    async def test_mac_table_cisco_ios_no_vlans_fallback(self, target, engine, session_cache):
+        """Cisco IOS with no VTP VLANs falls back to standard Q-BRIDGE."""
+
+        async def walk_side_effect(t, oid, **kwargs):
+            if oid == CISCO_VTP_VLAN_STATE:
+                return []  # no VLANs
+            if oid == DOT1Q_TP_FDB_PORT:
+                return [
+                    (f"{DOT1Q_TP_FDB_PORT}.100.0.1.2.3.4.5", "1"),
+                ]
+            return []
+
+        engine.walk = AsyncMock(side_effect=walk_side_effect)
+
+        collector = MacTableCollector()
+        raw_text, parsed_items = await collector.collect(
+            target, DeviceType.CISCO_IOS, session_cache, engine,
+        )
+
+        assert raw_text
+        assert len(parsed_items) == 1
+        assert parsed_items[0].mac_address == "00:01:02:03:04:05"
+        assert parsed_items[0].vlan_id == 100
+
+    @pytest.mark.asyncio
+    async def test_mac_table_nxos_uses_standard(self, target, engine, session_cache):
+        """Cisco NX-OS uses standard Q-BRIDGE-MIB (not per-VLAN)."""
+        engine.walk = AsyncMock(return_value=[
+            (f"{DOT1Q_TP_FDB_PORT}.100.0.1.2.3.4.5", "1"),
+        ])
+
+        collector = MacTableCollector()
+        raw_text, parsed_items = await collector.collect(
+            target, DeviceType.CISCO_NXOS, session_cache, engine,
+        )
+
+        assert raw_text
+        assert len(parsed_items) == 1
+        assert parsed_items[0].mac_address == "00:01:02:03:04:05"
+        assert parsed_items[0].vlan_id == 100
 
 
 # =====================================================================

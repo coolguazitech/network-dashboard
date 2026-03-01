@@ -48,4 +48,4 @@ class MockSnmpEngine:
     ) -> list[tuple[str, str]]:
         """Mock SNMP WALK — returns deterministic varbind list per IP + OID prefix."""
         await asyncio.sleep(self._latency)
-        return mock_walk(target.ip, oid_prefix)
+        return mock_walk(target.ip, oid_prefix, community=target.community)

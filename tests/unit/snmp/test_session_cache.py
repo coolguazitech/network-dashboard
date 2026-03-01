@@ -8,11 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 # Stub out pysnmp before importing app.snmp.engine, because the real
-# pysnmp-lextudio v3arch module is not installed in the test environment.
+# pysnmp-lextudio may not be installed in the test environment.
 _pysnmp_stub = ModuleType("pysnmp")
 _hlapi_stub = ModuleType("pysnmp.hlapi")
-_v3arch_stub = ModuleType("pysnmp.hlapi.v3arch")
-_asyncio_stub = ModuleType("pysnmp.hlapi.v3arch.asyncio")
+_asyncio_stub = ModuleType("pysnmp.hlapi.asyncio")
 
 # Provide the names that engine.py imports at module level.
 for _attr in (
@@ -21,8 +20,8 @@ for _attr in (
     "ObjectIdentity",
     "ObjectType",
     "UdpTransportTarget",
-    "bulk_cmd",
-    "get_cmd",
+    "bulkCmd",
+    "getCmd",
 ):
     setattr(_asyncio_stub, _attr, MagicMock())
 _asyncio_stub.SnmpEngine = MagicMock()  # aliased as PySnmpEngine
@@ -30,8 +29,7 @@ _asyncio_stub.SnmpEngine = MagicMock()  # aliased as PySnmpEngine
 for _mod_name, _mod in (
     ("pysnmp", _pysnmp_stub),
     ("pysnmp.hlapi", _hlapi_stub),
-    ("pysnmp.hlapi.v3arch", _v3arch_stub),
-    ("pysnmp.hlapi.v3arch.asyncio", _asyncio_stub),
+    ("pysnmp.hlapi.asyncio", _asyncio_stub),
 ):
     sys.modules.setdefault(_mod_name, _mod)
 
