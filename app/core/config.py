@@ -196,9 +196,9 @@ class Settings(BaseSettings):
     )
 
     # SNMP Settings (only used when collection_mode=snmp)
-    snmp_communities: list[str] = Field(
-        default=["tccd03ro", "public"],
-        description="SNMP v2c community strings to try, in order",
+    snmp_communities: str = Field(
+        default="tccd03ro,public",
+        description="Comma-separated SNMP v2c community strings to try, in order",
     )
     snmp_port: int = Field(default=161, description="SNMP target port")
     snmp_timeout: float = Field(
@@ -224,12 +224,10 @@ class Settings(BaseSettings):
         description="Use mock SNMP engine (no real devices needed)",
     )
 
-    @field_validator("snmp_communities", mode="before")
-    @classmethod
-    def _parse_communities(cls, v: Any) -> list[str]:
-        if isinstance(v, str):
-            return [c.strip() for c in v.split(",") if c.strip()]
-        return v  # type: ignore[return-value]
+    @property
+    def snmp_community_list(self) -> list[str]:
+        """Parse comma-separated community strings into a list."""
+        return [c.strip() for c in self.snmp_communities.split(",") if c.strip()]
 
     # Application
     app_name: str = Field(

@@ -214,8 +214,12 @@ class AsyncSnmpEngine:
                 break
 
             out_of_scope = False
-            for var_bind in var_bind_table:
-                oid, val = var_bind
+            for var_bind_row in var_bind_table:
+                # bulkCmd returns 2-D table: each row is a list of ObjectType
+                if not var_bind_row:
+                    out_of_scope = True
+                    break
+                oid, val = var_bind_row[0]
                 oid_str = str(oid)
 
                 # Check if we've walked past our subtree
@@ -237,7 +241,7 @@ class AsyncSnmpEngine:
                     else str(val)
                 )
                 results.append((oid_str, val_str))
-                current_oid = oid  # continue from last OID
+                current_oid = ObjectIdentity(oid_str)
 
             if out_of_scope or not var_bind_table:
                 break

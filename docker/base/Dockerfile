@@ -5,7 +5,7 @@
 # 建構指令：
 #   docker buildx build --platform linux/amd64 \
 #       -f docker/base/Dockerfile \
-#       -t coolguazi/network-dashboard-base:v2.5.0 \
+#       -t coolguazi/network-dashboard-base:v2.5.1 \
 #       --load .
 # =============================================================================
 

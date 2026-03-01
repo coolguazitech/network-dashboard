@@ -165,7 +165,7 @@ class SnmpCollectionService:
         # Fresh session cache per collection cycle
         session_cache = SnmpSessionCache(
             engine=self._engine,
-            communities=settings.snmp_communities,
+            communities=settings.snmp_community_list,
             port=settings.snmp_port,
             timeout=settings.snmp_timeout,
             retries=settings.snmp_retries,
