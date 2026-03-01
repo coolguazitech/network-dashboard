@@ -6,30 +6,33 @@
 #
 # 建構指令：
 #   docker build \
-#       --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.2.2 \
+#       --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.4.0 \
 #       -f docker/production/Dockerfile \
-#       -t netora-production:v2.2.2 \
+#       -t netora-production:v2.4.0 \
 #       .
 # =============================================================================
 
 # 參數定義
 # BASE_IMAGE: 公司 registry 掃描通過後的完整 image URL
-# 例如: registry.company.com/netora/network-dashboard-base:v2.2.2
-ARG BASE_IMAGE=coolguazi/network-dashboard-base:v2.2.2
+# 例如: registry.company.com/netora/network-dashboard-base:v2.4.0
+ARG BASE_IMAGE=coolguazi/network-dashboard-base:v2.4.0
 
 # 使用基礎映像檔（公司 registry 或 DockerHub）
 FROM ${BASE_IMAGE}
 
 # 標籤資訊
 LABEL maintainer="network-dashboard@company.com" \
-      version="2.2.2" \
-      description="Network Dashboard Production - Real Parser plugins"
+      version="2.3.0" \
+      description="Network Dashboard Production - Real Parser plugins + SNMP collectors"
 
 # 切換到 root 以複製檔案
 USER root
 
 # 覆蓋 Parser plugins（配合真實設備 raw data 格式）
 COPY --chown=appuser:appgroup app/parsers/plugins/ /app/app/parsers/plugins/
+
+# 覆蓋 SNMP collectors（如有修改 OID 解析邏輯）
+COPY --chown=appuser:appgroup app/snmp/ /app/app/snmp/
 
 # 覆蓋設定檔（scheduler.yaml 等）
 COPY --chown=appuser:appgroup config/ /app/config/

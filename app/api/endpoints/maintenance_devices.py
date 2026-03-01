@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, delete, func
+from sqlalchemy import case, select, delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, model_validator
@@ -98,6 +98,10 @@ def serialize_device(d: MaintenanceDeviceList) -> dict:
         "use_same_port": bool(d.use_same_port) if d.use_same_port is not None else None,
         "tenant_group": d.tenant_group.value if d.tenant_group else TenantGroup.F18.value,
         "description": d.description,
+        "old_is_reachable": d.old_is_reachable,
+        "old_last_check_at": d.old_last_check_at.isoformat() if d.old_last_check_at else None,
+        "new_is_reachable": d.new_is_reachable,
+        "new_last_check_at": d.new_last_check_at.isoformat() if d.new_last_check_at else None,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
@@ -280,8 +284,21 @@ async def list_devices(
         # 只要有任何一個欄位滿足所有關鍵字，就匹配
         stmt = stmt.where(or_(*field_conditions))
 
+    # 排序：新設備 ping 不可達優先，舊設備其次，然後按 hostname
+    new_rank = case(
+        (MaintenanceDeviceList.new_is_reachable == None, 0),   # noqa: E711
+        (MaintenanceDeviceList.new_is_reachable == False, 1),   # noqa: E712
+        else_=2,
+    )
+    old_rank = case(
+        (MaintenanceDeviceList.old_is_reachable == None, 0),   # noqa: E711
+        (MaintenanceDeviceList.old_is_reachable == False, 1),   # noqa: E712
+        else_=2,
+    )
     stmt = stmt.order_by(
-        func.coalesce(MaintenanceDeviceList.old_hostname, MaintenanceDeviceList.new_hostname)
+        new_rank,
+        old_rank,
+        func.coalesce(MaintenanceDeviceList.old_hostname, MaintenanceDeviceList.new_hostname),
     )
 
     result = await session.execute(stmt)

@@ -142,9 +142,11 @@ class MaintenanceDeviceList(Base):
         default=TenantGroup.F18,
     )
 
-    # 舊設備 Ping 可達性（由 ping indicator 更新）
+    # 設備 Ping 可達性（由 device_ping 回寫）
     old_is_reachable = Column(Boolean, nullable=True)
     old_last_check_at = Column(DateTime, nullable=True)
+    new_is_reachable = Column(Boolean, nullable=True)
+    new_last_check_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
     updated_at = Column(

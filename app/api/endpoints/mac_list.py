@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, File, Q
 from pydantic import BaseModel
 
 from app.api.endpoints.auth import get_current_user, require_write
-from sqlalchemy import select, func, delete
+from sqlalchemy import case, select, func, delete
 
 from app.core.enums import ClientDetectionStatus, TenantGroup
 from app.db.base import get_session_context
@@ -275,7 +275,41 @@ async def list_clients(
 
                 stmt = stmt.where(or_(*field_conditions))
 
-        stmt = stmt.order_by(MaintenanceMacList.mac_address)
+        # 子查詢：每個 MAC 最新的 ping_reachable
+
+        latest_ping = (
+            select(
+                ClientRecord.mac_address,
+                ClientRecord.ping_reachable,
+                func.row_number().over(
+                    partition_by=ClientRecord.mac_address,
+                    order_by=ClientRecord.collected_at.desc(),
+                ).label("rn"),
+            )
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.ping_reachable.isnot(None),
+            )
+            .subquery()
+        )
+        latest_ping_sq = (
+            select(latest_ping.c.mac_address, latest_ping.c.ping_reachable)
+            .where(latest_ping.c.rn == 1)
+            .subquery()
+        )
+        stmt = stmt.outerjoin(
+            latest_ping_sq,
+            MaintenanceMacList.mac_address == latest_ping_sq.c.mac_address,
+        )
+        # 排序：ping 不可達優先
+        stmt = stmt.order_by(
+            case(
+                (latest_ping_sq.c.ping_reachable == None, 0),   # noqa: E711
+                (latest_ping_sq.c.ping_reachable == False, 1),   # noqa: E712
+                else_=2,
+            ),
+            MaintenanceMacList.mac_address,
+        )
         stmt = stmt.offset(offset).limit(limit)
 
         result = await session.execute(stmt)
@@ -1000,8 +1034,40 @@ async def list_clients_detailed(
                 )
             )
 
-        # ── SQL 層分頁 ──
-        stmt = stmt.order_by(MaintenanceMacList.mac_address)
+        # ── SQL 層分頁（ping 不可達優先）──
+
+        latest_ping_d = (
+            select(
+                ClientRecord.mac_address,
+                ClientRecord.ping_reachable,
+                func.row_number().over(
+                    partition_by=ClientRecord.mac_address,
+                    order_by=ClientRecord.collected_at.desc(),
+                ).label("rn"),
+            )
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.ping_reachable.isnot(None),
+            )
+            .subquery()
+        )
+        latest_ping_dsq = (
+            select(latest_ping_d.c.mac_address, latest_ping_d.c.ping_reachable)
+            .where(latest_ping_d.c.rn == 1)
+            .subquery()
+        )
+        stmt = stmt.outerjoin(
+            latest_ping_dsq,
+            MaintenanceMacList.mac_address == latest_ping_dsq.c.mac_address,
+        )
+        stmt = stmt.order_by(
+            case(
+                (latest_ping_dsq.c.ping_reachable == None, 0),   # noqa: E711
+                (latest_ping_dsq.c.ping_reachable == False, 1),   # noqa: E712
+                else_=2,
+            ),
+            MaintenanceMacList.mac_address,
+        )
         stmt = stmt.offset(offset).limit(limit)
         result = await session.execute(stmt)
         clients = result.scalars().all()
@@ -1178,7 +1244,39 @@ async def export_csv(
                     )
                 )
 
-        stmt = stmt.order_by(MaintenanceMacList.mac_address)
+        # ping 不可達優先排序
+        latest_ping_c = (
+            select(
+                ClientRecord.mac_address,
+                ClientRecord.ping_reachable,
+                func.row_number().over(
+                    partition_by=ClientRecord.mac_address,
+                    order_by=ClientRecord.collected_at.desc(),
+                ).label("rn"),
+            )
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.ping_reachable.isnot(None),
+            )
+            .subquery()
+        )
+        latest_ping_csq = (
+            select(latest_ping_c.c.mac_address, latest_ping_c.c.ping_reachable)
+            .where(latest_ping_c.c.rn == 1)
+            .subquery()
+        )
+        stmt = stmt.outerjoin(
+            latest_ping_csq,
+            MaintenanceMacList.mac_address == latest_ping_csq.c.mac_address,
+        )
+        stmt = stmt.order_by(
+            case(
+                (latest_ping_csq.c.ping_reachable == None, 0),   # noqa: E711
+                (latest_ping_csq.c.ping_reachable == False, 1),   # noqa: E712
+                else_=2,
+            ),
+            MaintenanceMacList.mac_address,
+        )
         result = await session.execute(stmt)
         clients = result.scalars().all()
 

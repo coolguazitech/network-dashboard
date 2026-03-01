@@ -214,16 +214,28 @@ class CaseService:
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await session.execute(count_stmt)).scalar() or 0
 
-        # 排序：ping 不可達優先，然後按 MAC
-        # MariaDB 不支援 NULLS FIRST，改用 CASE 表達式
-        stmt = stmt.order_by(
-            case(
-                (Case.last_ping_reachable == None, 0),   # noqa: E711 — NULL 排最前
-                (Case.last_ping_reachable == False, 1),   # noqa: E712 — 不可達次之
-                else_=2,                                   # 可達排最後
-            ),
-            Case.mac_address,
-        )
+        # 排序
+        if status and status == CaseStatus.RESOLVED.value:
+            # 已結案：有屬性變化的排前面，然後按 MAC
+            # COALESCE 處理 NULL change_flags，避免 LIKE NULL 回傳 NULL
+            from sqlalchemy import literal_column
+            stmt = stmt.order_by(
+                case(
+                    (literal_column("COALESCE(CAST(change_flags AS CHAR),'')").like('%true%'), 0),
+                    else_=1,
+                ),
+                Case.mac_address,
+            )
+        else:
+            # 其他：ping 不可達優先，然後按 MAC
+            stmt = stmt.order_by(
+                case(
+                    (Case.last_ping_reachable == None, 0),   # noqa: E711 — NULL 排最前
+                    (Case.last_ping_reachable == False, 1),   # noqa: E712 — 不可達次之
+                    else_=2,                                   # 可達排最後
+                ),
+                Case.mac_address,
+            )
 
         # 分頁
         offset = (page - 1) * page_size
@@ -554,6 +566,8 @@ class CaseService:
             if case.assignee:
                 if not is_assignee:
                     return {"error": "只有當前被指派人可以轉交案件"}
+                if case.status == CaseStatus.RESOLVED:
+                    return {"error": "已結案的案件無法轉交，請先重啟案件"}
             else:
                 if not is_root and not is_pm:
                     return {"error": "只有管理員或 PM 可以指派案件"}
@@ -758,71 +772,6 @@ class CaseService:
             else:
                 # 不可達或未知：清除計時器
                 new_since = None
-
-            await session.execute(
-                update(Case)
-                .where(
-                    Case.maintenance_id == maintenance_id,
-                    Case.mac_address == mac_address,
-                )
-                .values(
-                    last_ping_reachable=ping_reachable,
-                    ping_reachable_since=new_since,
-                )
-            )
-
-        await session.commit()
-
-    async def update_ping_status_direct(
-        self,
-        maintenance_id: str,
-        ping_map: dict[str, bool],
-        ip_to_mac: dict[str, str],
-        session: AsyncSession,
-    ) -> None:
-        """
-        從 ping 結果直接更新 Case.last_ping_reachable（不透過 ClientRecord）。
-
-        比 update_ping_status() 更輕量：直接用參數中的 IP→reachable 結果，
-        透過 ip_to_mac 映射到 MAC，再更新 Case。
-        Anti-flapping 邏輯與 update_ping_status() 相同。
-        """
-        now = datetime.now(timezone.utc)
-
-        # IP 結果 → MAC 結果
-        mac_to_reachable: dict[str, bool] = {}
-        for ip, reachable in ping_map.items():
-            mac = ip_to_mac.get(ip)
-            if mac:
-                mac_to_reachable[mac.upper()] = reachable
-
-        if not mac_to_reachable:
-            return
-
-        # 取得現有 Case 的 ping 狀態
-        case_stmt = select(
-            Case.mac_address, Case.last_ping_reachable, Case.ping_reachable_since,
-        ).where(Case.maintenance_id == maintenance_id)
-        case_result = await session.execute(case_stmt)
-        case_states = {
-            row[0].upper(): (row[1], row[2])
-            for row in case_result.fetchall()
-        }
-
-        for mac_upper, ping_reachable in mac_to_reachable.items():
-            if mac_upper not in case_states:
-                continue
-
-            old_reachable, old_since = case_states[mac_upper]
-
-            # Anti-flapping: 計算 ping_reachable_since
-            if ping_reachable is True:
-                if old_reachable is True and old_since is not None:
-                    new_since = old_since  # 持續可達：保持原始時間
-                else:
-                    new_since = now  # 新轉為可達：記錄起始時間
-            else:
-                new_since = None  # 不可達：清除計時器
 
             await session.execute(
                 update(Case)

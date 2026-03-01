@@ -5,7 +5,7 @@
 # 建構指令：
 #   docker buildx build --platform linux/amd64 \
 #       -f docker/base/Dockerfile \
-#       -t coolguazi/network-dashboard-base:v2.3.0 \
+#       -t coolguazi/network-dashboard-base:v2.4.0 \
 #       --load .
 # =============================================================================
 
@@ -99,6 +99,8 @@ RUN apt-get update && \
     curl \
     tini \
     make \
+    # SNMP 除錯工具（snmpwalk / snmpget，公司環境無法 apt-get）
+    snmp \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean \
     # 建立非 root 使用者

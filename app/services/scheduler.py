@@ -455,6 +455,14 @@ class SchedulerService:
                         if not groups:
                             continue
 
+                        # 建立 IP → (device, "old"|"new") 映射，用於回寫 ping 結果
+                        ip_to_dev_side: dict[str, list[tuple]] = {}
+                        for d in devices:
+                            if d.new_ip_address:
+                                ip_to_dev_side.setdefault(d.new_ip_address, []).append((d, "new"))
+                            if d.old_ip_address:
+                                ip_to_dev_side.setdefault(d.old_ip_address, []).append((d, "old"))
+
                         for tg, device_ip_map in groups.items():
                             if not device_ip_map:
                                 continue
@@ -499,6 +507,20 @@ class SchedulerService:
                                     maintenance_id=mid,
                                 )
 
+                            # 回寫 is_reachable 到設備清單（區分 old/new）
+                            from datetime import datetime, timezone
+                            now = datetime.now(timezone.utc)
+                            for ip, result_item in ip_to_result.items():
+                                for dev, side in ip_to_dev_side.get(ip, []):
+                                    if side == "old":
+                                        dev.old_is_reachable = result_item.is_reachable
+                                        dev.old_last_check_at = now
+                                    else:
+                                        dev.new_is_reachable = result_item.is_reachable
+                                        dev.new_last_check_at = now
+
+                            await session.flush()
+
                             logger.info(
                                 "device_ping %s/%s: %d IPs",
                                 mid, tg.value, len(device_ip_map),
@@ -536,8 +558,11 @@ class SchedulerService:
 
     async def _run_client_ping(self) -> None:
         """
-        Client Ping：按 tenant_group 分組 batch-ping，存入 ClientPingRecordRepo，
-        並立即更新 Case.last_ping_reachable + 自動結案/重開。
+        Client Ping：按 tenant_group 分組 batch-ping，存入 ping_records。
+
+        純採集，不直接更新 Case。
+        Case.last_ping_reachable 由 client_collection 統一透過
+        ClientRecord → update_ping_status() 更新。
         """
         t0 = _time.monotonic()
         logger.info("Running client ping")
@@ -551,7 +576,6 @@ class SchedulerService:
         from app.db.base import get_session_context
         from app.db.models import MaintenanceMacList
         from app.repositories.typed_records import get_typed_repo
-        from app.services.case_service import CaseService
 
         import httpx
         from sqlalchemy import select
@@ -564,10 +588,6 @@ class SchedulerService:
         async with httpx.AsyncClient(timeout=ping_cfg.timeout, verify=False) as http:
             for mid in maintenance_ids:
                 try:
-                    # 收集所有 tenant 的 ping 結果，匯總後一次更新 Case
-                    all_ping_map: dict[str, bool] = {}
-                    all_ip_to_mac: dict[str, str] = {}
-
                     async with get_session_context() as session:
                         mac_stmt = select(MaintenanceMacList).where(
                             MaintenanceMacList.maintenance_id == mid,
@@ -576,14 +596,13 @@ class SchedulerService:
                         mac_result = await session.execute(mac_stmt)
                         mac_entries = mac_result.scalars().all()
 
-                        # 建立 ip_to_mac 映射 + 按 tenant_group 分組
+                        # 按 tenant_group 分組
                         groups: dict[TenantGroup, set[str]] = {}
                         for m in mac_entries:
                             if not (m.ip_address and m.ip_address.strip()):
                                 continue
                             tg = m.tenant_group or TenantGroup.F18
                             groups.setdefault(tg, set()).add(m.ip_address)
-                            all_ip_to_mac[m.ip_address] = m.mac_address
 
                         if not groups:
                             continue
@@ -625,7 +644,7 @@ class SchedulerService:
                             parsed_items = self._parse_ping_csv(resp.text)
                             ip_to_result = {i.target: i for i in parsed_items}
 
-                            # 存入 ClientPingRecordRepo
+                            # 存入 ping_records（純採集）
                             client_results = [
                                 ip_to_result[ip]
                                 for ip in client_ips
@@ -640,42 +659,10 @@ class SchedulerService:
                                     maintenance_id=mid,
                                 )
 
-                            # 收集 ping 結果
-                            for ip in client_ips:
-                                r = ip_to_result.get(ip)
-                                if r is not None:
-                                    all_ping_map[ip] = r.is_reachable
-
                             logger.info(
                                 "client_ping %s/%s: %d IPs",
                                 mid, tg.value, len(client_results),
                             )
-
-                        # 立即更新 Case 燈號 + 自動結案/重開（含 deadlock 重試）
-                        if all_ping_map:
-                            import asyncio as _asyncio
-                            from sqlalchemy.exc import OperationalError as _OpErr
-
-                            max_retries = 3
-                            for attempt in range(1, max_retries + 1):
-                                try:
-                                    case_svc = CaseService()
-                                    await case_svc.update_ping_status_direct(
-                                        mid, all_ping_map, all_ip_to_mac, session,
-                                    )
-                                    await case_svc.auto_reopen_unreachable(mid, session)
-                                    await case_svc.auto_resolve_reachable(mid, session)
-                                    break  # 成功，跳出重試
-                                except _OpErr as oe:
-                                    if "1213" in str(oe) and attempt < max_retries:
-                                        logger.warning(
-                                            "client_ping %s: deadlock on attempt %d/%d, retrying...",
-                                            mid, attempt, max_retries,
-                                        )
-                                        await session.rollback()
-                                        await _asyncio.sleep(0.3 * attempt)
-                                    else:
-                                        raise
 
                 except Exception as e:
                     logger.error("client_ping failed for %s: %s", mid, e)

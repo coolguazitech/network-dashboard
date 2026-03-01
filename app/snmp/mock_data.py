@@ -329,16 +329,20 @@ def mock_walk(ip: str, oid_prefix: str) -> list[tuple[str, str]]:
         for name, idx, _ in interfaces:
             if fails and idx in (3, 4, 5):
                 status = "2"  # down
+            elif idx <= 18 and rng.random() < 0.02:
+                status = "2"  # per-port ~2% independent down
             else:
                 status = "1"  # up
             results.append((f"{IF_OPER_STATUS}.{idx}", status))
         return results
 
     if oid_prefix == IF_HIGH_SPEED:
-        return [
-            (f"{IF_HIGH_SPEED}.{idx}", str(speed))
-            for _, idx, speed in interfaces
-        ]
+        results = []
+        for _, idx, speed in interfaces:
+            if idx <= 18 and speed == 1000 and rng.random() < 0.03:
+                speed = 100  # ~3% auto-negotiation fallback
+            results.append((f"{IF_HIGH_SPEED}.{idx}", str(speed)))
+        return results
 
     if oid_prefix == IF_IN_ERRORS:
         results = []
@@ -356,10 +360,14 @@ def mock_walk(ip: str, oid_prefix: str) -> list[tuple[str, str]]:
 
     # ── EtherLike-MIB ─────────────────────────────────────────
     if oid_prefix == DOT3_STATS_DUPLEX:
-        return [
-            (f"{DOT3_STATS_DUPLEX}.{idx}", "3")  # full duplex
-            for _, idx, _ in interfaces
-        ]
+        results = []
+        for _, idx, _ in interfaces:
+            if idx <= 18 and rng.random() < 0.03:
+                duplex = "2"  # ~3% half duplex
+            else:
+                duplex = "3"  # full duplex
+            results.append((f"{DOT3_STATS_DUPLEX}.{idx}", duplex))
+        return results
 
     # ── Q-BRIDGE-MIB (MAC table) ─────────────────────────────
     if oid_prefix == DOT1Q_TP_FDB_PORT:
@@ -454,6 +462,40 @@ def mock_walk(ip: str, oid_prefix: str) -> list[tuple[str, str]]:
 
 # ── MAC table mock ────────────────────────────────────────────────
 
+# Cache: maintenance_id → [(mac_address, ...)]
+_mac_list_cache: list[str] = []
+_mac_list_cache_ts: float = 0.0
+_MAC_LIST_CACHE_TTL = 300.0  # 5 minutes
+
+
+def _get_client_macs() -> list[str]:
+    """Load client MAC addresses from maintenance_mac_list (cached)."""
+    global _mac_list_cache, _mac_list_cache_ts  # noqa: PLW0603
+
+    now = time.time()
+    if _mac_list_cache and now - _mac_list_cache_ts < _MAC_LIST_CACHE_TTL:
+        return _mac_list_cache
+
+    try:
+        from sqlalchemy import create_engine, text
+        from app.core.config import settings
+
+        engine = create_engine(settings.database_url, pool_pre_ping=True)
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT mac_address FROM maintenance_mac_list "
+                     "ORDER BY mac_address"),
+            ).fetchall()
+
+        _mac_list_cache = [r[0].upper() for r in rows]
+        _mac_list_cache_ts = now
+        return _mac_list_cache
+
+    except Exception:
+        logger.debug("Failed to query maintenance_mac_list")
+        return _mac_list_cache
+
+
 def _mock_mac_table(
     ip: str,
     vendor: str,
@@ -461,23 +503,52 @@ def _mock_mac_table(
     rng: _random.Random,
     fails: bool,
 ) -> list[tuple[str, str]]:
-    """Generate mock Q-BRIDGE MAC table entries."""
+    """Generate mock Q-BRIDGE MAC table entries using real client MACs.
+
+    Each MAC is deterministically assigned to one device IP via hash.
+    Only MACs assigned to *this* device are included in its MAC table.
+    """
     if fails:
         return []
 
-    # Generate 5-15 MAC entries
-    num_macs = 5 + _det_hash(ip, "mac_count") % 11
+    all_macs = _get_client_macs()
+    if not all_macs:
+        return []
+
+    # Get all device IPs to determine assignment
+    try:
+        from sqlalchemy import create_engine, text
+        from app.core.config import settings
+
+        engine = create_engine(settings.database_url, pool_pre_ping=True)
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT DISTINCT new_ip_address "
+                     "FROM maintenance_device_list "
+                     "ORDER BY new_ip_address"),
+            ).fetchall()
+        device_ips = [r[0] for r in rows if r[0]]
+    except Exception:
+        device_ips = []
+
+    if not device_ips or ip not in device_ips:
+        # Fallback: assign by hash mod
+        device_ips = [ip]
+
+    # Assign each MAC to a device deterministically
     results: list[tuple[str, str]] = []
+    for mac in all_macs:
+        assigned_ip = device_ips[_det_hash(mac, "device") % len(device_ips)]
+        if assigned_ip != ip:
+            continue
 
-    for i in range(num_macs):
-        h = _det_hash(ip, f"mac_{i}")
-        # MAC octets from hash
-        octets = [(h >> (j * 8)) & 0xFF for j in range(6)]
+        # Determine bridge port and VLAN for this MAC
+        h = _det_hash(mac, "port")
+        bridge_port = h % 18 + 1  # physical ports 1-18
         vlan = _VALID_VLANS[h % len(_VALID_VLANS)]
-        # Bridge port (1-18, physical ports only)
-        bridge_port = (h >> 24) % 18 + 1
 
-        # OID index: {vlan}.{o1}.{o2}.{o3}.{o4}.{o5}.{o6}
+        # Convert MAC string "AA:BB:CC:DD:EE:FF" to OID decimal octets
+        octets = [int(o, 16) for o in mac.split(":")]
         oct_str = ".".join(str(o) for o in octets)
         oid = f"{DOT1Q_TP_FDB_PORT}.{vlan}.{oct_str}"
         results.append((oid, str(bridge_port)))

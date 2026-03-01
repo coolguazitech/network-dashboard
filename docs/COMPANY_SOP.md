@@ -1,13 +1,22 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.2.3 (2026-02-26)
+> **版本**: v2.4.0 (2026-03-01)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.4.0 變更摘要**:
+> - 設備清單排序：Ping 不到的新設備優先、舊設備其次
+> - Client 清單排序：Ping 不到的 Client 排前面
+> - 已結案案件排序：屬性有變化的排前面
+> - 新增 `new_is_reachable` / `new_last_check_at` DB 欄位（自動遷移）
+> - `.env.mock` 預設改為 SNMP Mock 模式（`COLLECTION_MODE=snmp` + `SNMP_MOCK=true`）
+> - 多個 Bug 修正（Case MAC 大小寫、RESOLVED 排序 NULL 處理等）
 
 ---
 
 ## 目錄
 
 - [Phase 1：公司端初始部署](#phase-1公司端初始部署)
+- [Phase 1b：SNMP 模式驗證與除錯](#phase-1bsnmp-模式驗證與除錯)
 - [Phase 2：Parser 開發（核心工作）](#phase-2parser-開發核心工作)
 - [Phase 3：最終部署上線](#phase-3最終部署上線)
 - [附錄 A：故障排查](#附錄-a故障排查)
@@ -26,16 +35,16 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.2.3` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.4.0` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.2.3` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.4.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
 掃描通過後會拿到公司內部的 image URL，例如：
 
 ```
-registry.company.com/netora/network-dashboard-base:v2.2.3
+registry.company.com/netora/network-dashboard-base:v2.4.0
 registry.company.com/netora/netora-mariadb:10.11
 ...
 ```
@@ -64,17 +73,17 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.2.3
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.4.0
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.2.3
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.4.0
 ```
 
 拉取 image：
 
 ```bash
-docker pull registry.company.com/netora/network-dashboard-base:v2.2.3
+docker pull registry.company.com/netora/network-dashboard-base:v2.4.0
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.2.3
+docker pull registry.company.com/netora/netora-mock-server:v2.4.0
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 
@@ -82,14 +91,16 @@ docker pull registry.company.com/netora/netora-mock-server:v2.2.3
 
 提供兩種模式，**擇一**即可：
 
-#### 模式 A：Mock 模式（先驗證系統能跑，不需要真實 API）
+#### 模式 A：SNMP Mock 模式（推薦，先驗證系統能跑）
 
 ```bash
 cp .env.mock .env
 docker compose -f docker-compose.production.yml --profile mock up -d
 ```
 
-> `.env.mock` 開箱即用，所有 API 指向內建的 mock-api 容器，不需改任何設定。
+> `.env.mock` 預設為 `COLLECTION_MODE=snmp` + `SNMP_MOCK=true`。
+> 10 個 SNMP 指標由 app 內建 MockSnmpEngine 產生模擬資料，Ping 和 ACL 自動 fallback 到 mock-api。
+> 如需改回傳統 API Mock 模式，將 `.env` 中的 `COLLECTION_MODE` 改為 `api` 並註解掉 `SNMP_MOCK`。
 
 #### 模式 B：真實模式（接公司 API）
 
@@ -106,7 +117,7 @@ DB_ROOT_PASSWORD=<強密碼>
 JWT_SECRET=<隨機字串>
 
 # ===== Image URL（必改）=====
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.2.3
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.4.0
 
 # ===== 真實 API 來源（必改）=====
 # FNA: Bearer token 認證; DNA: 不需認證; 皆無 SSL
@@ -165,20 +176,71 @@ docker compose -f docker-compose.production.yml up -d
 
 > **注意**：S3 credentials（MINIO__ACCESS_KEY / SECRET_KEY）已預設為 `minioadmin`，不需要改。
 
+#### 模式 C：SNMP Mock 模式（與模式 A 相同，已是預設）
+
+> **v2.4.0 起**，`.env.mock` 預設就是 SNMP Mock 模式，模式 A 和模式 C 等價。
+> 如果你用 `cp .env.mock .env` 啟動，就已經是 SNMP Mock 模式了。
+
+手動確認 `.env` 中這兩行存在：
+
+```ini
+COLLECTION_MODE=snmp
+SNMP_MOCK=true
+```
+
+啟動（需要 `--profile mock`，因為 ACL/Ping 仍然會 fallback 到 mock-api）：
+
+```bash
+docker compose -f docker-compose.production.yml --profile mock up -d
+```
+
+> **SNMP Mock** 會在 app 內部產生模擬的 SNMP OID 資料，不走 REST API。
+> 適合在沒有真實交換機、也不需要測試 Parser 的情況下驗證 10 個 SNMP 指標的採集流程。
+> 約 5% 的設備 × API 組合會隨機出現故障（每 60 秒變化一次），模擬真實環境。
+
+#### 模式 D：SNMP 真實模式（直接 SNMP 採集真實交換機）
+
+```bash
+cp .env.production .env
+```
+
+在 `.env` 中設定：
+
+```ini
+COLLECTION_MODE=snmp
+SNMP_MOCK=false
+
+# SNMP 社群字串（逗號分隔，依序嘗試）
+SNMP_COMMUNITIES=<你的community>,public
+SNMP_PORT=161
+SNMP_TIMEOUT=5
+```
+
+啟動（不需要 `--profile mock`）：
+
+```bash
+docker compose -f docker-compose.production.yml up -d
+```
+
+> **注意**：SNMP 真實模式會直接對設備清單中的所有交換機發送 SNMP 請求。
+> 確保防火牆允許從 Docker 容器到交換機的 UDP 161 埠。
+
 #### 模式切換
 
 | 切換方向 | 操作 |
 |----------|------|
-| Mock → 真實 | `cp .env.production .env`，填入真實 API，重啟不帶 `--profile mock` |
-| 真實 → Mock | `cp .env.mock .env`，重啟帶 `--profile mock` |
+| Mock → 真實 API | `cp .env.production .env`，填入真實 API，重啟不帶 `--profile mock` |
+| 真實 API → Mock | `cp .env.mock .env`，重啟帶 `--profile mock` |
+| Mock → SNMP Mock | 在 `.env` 底部加 `COLLECTION_MODE=snmp` + `SNMP_MOCK=true`，重啟 |
+| 任意 → SNMP 真實 | 設定 `COLLECTION_MODE=snmp` + `SNMP_MOCK=false` + `SNMP_COMMUNITIES=...`，重啟 |
 
 重啟指令：
 
 ```bash
 docker compose -f docker-compose.production.yml --profile mock down
-docker compose -f docker-compose.production.yml --profile mock up -d   # Mock
+docker compose -f docker-compose.production.yml --profile mock up -d   # Mock / SNMP Mock
 # 或
-docker compose -f docker-compose.production.yml up -d                  # 真實
+docker compose -f docker-compose.production.yml up -d                  # 真實 API / SNMP 真實
 ```
 
 ### 1.5 確認服務狀態
@@ -248,6 +310,401 @@ exit
 - `.env` 中的 `FETCHER_SOURCE__*__BASE_URL` 是否正確
 - Docker 容器的 DNS 設定（是否需要加 `--dns` 或 `extra_hosts`）
 - 防火牆規則
+
+---
+
+## Phase 1b：SNMP 模式驗證與除錯
+
+> v2.4.0 新增 SNMP 採集模式。本章教你如何驗證 SNMP 功能是否正常，以及出問題時如何修正。
+
+### 1b.1 SNMP vs API 模式差異
+
+| | API 模式（預設） | SNMP 模式 |
+|---|---|---|
+| 資料來源 | FNA / DNA REST API | 直接 SNMP GET/WALK 交換機 |
+| 需要的外部服務 | FNA + DNA 伺服器 | 交換機 UDP 161 可達 |
+| 支援的指標 | 全部 12 個（含 ACL） | 10 個（ACL 自動 fallback 到 API） |
+| Mock 模式 | mock-api 容器 | app 內建 MockSnmpEngine |
+| 環境變數 | `COLLECTION_MODE=api` | `COLLECTION_MODE=snmp` |
+
+### 1b.2 驗證 SNMP 模式是否啟用
+
+```bash
+# 確認設定值
+docker exec netora_app python -c "
+from app.core.config import settings
+print('COLLECTION_MODE:', settings.collection_mode)
+print('SNMP_MOCK:', settings.snmp_mock)
+print('SNMP_COMMUNITIES:', settings.snmp_communities)
+"
+```
+
+預期輸出（Mock 模式）：
+
+```
+COLLECTION_MODE: snmp
+SNMP_MOCK: True
+SNMP_COMMUNITIES: ['public']
+```
+
+### 1b.3 驗證 10 個 SNMP Collector 載入
+
+```bash
+docker exec netora_app python -c "
+from app.snmp.collection_service import _build_collector_map
+collectors = _build_collector_map()
+for name, c in sorted(collectors.items()):
+    print(f'  {name:25s} → {type(c).__name__}')
+print(f'\nTotal: {len(collectors)} collectors')
+"
+```
+
+預期輸出：
+
+```
+  get_channel_group         → ChannelGroupCollector
+  get_error_count           → ErrorCountCollector
+  get_fan                   → FanCollector
+  get_gbic_details          → TransceiverCollector
+  get_interface_status      → InterfaceStatusCollector
+  get_mac_table             → MacTableCollector
+  get_uplink_cdp            → NeighborCdpCollector
+  get_uplink_lldp           → NeighborLldpCollector
+  get_power                 → PowerCollector
+  get_version               → VersionCollector
+
+Total: 10 collectors
+```
+
+> 如果少於 10 個，檢查 `app/snmp/collectors/` 目錄下的檔案是否完整。
+
+### 1b.4 驗證 Dashboard 指標資料
+
+等待 5 分鐘讓排程跑一輪（每 300 秒），然後檢查 Dashboard：
+
+```bash
+# 先取得 JWT token
+TOKEN=$(curl -s http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"root","password":"admin123"}' | python3 -c "import json,sys; print(json.load(sys.stdin)['token'])")
+
+# 取得歲修 ID
+MAINT=$(curl -s http://localhost:8000/api/v1/maintenance \
+  -H "Authorization: Bearer $TOKEN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[0]['id'] if d else 'NONE')")
+
+echo "歲修 ID: $MAINT"
+
+# 檢查各指標
+for ind in fan power version transceiver error_count channel_group uplink; do
+  result=$(curl -s "http://localhost:8000/api/v1/dashboard/maintenance/$MAINT/indicator/$ind/details" \
+    -H "Authorization: Bearer $TOKEN")
+  total=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('total_count','?'))" 2>/dev/null)
+  pass=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('pass_count','?'))" 2>/dev/null)
+  echo "  $ind: $pass/$total"
+done
+```
+
+預期輸出（以 18 台設備為例）：
+
+```
+歲修 ID: 2026Q1
+  fan: 17/18
+  power: 18/18
+  version: 18/18
+  transceiver: 18/18
+  error_count: 62/66
+  channel_group: 18/18
+  uplink: 10/10
+```
+
+> - 數字不需要完全一致，但不應該是 `0/0` 或 `?/?`
+> - SNMP Mock 模式下約 5% 的設備會出現隨機故障，每分鐘變化一次
+> - `uplink` 的 total 是期望數量（`uplink_expectations` 表），不是設備數
+
+### 1b.5 查看 SNMP 採集日誌
+
+```bash
+# 需要 APP_DEBUG=true 才能看到 INFO 級別日誌
+# 如果看不到 SNMP 日誌，在 .env 中確認 APP_DEBUG=true
+
+docker logs netora_app -f --tail 200 2>&1 | grep -i "snmp\|collection"
+```
+
+正常 SNMP 採集日誌範例：
+
+```
+2026-02-28 04:20:00 - app.snmp.collection_service - INFO - SNMP get_fan for 2026Q1: 18/18 ok, 2.35s
+2026-02-28 04:20:25 - app.snmp.collection_service - INFO - SNMP get_power for 2026Q1: 18/18 ok, 1.89s
+```
+
+> **重要**：如果 `.env` 中 `APP_DEBUG=false`（或未設定），日誌等級為 WARNING，
+> INFO 級別的 SNMP 採集成功日誌不會顯示。只有 ERROR 和 WARNING 會出現。
+> 建議在驗證階段設定 `APP_DEBUG=true`。
+
+### 1b.6 SNMP 真實模式額外驗證
+
+如果使用 SNMP 真實模式（`SNMP_MOCK=false`），額外做以下檢查：
+
+#### 1. SNMP 連通性測試
+
+```bash
+docker exec netora_app python -c "
+import asyncio
+from app.snmp.engine import AsyncSnmpEngine, SnmpEngineConfig, SnmpTarget
+from app.snmp.oids import SYS_DESCR
+
+async def test():
+    engine = AsyncSnmpEngine(SnmpEngineConfig())
+    target = SnmpTarget(ip='<交換機IP>', port=161, community='<community>')
+    result = await engine.get(target, [SYS_DESCR])
+    for oid, val in result:
+        print(f'{oid} = {val}')
+
+asyncio.run(test())
+"
+```
+
+如果成功，會顯示交換機的 sysDescr（含型號和版本資訊）。
+如果失敗（timeout），檢查：
+- 交換機 SNMP community 是否正確
+- 防火牆是否允許 UDP 161
+- 容器網路是否能到達交換機
+
+#### 2. Community 自動偵測
+
+```bash
+docker exec netora_app python -c "
+import asyncio
+from app.snmp.engine import AsyncSnmpEngine, SnmpEngineConfig
+from app.snmp.session_cache import SnmpSessionCache
+
+async def test():
+    engine = AsyncSnmpEngine(SnmpEngineConfig())
+    cache = SnmpSessionCache(
+        engine=engine,
+        communities=['<community1>', '<community2>', 'public'],
+        port=161, timeout=5, retries=1,
+    )
+    target = await cache.get_target('<交換機IP>')
+    print(f'IP: {target.ip}')
+    print(f'Community: {target.community}')
+    print(f'Vendor: {target.vendor}')
+
+asyncio.run(test())
+"
+```
+
+### 1b.7 SNMP 採集失敗的排查流程
+
+| 症狀 | 可能原因 | 解決方式 |
+|------|---------|---------|
+| 全部指標 0/0 | 排程還沒跑完第一輪 | 等 5 分鐘再檢查 |
+| 全部指標 0/0（等了很久） | 沒有活躍歲修 | 登入 Dashboard 建立歲修並匯入設備清單 |
+| 全部指標 0/0 | `APP_DEBUG=false`，看不到錯誤 | 設 `APP_DEBUG=true` 重啟，看日誌 |
+| SNMP timeout errors | 交換機不可達 | 檢查 SNMP 連通性（1b.6 步驟 1） |
+| Community detection failed | Community 字串錯誤 | 確認 `SNMP_COMMUNITIES` 設定正確 |
+| 某個指標一直 0 | Collector OID 可能與設備不相容 | 用 snmpwalk 驗證 OID（見下方） |
+| ACL 指標失敗 | SNMP 不支援 ACL | 正常，ACL 自動 fallback 到 FNA API |
+| uplink 指標 0/0 | `uplink_expectations` 表為空 | Dashboard 設定 uplink 期望 |
+
+#### 用 snmpwalk 驗證 OID
+
+如果某個 SNMP 指標數據不正確，可以用 snmpwalk 確認交換機實際回傳的 OID：
+
+```bash
+# snmpwalk / snmpget 已預裝在 image 中，直接使用
+docker exec -it netora_app bash
+
+# 將 <community> 替換為實際 community string，<IP> 替換為交換機 IP
+```
+
+**廠商識別（所有設備）：**
+```bash
+snmpget -v2c -c <community> <IP> 1.3.6.1.2.1.1.2.0        # sysObjectID
+```
+
+**韌體版本（所有設備）：**
+```bash
+snmpget -v2c -c <community> <IP> 1.3.6.1.2.1.1.1.0        # sysDescr
+```
+
+**風扇狀態：**
+```bash
+# HPE/H3C — HH3C-ENTITY-EXT-MIB
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.6.1.1.1.1.19  # errorStatus
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.2.1.47.1.1.1.1.5          # entPhysicalClass (7=fan)
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.2.1.47.1.1.1.1.7          # entPhysicalName
+
+# Cisco — CISCO-ENVMON-MIB
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.13.1.4.1.3        # ciscoEnvMonFanState
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.13.1.4.1.2        # ciscoEnvMonFanDescr
+```
+
+**電源狀態：**
+```bash
+# HPE/H3C — 與風扇共用 ENTITY-MIB，entPhysicalClass=6 為電源
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.6.1.1.1.1.19  # errorStatus
+
+# Cisco — CISCO-ENVMON-MIB
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.13.1.5.1.3        # ciscoEnvMonSupplyState
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.13.1.5.1.2        # ciscoEnvMonSupplyDescr
+```
+
+**光模組（Transceiver DOM）：**
+```bash
+# HPE/H3C — HH3C-TRANSCEIVER-INFO-MIB
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.9  # txBiasCurrent (Tx)
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.12 # rxPower (Rx)
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.15 # temperature
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.16 # voltage
+
+# Cisco — CISCO-ENTITY-SENSOR-MIB
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.91.1.1.1.1.4     # entSensorValue
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.91.1.1.1.1.1     # entSensorType
+```
+
+**Interface 狀態（所有設備）：**
+```bash
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.2.1.2.2.1.8               # ifOperStatus
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.2.1.31.1.1.1.15           # ifHighSpeed
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.2.1.10.7.2.1.19           # dot3StatsDuplexStatus
+```
+
+**Interface 錯誤計數（所有設備）：**
+```bash
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.2.1.2.2.1.14              # ifInErrors
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.2.1.2.2.1.20              # ifOutErrors
+```
+
+**MAC Table（所有設備）：**
+```bash
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.2.1.17.7.1.2.2.1.2        # dot1qTpFdbPort
+```
+
+**Port-Channel / LAG（所有設備）：**
+```bash
+snmpwalk -v2c -c <community> <IP> 1.2.840.10006.300.43.1.2.1.1.13   # dot3adAggPortAttachedAggID
+snmpwalk -v2c -c <community> <IP> 1.2.840.10006.300.43.1.2.1.1.21   # dot3adAggPortActorOperState
+```
+
+**LLDP 鄰居（所有設備）：**
+```bash
+snmpwalk -v2c -c <community> <IP> 1.0.8802.1.1.2.1.4.1.1.9          # lldpRemSysName
+snmpwalk -v2c -c <community> <IP> 1.0.8802.1.1.2.1.4.1.1.7          # lldpRemPortId
+snmpwalk -v2c -c <community> <IP> 1.0.8802.1.1.2.1.4.1.1.8          # lldpRemPortDesc
+snmpwalk -v2c -c <community> <IP> 1.0.8802.1.1.2.1.3.7.1.4          # lldpLocPortDesc
+```
+
+**CDP 鄰居（僅 Cisco）：**
+```bash
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.23.1.2.1.1.6     # cdpCacheDeviceId
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.23.1.2.1.1.7     # cdpCacheDevicePort
+```
+
+**ifName 對照（除錯用，確認 ifIndex → 介面名稱映射）：**
+```bash
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.2.1.31.1.1.1.1            # ifName
+```
+
+#### 一鍵驗證腳本
+
+上面的指令也可以用腳本一次跑完，自動產生報告檔：
+
+```bash
+# 進入 container
+docker exec -it netora_app bash
+
+# HPE 交換機
+bash /app/scripts/snmp_verify.sh <community> <交換機IP> hpe
+
+# Cisco 交換機
+bash /app/scripts/snmp_verify.sh <community> <交換機IP> cisco
+```
+
+腳本會依序測試所有 10 個 collector 用到的 OID，結果存在 `/tmp/snmp_verify_<IP>_<時間>.txt`。
+
+取出報告：
+```bash
+docker cp netora_app:/tmp/snmp_verify_<IP>_<時間>.txt .
+```
+
+> 如果 snmpwalk 的回傳格式與 collector 預期不同，
+> 可能需要修改 `app/snmp/collectors/` 下對應的 collector。
+
+### 1b.8 修改 SNMP Collector 後重建 Image
+
+如果需要修改 SNMP collector 的 OID 解析邏輯：
+
+#### 在公司外面（有網路環境）
+
+```bash
+cd netora
+
+# 1. 修改 collector 程式碼
+vi app/snmp/collectors/fan.py    # 或其他 collector
+
+# 2. 跑測試確認
+python -m pytest tests/unit/snmp/ -v
+
+# 3. 重建 image
+docker buildx build --platform linux/amd64 \
+    -f docker/base/Dockerfile \
+    -t coolguazi/network-dashboard-base:v2.4.0 \
+    --load .
+
+# 4. CVE 掃描（確認沒有 CRITICAL）
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+    aquasec/trivy image --severity CRITICAL \
+    coolguazi/network-dashboard-base:v2.4.0
+
+# 5. 推送
+docker push coolguazi/network-dashboard-base:v2.4.0
+
+# 6. 匯出（如果公司不能 pull）
+docker save coolguazi/network-dashboard-base:v2.4.0 | gzip > netora-app-v2.4.0.tar.gz
+```
+
+#### 在公司環境（無外網）
+
+如果已經在公司，可以用 production Dockerfile 疊加修改：
+
+```bash
+docker build \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.4.0 \
+    -f docker/production/Dockerfile \
+    -t netora-production:v2.4.0-fix1 \
+    .
+```
+
+> production Dockerfile 會自動 COPY `app/snmp/` 目錄到 image 中。
+
+然後更新 `.env` 的 `APP_IMAGE` 並重啟：
+
+```bash
+# 更新 image
+sed -i 's/APP_IMAGE=.*/APP_IMAGE=netora-production:v2.4.0-fix1/' .env
+
+# 重啟
+docker compose -f docker-compose.production.yml down
+docker compose -f docker-compose.production.yml up -d
+```
+
+### 1b.9 SNMP Collector 對照表
+
+| Collector | api_name | 對應 MIB | 備註 |
+|-----------|----------|---------|------|
+| FanCollector | get_fan | HH3C-ENTITY-EXT (HPE), CISCO-ENVMON (Cisco) | |
+| PowerCollector | get_power | HH3C-ENTITY-EXT (HPE), CISCO-ENVMON (Cisco) | |
+| VersionCollector | get_version | SNMPv2-MIB::sysDescr | 標準 MIB |
+| TransceiverCollector | get_gbic_details | HH3C-TRANSCEIVER (HPE), CISCO-ENTITY-SENSOR (Cisco) | |
+| ErrorCountCollector | get_error_count | IF-MIB::ifInErrors / ifOutErrors | 標準 MIB |
+| ChannelGroupCollector | get_channel_group | IEEE8023-LAG-MIB | 標準 MIB |
+| NeighborLldpCollector | get_uplink_lldp | LLDP-MIB | 標準 MIB |
+| NeighborCdpCollector | get_uplink_cdp | CISCO-CDP-MIB | 僅 Cisco |
+| MacTableCollector | get_mac_table | Q-BRIDGE-MIB / BRIDGE-MIB | 標準 MIB |
+| InterfaceStatusCollector | get_interface_status | IF-MIB / EtherLike-MIB | 標準 MIB |
+
+> ACL（static_acl, dynamic_acl）沒有 SNMP collector，自動 fallback 到 FNA REST API。
 
 ---
 
@@ -597,9 +1054,9 @@ cd netora
 
 # BASE_IMAGE = 公司 registry 掃描通過後的 URL
 docker build \
-    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.2.3 \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.4.0 \
     -f docker/production/Dockerfile \
-    -t netora-production:v2.2.3 \
+    -t netora-production:v2.4.0 \
     .
 ```
 
@@ -613,7 +1070,7 @@ docker build \
 > ```bash
 > docker buildx build --platform linux/amd64 \
 >     -f docker/base/Dockerfile \
->     -t netora-production:v2.2.3 \
+>     -t netora-production:v2.4.0 \
 >     --load .
 > ```
 
@@ -622,7 +1079,7 @@ docker build \
 編輯 `.env`：
 
 ```ini
-APP_IMAGE=netora-production:v2.2.3
+APP_IMAGE=netora-production:v2.4.0
 ```
 
 或直接改 `docker-compose.production.yml` 的 `image` 欄位。
@@ -687,6 +1144,25 @@ print(f'Total: {len(parser_registry._parsers)} parsers')
 
 ---
 
+## 附錄 A-0：SNMP 真實模式上線前需要盤的資料
+
+> 在去公司之前，先確認以下資訊。這些是 SNMP 模式上線必需的。
+
+| # | 資料項目 | 說明 | 取得方式 |
+|---|---------|------|---------|
+| 1 | **SNMP Community String** | 交換機的 readonly community（可能多個） | 問網管或查 ITSM |
+| 2 | **交換機清單 CSV**（含 IP、hostname、vendor） | 設備管理匯入用 | 從 CMDB 或既有系統匯出 |
+| 3 | **防火牆規則確認** | Docker 主機 → 交換機 UDP 161 是否放行 | 問 NOC 或自行 telnet 測試 |
+| 4 | **各廠牌交換機各一台的 IP** | 用於驗證 SNMP OID 相容性（HPE、Cisco IOS、NX-OS 各一） | 挑選測試設備 |
+| 5 | **FNA API Token**（如用 API 模式） | REST API Bearer token | 問 FNA 管理員 |
+| 6 | **GNMS Ping 各 tenant group 的 base URL** | F18/F6/AP/F14/F12 各自的 ping server URL | 問 GNMS 管理員 |
+| 7 | **Uplink 期望清單** | 哪些設備有 uplink、期望的鄰居設備名稱 | 人工整理或匯入 |
+| 8 | **Client MAC 清單 CSV** | 如需追蹤 client 漫遊 | 從 DHCP/RADIUS 匯出 |
+
+> **關鍵**：項目 1-4 是 SNMP 模式專屬需求。確認後可以在公司用 `scripts/snmp_verify.sh` 一鍵驗證 OID 相容性。
+
+---
+
 ## 附錄 A：故障排查
 
 ### 常見問題
@@ -703,28 +1179,9 @@ print(f'Total: {len(parser_registry._parsers)} parsers')
 | Image pull 失敗 | Registry 不可達 | 確認公司 registry URL 正確 |
 | 登入失敗 401 | JWT_SECRET 變更 | 清除瀏覽器 localStorage，重新登入 |
 | 圖片上傳失敗 | SeaweedFS 沒 ready | 確認 netora_s3 容器 healthy |
-
-### 離線傳入 Image（如果 Registry 不可達）
-
-在公司外面：
-
-```bash
-docker save coolguazi/network-dashboard-base:v2.2.3 | gzip > netora-app-v2.2.3.tar.gz
-docker save coolguazi/netora-mariadb:10.11 | gzip > netora-mariadb-10.11.tar.gz
-docker save coolguazi/netora-mock-server:v2.2.3 | gzip > netora-mock-server-v2.2.3.tar.gz
-docker save coolguazi/netora-seaweedfs:4.13 | gzip > netora-seaweedfs-4.13.tar.gz
-docker save coolguazi/netora-phpmyadmin:5.2 | gzip > netora-phpmyadmin-5.2.tar.gz
-```
-
-帶 tar.gz 到公司後：
-
-```bash
-docker load < netora-app-v2.2.3.tar.gz
-docker load < netora-mariadb-10.11.tar.gz
-docker load < netora-mock-server-v2.2.3.tar.gz
-docker load < netora-seaweedfs-4.13.tar.gz
-docker load < netora-phpmyadmin-5.2.tar.gz
-```
+| SNMP 指標全部 0/0 | SNMP 模式未啟用 | 確認 `COLLECTION_MODE=snmp`，見 [Phase 1b](#phase-1bsnmp-模式驗證與除錯) |
+| SNMP 某指標錯誤 | OID 與設備不相容 | 用 snmpwalk 驗證，見 [1b.7](#1b7-snmp-採集失敗的排查流程) |
+| SNMP 日誌看不到 | APP_DEBUG=false | 設 `APP_DEBUG=true` 重啟 |
 
 ### 版本更新（重要）
 
@@ -865,15 +1322,29 @@ app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
 ## 快速指令卡（列印帶著用）
 
 ```
-# ===== Phase 1: 起服務 =====
+# ===== Phase 1: 起服務（SNMP Mock，推薦首次驗證）=====
 unzip netora-main.zip && cd netora-main
-docker pull <公司registry>/network-dashboard-base:v2.2.3
-cp .env.production .env
-# 編輯 .env：密碼 + APP_IMAGE + API URL + Token + endpoint
-docker-compose -f docker-compose.production.yml up -d
+docker pull <公司registry>/network-dashboard-base:v2.4.0
+cp .env.mock .env
+# 編輯 .env：APP_IMAGE=<公司registry>/network-dashboard-base:v2.4.0
+docker compose -f docker-compose.production.yml --profile mock up -d
 # alembic 自動執行，等 30 秒
 curl http://localhost:8000/health
 # 瀏覽器 http://localhost:8000 → root/admin123
+
+# ===== Phase 1: 起服務（真實 API 模式）=====
+cp .env.production .env
+# 編輯 .env：密碼 + APP_IMAGE + API URL + Token + endpoint
+docker compose -f docker-compose.production.yml up -d
+
+# ===== Phase 1b: SNMP 真實模式 =====
+# 在 .env 設定：
+#   COLLECTION_MODE=snmp
+#   SNMP_MOCK=false
+#   SNMP_COMMUNITIES=<community1>,<community2>
+docker exec netora_app python -c "from app.core.config import settings; \
+    print('MODE:', settings.collection_mode, 'MOCK:', settings.snmp_mock)"
+# 等 5 分鐘後用 API 檢查指標（見 SOP Phase 1b.4）
 
 # ===== Phase 2: Parser 開發循環 =====
 vi config/api_test.yaml                     # 填 TODO：sources + endpoints + targets
@@ -890,10 +1361,10 @@ make parse-debug                            # 產生 AI bundle
 
 # ===== Phase 3: 最終部署 =====
 docker build \
-    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.2.3 \
+    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.4.0 \
     -f docker/production/Dockerfile \
-    -t netora-production:v2.2.3 .
-# 編輯 .env: APP_IMAGE=netora-production:v2.2.3
+    -t netora-production:v2.4.0 .
+# 編輯 .env: APP_IMAGE=netora-production:v2.4.0
 docker-compose -f docker-compose.production.yml down
 docker-compose -f docker-compose.production.yml up -d
 # alembic 自動執行
