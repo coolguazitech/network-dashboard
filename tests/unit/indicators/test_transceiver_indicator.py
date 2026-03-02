@@ -101,13 +101,14 @@ class TestEvaluateAllMetricsInRange:
         ):
             result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
 
-        assert result.total_count == 3
-        assert result.pass_count == 3
+        # Device-level: 2 devices, both pass
+        assert result.total_count == 2
+        assert result.pass_count == 2
         assert result.fail_count == 0
         assert result.failures is None
         assert result.passes is not None
-        assert len(result.passes) == 3
-        assert all(p["reason"] == "光模塊正常" for p in result.passes)
+        assert len(result.passes) == 2
+        assert all("光模塊正常" in p["reason"] for p in result.passes)
         # All field pass rates should be 100%
         assert result.pass_rates["tx_power_ok"] == 100.0
         assert result.pass_rates["rx_power_ok"] == 100.0
@@ -307,7 +308,7 @@ class TestEvaluateAllFourNoneIsFailure:
         assert result.fail_count == 1
         assert result.failures is not None
         assert len(result.failures) == 1
-        assert result.failures[0]["reason"] == "光模塊缺失或無法讀取"
+        assert "光模塊缺失或無法讀取" in result.failures[0]["reason"]
 
 
 @pytest.mark.asyncio
@@ -362,6 +363,152 @@ class TestEvaluateEmptyDeviceList:
             "voltage_ok": 0,
         }
         assert result.summary == "無設備資料"
+
+
+@pytest.mark.asyncio
+class TestDeviceNoTransceiverRecordsIsPass:
+    async def test_device_no_transceiver_records_is_pass(self, indicator, mock_session):
+        """Active device with no transceiver records -> PASS (無光模塊記錄).
+
+        This is the fix for the 0/0 denominator issue: devices without
+        optical modules should count as passing, not be excluded.
+        """
+        # SW-01 has records, SW-02 has none (all copper interfaces)
+        records = [
+            _make_record("SW-01", "Gi1/0/1", tx_power=-2.0, rx_power=-5.0, temperature=35.0, voltage=3.3),
+        ]
+
+        with (
+            patch.object(
+                indicator, "_get_active_device_hostnames",
+                return_value=["SW-01", "SW-02"],
+            ),
+            patch.object(
+                TransceiverIndicator, "_load_thresholds",
+                return_value=STANDARD_THRESHOLDS,
+            ),
+            patch(
+                "app.indicators.transceiver.TransceiverRecordRepo.get_latest_per_device",
+                new_callable=AsyncMock,
+                return_value=records,
+            ),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
+
+        # 2 devices total, both pass
+        assert result.total_count == 2
+        assert result.pass_count == 2
+        assert result.fail_count == 0
+        assert result.passes is not None
+        pass_by_device = {p["device"]: p for p in result.passes}
+        assert pass_by_device["SW-02"]["reason"] == "無光模塊記錄"
+        assert "光模塊正常" in pass_by_device["SW-01"]["reason"]
+
+    async def test_all_devices_no_records(self, indicator, mock_session):
+        """All devices have no transceiver records -> all pass."""
+        with (
+            patch.object(
+                indicator, "_get_active_device_hostnames",
+                return_value=["SW-01", "SW-02", "SW-03"],
+            ),
+            patch.object(
+                TransceiverIndicator, "_load_thresholds",
+                return_value=STANDARD_THRESHOLDS,
+            ),
+            patch(
+                "app.indicators.transceiver.TransceiverRecordRepo.get_latest_per_device",
+                new_callable=AsyncMock,
+                return_value=[],  # no records at all
+            ),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
+
+        assert result.total_count == 3
+        assert result.pass_count == 3
+        assert result.fail_count == 0
+        assert result.failures is None
+        assert result.passes is not None
+        assert len(result.passes) == 3
+        assert all(p["reason"] == "無光模塊記錄" for p in result.passes)
+
+
+@pytest.mark.asyncio
+class TestDeviceLevelAggregation:
+    async def test_mixed_pass_fail_devices(self, indicator, mock_session):
+        """3 devices: one no records (pass), one all ok (pass), one failing (fail)."""
+        records = [
+            # SW-01: ok
+            _make_record("SW-01", "Gi1/0/1", tx_power=-2.0, rx_power=-5.0, temperature=35.0, voltage=3.3),
+            # SW-02: tx_power too low
+            _make_record("SW-02", "Gi1/0/1", tx_power=-15.0, rx_power=-5.0, temperature=35.0, voltage=3.3),
+            # SW-03: no records
+        ]
+
+        with (
+            patch.object(
+                indicator, "_get_active_device_hostnames",
+                return_value=["SW-01", "SW-02", "SW-03"],
+            ),
+            patch.object(
+                TransceiverIndicator, "_load_thresholds",
+                return_value=STANDARD_THRESHOLDS,
+            ),
+            patch(
+                "app.indicators.transceiver.TransceiverRecordRepo.get_latest_per_device",
+                new_callable=AsyncMock,
+                return_value=records,
+            ),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
+
+        assert result.total_count == 3
+        assert result.pass_count == 2
+        assert result.fail_count == 1
+        assert result.failures is not None
+        assert len(result.failures) == 1
+        assert result.failures[0]["device"] == "SW-02"
+        assert "Tx Power 過低" in result.failures[0]["reason"]
+        # Failure should contain interface info
+        assert result.failures[0]["interface"] == "Gi1/0/1"
+        assert "failing_interfaces" in result.failures[0]["data"]
+
+    async def test_device_multiple_failing_interfaces(self, indicator, mock_session):
+        """Device with 3 interfaces, 2 failing -> device fails with detail."""
+        records = [
+            _make_record("SW-01", "Gi1/0/1", tx_power=-2.0, rx_power=-5.0, temperature=35.0, voltage=3.3),  # ok
+            _make_record("SW-01", "Gi1/0/2", tx_power=-15.0, rx_power=-5.0, temperature=35.0, voltage=3.3),  # tx low
+            _make_record("SW-01", "Gi1/0/3", tx_power=-2.0, rx_power=5.0, temperature=35.0, voltage=3.3),  # rx high
+        ]
+
+        with (
+            patch.object(
+                indicator, "_get_active_device_hostnames",
+                return_value=["SW-01"],
+            ),
+            patch.object(
+                TransceiverIndicator, "_load_thresholds",
+                return_value=STANDARD_THRESHOLDS,
+            ),
+            patch(
+                "app.indicators.transceiver.TransceiverRecordRepo.get_latest_per_device",
+                new_callable=AsyncMock,
+                return_value=records,
+            ),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
+
+        assert result.total_count == 1
+        assert result.pass_count == 0
+        assert result.fail_count == 1
+        assert result.failures is not None
+        failure = result.failures[0]
+        assert failure["device"] == "SW-01"
+        # Both failing interfaces listed
+        assert "Gi1/0/2" in failure["interface"]
+        assert "Gi1/0/3" in failure["interface"]
+        # Detail contains both
+        failing = failure["data"]["failing_interfaces"]
+        assert len(failing) == 2
 
 
 @pytest.mark.asyncio
@@ -593,7 +740,8 @@ class TestEvaluateSummaryFormat:
         ):
             result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
 
-        assert result.summary == "光模塊驗收: 1/2 通過 (50.0%)"
+        # Device-level: SW-01 has 1 failing interface → device fails
+        assert result.summary == "光模塊驗收: 0/1 設備通過 (0.0%)"
 
 
 @pytest.mark.asyncio

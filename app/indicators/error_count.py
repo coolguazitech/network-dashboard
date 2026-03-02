@@ -132,9 +132,23 @@ class ErrorCountIndicator(BaseIndicator):
             if growing_interfaces:
                 # 設備有 CRC 增長 → 異常
                 if len(failures) < 10:
+                    show_limit = 5
+                    iface_detail = "; ".join(
+                        f"{gi['interface']}(+{gi['delta']})"
+                        for gi in growing_interfaces[:show_limit]
+                    )
+                    if len(growing_interfaces) > show_limit:
+                        iface_detail += f" ...等共{len(growing_interfaces)}介面"
+                    iface_names = ", ".join(
+                        gi["interface"]
+                        for gi in growing_interfaces[:show_limit]
+                    )
+                    if len(growing_interfaces) > show_limit:
+                        iface_names += f" ...等{len(growing_interfaces)}介面"
                     failures.append({
                         "device": hostname,
-                        "reason": f"CRC 增長（{len(growing_interfaces)} 介面）",
+                        "interface": iface_names,
+                        "reason": f"CRC 增長: {iface_detail}",
                         "data": {"growing_interfaces": growing_interfaces},
                     })
             else:

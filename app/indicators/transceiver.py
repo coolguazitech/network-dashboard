@@ -91,29 +91,72 @@ class TransceiverIndicator(BaseIndicator):
         repo = TransceiverRecordRepo(session)
         all_records = await repo.get_latest_per_device(maintenance_id)
 
-        # 只保留設備清單中的設備紀錄
+        # 只保留設備清單中的設備紀錄，按設備分組
         active_set = set(device_hostnames)
         records = [r for r in all_records if r.switch_hostname in active_set]
 
-        total_count = 0
+        device_records: dict[str, list[TransceiverRecord]] = defaultdict(list)
+        for r in records:
+            device_records[r.switch_hostname].append(r)
+
+        # 設備層級評估：分母 = 設備數
+        total_count = len(device_hostnames)
         pass_count = 0
         failures: list[dict[str, Any]] = []
         passes: list[dict[str, Any]] = []
 
-        for record in records:
-            total_count += 1
-            failure = self._check_single_record(record, th)
-            if failure is None:
+        for hostname in device_hostnames:
+            dev_records = device_records.get(hostname, [])
+
+            if not dev_records:
+                # 無光模塊記錄 → 設備正常（無光口或 collector 無資料）
                 pass_count += 1
                 if len(passes) < 10:
                     passes.append({
-                        "device": record.switch_hostname,
-                        "interface": record.interface_name,
-                        "reason": "光模塊正常",
-                        "data": self._record_data(record),
+                        "device": hostname,
+                        "reason": "無光模塊記錄",
+                        "data": {},
+                    })
+                continue
+
+            # 逐介面檢查
+            failing_ifaces: list[dict[str, Any]] = []
+            for record in dev_records:
+                failure = self._check_single_record(record, th)
+                if failure is not None:
+                    failing_ifaces.append(failure)
+
+            if failing_ifaces:
+                # 設備有異常介面 → 失敗
+                if len(failures) < 10:
+                    iface_detail = "; ".join(
+                        f"{f['interface']}: {f['reason']}"
+                        for f in failing_ifaces[:5]
+                    )
+                    if len(failing_ifaces) > 5:
+                        iface_detail += f" ...等{len(failing_ifaces)}介面"
+                    show_limit = 5
+                    iface_names = ", ".join(
+                        f["interface"] for f in failing_ifaces[:show_limit]
+                    )
+                    if len(failing_ifaces) > show_limit:
+                        iface_names += f" ...等{len(failing_ifaces)}介面"
+                    failures.append({
+                        "device": hostname,
+                        "interface": iface_names,
+                        "reason": iface_detail,
+                        "data": {
+                            "failing_interfaces": failing_ifaces,
+                        },
                     })
             else:
-                failures.append(failure)
+                pass_count += 1
+                if len(passes) < 10:
+                    passes.append({
+                        "device": hostname,
+                        "reason": f"光模塊正常（{len(dev_records)} 介面）",
+                        "data": {},
+                    })
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
@@ -142,7 +185,7 @@ class TransceiverIndicator(BaseIndicator):
             failures=failures if failures else None,
             passes=passes if passes else None,
             summary=(
-                f"光模塊驗收: {pass_count}/{total_count} 通過 "
+                f"光模塊驗收: {pass_count}/{total_count} 設備通過 "
                 f"({self._calc_percent(pass_count, total_count):.1f}%)"
             ),
         )
