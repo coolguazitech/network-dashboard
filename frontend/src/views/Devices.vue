@@ -243,7 +243,17 @@
 
           <!-- 設備列表 -->
           <div ref="deviceScrollContainer" class="overflow-x-auto max-h-[600px] overflow-y-auto">
-            <table class="min-w-full text-sm">
+            <table class="min-w-full text-sm table-fixed">
+              <colgroup>
+                <col class="w-[40px]" />
+                <col class="w-[22%]" />
+                <col class="w-[120px]" />
+                <col class="w-[22%]" />
+                <col class="w-[120px]" />
+                <col class="w-[60px]" />
+                <col />
+                <col class="w-[90px]" />
+              </colgroup>
               <thead class="bg-slate-900/60 sticky top-0">
                 <tr>
                   <th class="px-2 py-2 text-center">
@@ -271,7 +281,7 @@
                   <td class="px-2 py-2 text-center">
                     <input type="checkbox" :value="device.id" v-model="selectedDevices" class="rounded border-slate-500" />
                   </td>
-                  <td class="px-2 py-2 font-mono text-slate-200 text-xs break-all">{{ device.old_hostname || '-' }}</td>
+                  <td class="px-2 py-2 font-mono text-slate-200 text-xs break-all leading-snug">{{ device.old_hostname || '-' }}</td>
                   <td class="px-2 py-2 font-mono text-slate-400 text-xs whitespace-nowrap">
                     <span
                       v-if="device.old_hostname"
@@ -282,7 +292,7 @@
                           ? 'ping-dot-red ping-glow-red animate-pulse'
                           : 'bg-slate-600'"
                     ></span>{{ device.old_ip_address || '-' }}</td>
-                  <td class="px-2 py-2 font-mono text-slate-200 text-xs break-all">{{ device.new_hostname || '-' }}</td>
+                  <td class="px-2 py-2 font-mono text-slate-200 text-xs break-all leading-snug">{{ device.new_hostname || '-' }}</td>
                   <td class="px-2 py-2 font-mono text-slate-400 text-xs whitespace-nowrap">
                     <span
                       v-if="device.new_hostname"
@@ -296,7 +306,7 @@
                   <td class="px-2 py-2">
                     <span class="px-1.5 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs">{{ device.tenant_group || 'F18' }}</span>
                   </td>
-                  <td class="px-2 py-2 text-slate-400 text-xs max-w-[200px] truncate" :title="device.description">
+                  <td class="px-2 py-2 text-slate-400 text-xs truncate" :title="device.description">
                     {{ device.description || '-' }}
                   </td>
                   <td class="px-2 py-2 text-xs whitespace-nowrap">
@@ -305,7 +315,7 @@
                   </td>
                 </tr>
                 <tr v-if="deviceList.length === 0">
-                  <td colspan="10" class="px-4 py-8 text-center text-slate-500">
+                  <td colspan="8" class="px-4 py-8 text-center text-slate-500">
                     尚無設備資料，請匯入 CSV 或手動新增
                   </td>
                 </tr>
