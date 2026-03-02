@@ -27,6 +27,7 @@
 - [附錄 A：故障排查](#附錄-a故障排查)
 - [附錄 B：Parser 對照表](#附錄-bparser-對照表)
 - [附錄 C：ParsedData 模型欄位](#附錄-cparseddata-模型欄位)
+- [附錄 D：SNMP 程式碼除錯指南（自己看懂 + 找問題）](#附錄-dsnmp-程式碼除錯指南自己看懂--找問題)
 
 ---
 
@@ -556,7 +557,7 @@ snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.13.1.5.1.2        # ciscoEnvMo
 **光模組（Transceiver DOM）：**
 ```bash
 # HPE/H3C — HH3C-TRANSCEIVER-INFO-MIB
-snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.9  # txBiasCurrent (Tx)
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.9  # hh3cTransceiverCurTXPower (Tx Power)
 snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.12 # rxPower (Rx)
 snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.15 # temperature
 snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.16 # voltage
@@ -1372,6 +1373,305 @@ app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
 >
 > MAC 位址自動正規化：
 > `"AA-BB-CC-DD-EE-FF"` / `"AABB.CCDD.EEFF"` → `"AA:BB:CC:DD:EE:FF"`
+
+---
+
+## 附錄 D：SNMP 程式碼除錯指南（自己看懂 + 找問題）
+
+> 當 SNMP 採集出問題，你可以自己追蹤程式碼找到根因。
+> 這份指南用昨天「只有 version 成功」的案例來示範完整的除錯流程。
+
+### D.1 SNMP 採集資料流（從排程到寫入 DB）
+
+```
+排程觸發 (scheduler.py)
+  │
+  ├─ _run_collection("get_fan")
+  │
+  └─ SnmpCollectionService.collect()          ← app/snmp/collection_service.py
+      │
+      ├─ 載入活躍歲修的設備清單
+      │
+      └─ 對每台設備平行執行（最多 snmp_concurrency=10 台同時）：
+          │
+          ├─ session_cache.get_target(ip)      ← app/snmp/session_cache.py
+          │   └─ 逐一嘗試 community → engine.get(sysObjectID.0)
+          │       └─ 成功 → 快取 community，回傳 SnmpTarget
+          │       └─ 全失敗 → SnmpTimeoutError
+          │
+          ├─ collector.collect_with_retry()    ← app/snmp/collector_base.py
+          │   └─ 最多重試 3 次（間隔 1s, 2s）
+          │       │
+          │       └─ collector.collect()        ← app/snmp/collectors/fan.py (等)
+          │           └─ engine.walk(target, OID_PREFIX)  ← app/snmp/engine.py
+          │               └─ pysnmp bulkCmd → UDP 161 → 交換機
+          │           └─ session_cache.get_ifindex_map()
+          │           └─ 解析 varbind → 建立 ParsedData
+          │
+          └─ 寫入 DB（batch 存到 collection_data 表）
+```
+
+**關鍵分層：**
+
+| 層級 | 檔案 | 職責 | 如果這層壞了 |
+|------|------|------|------------|
+| 1. 排程 | `app/scheduler.py` | 定時觸發 | 全部指標都不會跑 |
+| 2. 服務 | `app/snmp/collection_service.py` | 載設備、平行採集、寫 DB | 全部設備都失敗 |
+| 3. 快取 | `app/snmp/session_cache.py` | Community 偵測、ifIndex 對照 | 單台設備全部 collector 失敗 |
+| 4. 收集器 | `app/snmp/collectors/*.py` | OID walk + 資料解析 | 單一指標失敗（如只有 fan 壞） |
+| 5. 引擎 | `app/snmp/engine.py` | SNMP GET/WALK 底層通訊 | 所有用到 walk() 的 collector 爆 |
+
+### D.2 從日誌判斷哪一層出問題
+
+```bash
+# 開啟完整日誌（必須！預設 WARNING 級別看不到大多數資訊）
+# 在 .env 中設定：
+APP_DEBUG=true
+
+# 看日誌
+docker logs netora_app -f --tail 200 2>&1 | grep -i "snmp\|collection\|error\|timeout"
+```
+
+**日誌訊息 → 問題在哪一層：**
+
+| 你看到的日誌 | 出問題的層 | 意思 |
+|-------------|-----------|------|
+| `Running scheduled collection for 'get_fan'` 之後沒有任何日誌 | 2. 服務層 | 載入設備清單或初始化 engine 出錯 |
+| `All communities failed for 10.0.0.1` | 3. 快取層 | Community 字串錯誤或交換機不回應 |
+| `Community for 10.0.0.1: tccd03ro` | 3. 快取層 ✅ | Community 偵測成功（正常） |
+| `get_fan: timeout for 10.0.0.1, retry 1/2` | 4. 收集器層 | walk() 超時，正在重試 |
+| `SNMP WALK timeout: 10.0.0.1 prefix=1.3.6...` | 5. 引擎層 | bulkCmd 超時，網路問題 |
+| `SNMP WALK error: ...` | 5. 引擎層 | pysnmp 回傳錯誤 |
+| `SNMP get_fan for 2026Q1: 18/18 ok, 2.35s` | 全部正常 ✅ | 成功採集 |
+| `SNMP get_fan for 2026Q1: 15/18 ok, 5.12s` | 部分設備失敗 | 3 台出問題，看 ERROR 日誌找原因 |
+| `ValueError` / `TypeError` / `KeyError` | 4. 收集器層 | collector 程式碼 bug（解析錯誤） |
+
+### D.3 案例：昨天「只有 version 成功」的追蹤過程
+
+**Step 1：觀察症狀**
+- version ✅ 成功寫入 DB
+- 其他 9 個指標 ❌ 全部 0/0
+
+**Step 2：看 version 和其他 collector 有什麼不同**
+
+打開 `app/snmp/collectors/version.py`：
+```python
+# 第 68 行
+result = await engine.get(target, SYS_DESCR)    # ← 用 get()
+```
+
+打開任何其他 collector，例如 `app/snmp/collectors/fan.py`：
+```python
+error_varbinds = await engine.walk(target, ...)  # ← 用 walk()
+```
+
+**差異：version 用 `get()`，其他 9 個都用 `walk()`。**
+
+**Step 3：檢查 engine.py 的 walk() 實作**
+
+打開 `app/snmp/engine.py`，找到 `_walk_impl()` 方法（第 162 行）：
+```python
+# 第 217-222 行（修復後的程式碼）
+for var_bind_row in var_bind_table:
+    if not var_bind_row:
+        out_of_scope = True
+        break
+    oid, val = var_bind_row[0]    # ← 關鍵：取 [0] 解 2D 表格
+```
+
+如果原本寫的是 `oid, val = var_bind_row`（沒有 `[0]`），
+pysnmp v6 回傳的 `var_bind_row` 是一個 `list[ObjectType]`，不是 `tuple`，
+直接 unpack 就會 `ValueError: too many values to unpack`。
+
+**Step 4：結論**
+
+```
+engine.get()  → getCmd()  → 回傳 1D [ObjectType, ...] → ✅ 正常 unpack
+engine.walk() → bulkCmd() → 回傳 2D [[ObjectType], ...] → ❌ ValueError
+```
+
+只有 version 用 get()，所以只有 version 成功。
+
+### D.4 除錯 Checklist：一步步排查
+
+當某個指標出問題時，按這個順序檢查：
+
+#### Step 1：確認問題範圍
+
+```
+□ 全部指標、全部設備 → 問題在 排程 或 服務層
+□ 全部指標、單台設備 → 問題在 快取層（community 或 連通性）
+□ 單一指標、全部設備 → 問題在 收集器層（collector 程式碼 bug）
+□ 單一指標、單台設備 → 問題在 特定 OID 與特定設備的組合
+```
+
+#### Step 2：看日誌找錯誤
+
+```bash
+# 開 DEBUG 模式
+# .env → APP_DEBUG=true → 重啟
+
+# 找 ERROR 和 WARNING
+docker logs netora_app --tail 500 2>&1 | grep -E "ERROR|WARNING|Traceback|ValueError|TypeError"
+
+# 找特定 collector 的日誌
+docker logs netora_app --tail 500 2>&1 | grep "get_fan"
+```
+
+#### Step 3：手動測 SNMP 連通
+
+```bash
+docker exec -it netora_app bash
+
+# 測 GET（scalar OID，version 用的方式）
+snmpget -v2c -c <community> <IP> 1.3.6.1.2.1.1.1.0
+
+# 測 WALK（table OID，其他 collector 用的方式）
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.2.1.31.1.1.1.1   # ifName
+```
+
+如果 `snmpget` 成功但 `snmpwalk` 失敗 → 問題在交換機的 GETBULK 支援
+如果兩個都失敗 → community 錯誤或網路不通
+
+#### Step 4：看 collector 程式碼
+
+每個 collector 的結構都一樣：
+
+```python
+# app/snmp/collectors/xxx.py
+class XxxCollector(BaseSnmpCollector):
+    api_name = "get_xxx"                       # ← Dashboard 上的指標名稱
+
+    async def collect(self, target, device_type, session_cache, engine):
+        # 1. Walk OID 拿 raw data
+        varbinds = await engine.walk(target, SOME_OID)     # ← 這一步拿到的是 [(oid_str, val_str), ...]
+
+        # 2. 拿 ifIndex → ifName 對照表
+        ifindex_map = await session_cache.get_ifindex_map(target.ip)
+
+        # 3. 解析 varbind → ParsedData
+        for oid_str, val_str in varbinds:
+            idx = self.extract_index(oid_str, SOME_OID)    # ← 從完整 OID 取出索引（如 ifIndex）
+            value = self.safe_int(val_str)                 # ← 安全轉整數（失敗回 0）
+            ifname = ifindex_map.get(int(idx))             # ← 查介面名稱
+            # ... 建立 ParsedData ...
+
+        return raw_text, results
+```
+
+**常見出錯點：**
+
+| 位置 | 可能錯誤 | 怎麼看 |
+|------|---------|--------|
+| `engine.walk()` | OID 不支援、timeout | 看 ERROR 日誌或手動 snmpwalk |
+| `extract_index()` | OID 結構與預期不同 | 用 snmpwalk 看實際回傳的完整 OID |
+| `safe_int()` | 回傳不是數字（如 "Copper"、"0xa2"） | 用 snmpwalk 看回傳值的格式 |
+| `ifindex_map.get()` | ifIndex 查不到 ifName | 手動 snmpwalk ifName 對照 |
+
+#### Step 5：用 snmpwalk 對比程式預期
+
+如果收集器的解析有問題，最關鍵的一步是用 snmpwalk 看**實際回傳的格式**：
+
+```bash
+# 例如懷疑 LAG 的 ActorOperState 有問題
+snmpwalk -v2c -c <community> <IP> 1.2.840.10006.300.43.1.2.1.1.21
+```
+
+如果看到回傳是：
+```
+SNMPv2-SMI::...21.49153 = Hex-STRING: 3D
+```
+
+但 collector 用 `safe_int()` 解析 → `safe_int("0x3d")` 回傳 0 → **bug！**
+
+修法：需要特殊解析函式（像我們加的 `_parse_oper_state_byte()`）。
+
+**常見的 pysnmp 回傳格式陷阱：**
+
+| MIB SYNTAX 定義 | pysnmp `prettyPrint()` 回傳格式 | 正確解析方式 |
+|----------------|-------------------------------|------------|
+| `INTEGER` | `"42"` | `safe_int()` 或 `int()` |
+| `Counter32` | `"12345"` | `safe_int()` 或 `int()` |
+| `OCTET STRING (SIZE(1))` | `"0x3d"` 或 `"3D"` | 需要特殊 hex parser |
+| `DisplayString` | `"GigabitEthernet1/0/1"` | 直接當字串用 |
+| `OBJECT IDENTIFIER` | `"1.3.6.1.4.1.25506..."` | 直接當字串比對 |
+| 銅纜光模組特殊值 | `"Copper"` / `"N/A"` | `try: int(val)` + `except` 跳過 |
+
+### D.5 程式碼檔案導覽
+
+如果你需要改程式碼，這是每個檔案的用途：
+
+```
+app/snmp/
+├── engine.py              # 底層 SNMP 通訊（get/walk/bulkCmd）
+│                            通常不需要改，除非 pysnmp 行為有變
+│
+├── session_cache.py       # Community 偵測 + ifIndex/bridge port 快取
+│                            如果某台交換機的 community 偵測邏輯需要調整
+│
+├── collection_service.py  # 採集服務主流程（載設備、平行採集、寫 DB）
+│                            如果要改採集並行度或重試邏輯
+│
+├── collector_base.py      # Collector 基底類別（retry、extract_index、safe_int）
+│                            所有 collector 的共用方法在這
+│
+├── oid_maps.py            # 所有 OID 常數 + 值對照表
+│                            如果需要新增 OID 或改值映射
+│
+└── collectors/            # 10 個 collector（每個指標一個檔案）
+    ├── fan.py             # HPE: ENTITY-MIB + HH3C-ENTITY-EXT
+    ├── power.py           # HPE: ENTITY-MIB + HH3C-ENTITY-EXT
+    ├── version.py         # SNMPv2-MIB sysDescr（唯一用 get() 的）
+    ├── transceiver.py     # HPE: HH3C-TRANSCEIVER / Cisco: ENTITY-SENSOR
+    ├── error_count.py     # IF-MIB ifInErrors + ifOutErrors
+    ├── channel_group.py   # IEEE8023-LAG-MIB
+    ├── neighbor_lldp.py   # LLDP-MIB
+    ├── neighbor_cdp.py    # CISCO-CDP-MIB（僅 Cisco）
+    ├── mac_table.py       # Q-BRIDGE / BRIDGE-MIB
+    └── interface_status.py # IF-MIB + EtherLike-MIB
+```
+
+### D.6 自己修 Bug 的流程
+
+如果你在公司遇到問題，需要自己修的話：
+
+```
+1. 看日誌 → 確定是哪個 collector 壞了
+     ↓
+2. snmpwalk → 看交換機實際回傳的 OID 格式和值
+     ↓
+3. 比對 collector 程式碼 → 找到解析那一段
+     ↓
+4. 改程式碼（vi app/snmp/collectors/xxx.py）
+     ↓
+5. 在公司重建 image（見 SOP 1b.8）：
+   docker build \
+     --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.5.2 \
+     -f docker/production/Dockerfile \
+     -t netora-production:v2.5.2-fix1 .
+     ↓
+6. 重啟服務，觀察日誌確認修復
+```
+
+**改 collector 程式碼的注意事項：**
+
+1. 每個 collector 的 `collect()` 方法必須回傳 `tuple[str, list[ParsedData]]`
+2. `extract_index(oid_str, OID_PREFIX)` → 取出 OID 的最後一段索引
+3. `safe_int(val_str, default=0)` → 安全轉整數，失敗回 default
+4. 如果遇到非 INTEGER 的 SYNTAX（如 OCTET STRING），需要自己寫解析
+5. 改完後如果有網路環境，可以跑測試：`python -m pytest tests/unit/snmp/ -v`
+
+### D.7 歷史 Bug 參考
+
+以下是已經修過的 bug，如果遇到類似問題可以參考修法：
+
+| Bug | 根因 | 修法 | 修在哪 |
+|-----|------|------|--------|
+| 全部 collector 爆掉，只有 version 活 | pysnmp v6 `bulkCmd` 回傳 2D 表格，`walk()` 沒處理 | `var_bind_row[0]` 取第一個元素 | `engine.py:222` |
+| SNMP 完全連不上 | `SNMP_COMMUNITIES` 設定值解析錯誤（list vs str） | 改 config 為 str + property 拆分 | `config.py` |
+| LLDP 鄰居全部被跳過 | `lldpRemTimeMark` 可以很大（如 1338488631），索引 >= 3 段 | `_parse_lldp_remote_index()` 改用 `parts[-2]`, `parts[-1]` | `neighbor_lldp.py:51` |
+| LAG 成員狀態全 down | `ActorOperState` 是 OCTET STRING(1)，pysnmp 回 `"0x3d"` | 新增 `_parse_oper_state_byte()` 處理 hex | `channel_group.py:42` |
+| 銅纜 SFP 出現錯誤的 0.0 dBm | 銅纜模組回 `"Copper"` 不是數字，`safe_int()` 回 0 | `try: int(val)` + `except` 跳過 | `transceiver.py:98` |
 
 ---
 
