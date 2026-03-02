@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.endpoints.auth import get_current_user, require_write
+from app.api.endpoints.auth import check_maintenance_access, get_current_user, require_write
 from app.core.enums import DataType, IndicatorObjectType
 from app.core.timezone import now_utc
 from app.db.base import get_async_session
@@ -279,6 +279,7 @@ async def get_indicator_timeseries(
     """
     取得 Indicator 的時間序列資料（用於前端圖表）。
     """
+    check_maintenance_access(_user, maintenance_id)
     indicator = indicator_manager.get_indicator(indicator_name)
 
     if not indicator:
@@ -329,6 +330,7 @@ async def get_indicator_raw_data(
     """
     取得 Indicator 的原始資料表格。
     """
+    check_maintenance_access(_user, maintenance_id)
     indicator = indicator_manager.get_indicator(indicator_name)
 
     if not indicator:
@@ -338,26 +340,24 @@ async def get_indicator_raw_data(
         )
 
     await ensure_cache(session, maintenance_id)
+    offset = (page - 1) * page_size
     raw_data = await indicator.get_latest_raw_data(
-        limit=page_size * page,
+        limit=page_size,
         session=session,
         maintenance_id=maintenance_id,
+        offset=offset,
     )
     metadata = indicator.get_metadata()
 
-    start_idx = (page - 1) * page_size
-    end_idx = start_idx + page_size
-    paged_data = raw_data[start_idx:end_idx]
-
     columns = _get_columns_for_indicator(indicator_name)
-    rows = [data.model_dump() for data in paged_data]
+    rows = [data.model_dump() for data in raw_data]
 
     return RawDataTableResponse(
         indicator_name=indicator_name,
         title=f"{metadata.title} - 原始資料",
         columns=columns,
         rows=rows,
-        total=len(raw_data),
+        total=len(rows),
         page=page,
         page_size=page_size,
         last_updated=getattr(indicator, "_last_collection_time", None),
@@ -406,6 +406,7 @@ async def trigger_collection(
     """
     觸發指定 Indicator 的資料收集。
     """
+    check_maintenance_access(_user, maintenance_id)
     indicator = indicator_manager.get_indicator(indicator_name)
 
     if not indicator:

@@ -166,6 +166,7 @@ class BaseIndicator(ABC):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
+        offset: int = 0,
     ) -> list[RawDataRow]:
         """
         Get latest raw data records for this indicator.
@@ -174,6 +175,7 @@ class BaseIndicator(ABC):
             limit: Maximum number of records to return
             session: Database session
             maintenance_id: Maintenance ID to query
+            offset: Number of records to skip (for pagination)
 
         Returns:
             List of raw data rows

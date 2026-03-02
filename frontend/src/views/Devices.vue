@@ -249,8 +249,8 @@
                   <th class="px-2 py-2 text-center">
                     <input type="checkbox" v-model="isAllDeviceSelected" class="rounded border-slate-500" />
                   </th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="3">舊設備</th>
-                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="3">新設備</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="2">舊設備</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase" colspan="2">新設備</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">Tenant</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">備註</th>
                   <th class="px-3 py-2 text-left text-xs font-medium text-slate-400 uppercase">操作</th>
@@ -259,10 +259,8 @@
                   <th class="px-2 py-1"></th>
                   <th class="px-2 py-1 text-left text-xs text-slate-500">Hostname</th>
                   <th class="px-2 py-1 text-left text-xs text-slate-500">IP</th>
-                  <th class="px-2 py-1 text-left text-xs text-slate-500">Device Type</th>
                   <th class="px-2 py-1 text-left text-xs text-slate-500">Hostname</th>
                   <th class="px-2 py-1 text-left text-xs text-slate-500">IP</th>
-                  <th class="px-2 py-1 text-left text-xs text-slate-500">Device Type</th>
                   <th class="px-2 py-1"></th>
                   <th class="px-2 py-1"></th>
                   <th class="px-2 py-1"></th>
@@ -284,7 +282,6 @@
                           ? 'ping-dot-red ping-glow-red animate-pulse'
                           : 'bg-slate-600'"
                     ></span>{{ device.old_ip_address || '-' }}</td>
-                  <td class="px-2 py-2 text-slate-400 text-xs">{{ device.old_vendor || '-' }}</td>
                   <td class="px-2 py-2 font-mono text-slate-200 text-xs break-all">{{ device.new_hostname || '-' }}</td>
                   <td class="px-2 py-2 font-mono text-slate-400 text-xs whitespace-nowrap">
                     <span
@@ -296,11 +293,10 @@
                           ? 'ping-dot-red ping-glow-red animate-pulse'
                           : 'bg-slate-600'"
                     ></span>{{ device.new_ip_address || '-' }}</td>
-                  <td class="px-2 py-2 text-slate-400 text-xs">{{ device.new_vendor || '-' }}</td>
                   <td class="px-2 py-2">
                     <span class="px-1.5 py-0.5 bg-purple-600/30 text-purple-300 rounded text-xs">{{ device.tenant_group || 'F18' }}</span>
                   </td>
-                  <td class="px-2 py-2 text-slate-400 text-xs max-w-[80px] truncate" :title="device.description">
+                  <td class="px-2 py-2 text-slate-400 text-xs max-w-[200px] truncate" :title="device.description">
                     {{ device.description || '-' }}
                   </td>
                   <td class="px-2 py-2 text-xs whitespace-nowrap">

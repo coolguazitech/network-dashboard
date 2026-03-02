@@ -406,16 +406,30 @@ class TypedRecordRepository(Generic[RecordT]):
         self,
         maintenance_id: str,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[RecordT]:
         """Get latest typed rows (for raw data table display)."""
         stmt = (
             select(self.model)
             .where(self.model.maintenance_id == maintenance_id)
             .order_by(self.model.collected_at.desc())
+            .offset(offset)
             .limit(limit)
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def count_records(self, maintenance_id: str) -> int:
+        """Count total records for pagination."""
+        from sqlalchemy import func
+
+        stmt = (
+            select(func.count())
+            .select_from(self.model)
+            .where(self.model.maintenance_id == maintenance_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
 
 
 # ── Concrete Repositories ─────────────────────────────────────

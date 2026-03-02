@@ -247,19 +247,20 @@ class UplinkIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
+        offset: int = 0,
     ) -> list[RawDataRow]:
         """獲取最新原始數據（合併 LLDP + CDP）。"""
         all_records: list[NeighborRecord] = []
         for ct in _UPLINK_COLLECTION_TYPES:
             repo = get_typed_repo(ct, session)
             records = await repo.get_latest_records(
-                maintenance_id, limit
+                maintenance_id, limit + offset
             )
             all_records.extend(records)
 
-        # 按時間排序（最新優先）並限制數量
+        # 按時間排序（最新優先）並分頁
         all_records.sort(key=lambda r: r.collected_at, reverse=True)
-        all_records = all_records[:limit]
+        all_records = all_records[offset:offset + limit]
 
         raw_data = []
         for record in all_records:

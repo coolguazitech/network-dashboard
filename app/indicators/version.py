@@ -219,6 +219,7 @@ class VersionIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
+        offset: int = 0,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
         version_expectations = await self._load_expectations(
@@ -227,7 +228,7 @@ class VersionIndicator(BaseIndicator):
 
         repo = VersionRecordRepo(session)
         records = await repo.get_latest_records(
-            maintenance_id, limit
+            maintenance_id, limit, offset=offset
         )
 
         raw_data = []

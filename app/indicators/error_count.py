@@ -274,12 +274,14 @@ class ErrorCountIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
+        offset: int = 0,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
         repo = InterfaceErrorRecordRepo(session)
         records = await repo.get_latest_records(
             maintenance_id=maintenance_id,
             limit=limit,
+            offset=offset,
         )
 
         return [

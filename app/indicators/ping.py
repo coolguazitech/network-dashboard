@@ -243,11 +243,12 @@ class PingIndicator(BaseIndicator):
         limit: int,
         session: AsyncSession,
         maintenance_id: str,
+        offset: int = 0,
     ) -> list[RawDataRow]:
         """獲取最新原始數據。"""
         repo = PingRecordRepo(session)
         records = await repo.get_latest_records(
-            maintenance_id, limit=limit
+            maintenance_id, limit=limit, offset=offset
         )
 
         raw_data = []

@@ -38,15 +38,21 @@ ATTRIBUTE_LABELS: dict[str, str] = {
 }
 
 
-def _detect_change(values: list[Any]) -> bool:
+def _detect_change(
+    values: list[Any],
+    last_collected_at: datetime | None = None,
+) -> bool:
     """
     判斷屬性是否有變化。
 
     規則：
     1. 無快照 → 無變化
-    2. 唯一非空值且最近非空 → 無變化（穩定）
-    3. 唯一非空值但最近為空 → 有變化（設備離線/更換中）
-    4. 多個不同非空值 → 有變化
+    2. 多個不同非空值 → 有變化
+    3. 唯一非空值且最近為空 → 無變化（設備維護中/離線屬預期）
+    4. 唯一非空值且最近非空，歷史有空值（- → 某狀態）：
+       a. 最後採集距今 > 15 分鐘 → 無變化（已穩定）
+       b. 最後採集距今 ≤ 15 分鐘 → 有變化（剛上線/剛變化）
+    5. 唯一非空值且歷史無空值 → 無變化（一直穩定）
     """
     if not values:
         return False
@@ -58,13 +64,25 @@ def _detect_change(values: list[Any]) -> bool:
     unique_non_null = set(str(v) for v in non_null)
 
     if len(unique_non_null) > 1:
-        return True  # 規則 4：多個不同值
+        return True  # 規則 2：多個不同值
 
     # 只有一個唯一非空值
     if values[-1] is None:
-        return True  # 規則 3：最近為空（離線/更換中）
+        return False  # 規則 3：最近為空 → 設備離線屬預期（正常）
 
-    return False  # 規則 2：穩定
+    # 最近是非空值，檢查歷史是否有空值
+    if None in values:
+        # 歷史有 None（- → 某狀態），需看時間判定
+        if last_collected_at is not None:
+            now = datetime.now(timezone.utc)
+            ts = last_collected_at
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if (now - ts) > timedelta(minutes=15):
+                return False  # 規則 4a：已穩定超過 15 分鐘
+        return True  # 規則 4b：剛變化或無時間資訊 → 異常
+
+    return False  # 規則 5：歷史無空值，一直穩定
 
 
 class CaseService:
@@ -266,12 +284,14 @@ class CaseService:
         for case_obj, ip_address, description, tenant_group in rows:
             # 即時計算屬性變化標籤（與 detail API 使用相同邏輯）
             mac_records = records_by_mac.get(case_obj.mac_address.upper(), [])
+            last_ts = mac_records[-1].collected_at if mac_records else None
             change_tags = [
                 {
                     "attribute": attr,
                     "label": ATTRIBUTE_LABELS.get(attr, attr),
                     "has_change": _detect_change(
-                        [getattr(r, attr, None) for r in mac_records]
+                        [getattr(r, attr, None) for r in mac_records],
+                        last_collected_at=last_ts,
                     ),
                 }
                 for attr in TRACKED_ATTRIBUTES
@@ -366,10 +386,11 @@ class CaseService:
         result = await session.execute(stmt)
         records = result.scalars().all()
 
+        last_ts = records[-1].collected_at if records else None
         tags = []
         for attr in TRACKED_ATTRIBUTES:
             values = [getattr(r, attr, None) for r in records]
-            has_change = _detect_change(values)
+            has_change = _detect_change(values, last_collected_at=last_ts)
             tags.append({
                 "attribute": attr,
                 "label": ATTRIBUTE_LABELS.get(attr, attr),
@@ -913,10 +934,11 @@ class CaseService:
         updated = 0
         for case_id, mac_address in case_rows:
             records = records_by_mac.get(mac_address.upper(), [])
+            last_ts = records[-1].collected_at if records else None
             flags = {}
             for attr in TRACKED_ATTRIBUTES:
                 values = [getattr(r, attr, None) for r in records]
-                flags[attr] = _detect_change(values)
+                flags[attr] = _detect_change(values, last_collected_at=last_ts)
 
             await session.execute(
                 update(Case)

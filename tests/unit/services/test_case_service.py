@@ -47,18 +47,27 @@ class TestDetectChange:
         assert _detect_change([None, None]) is False
 
     def test_detect_change_none_vs_value(self):
-        """None followed by a value then None: last is None with one
-        unique non-null => change detected (device offline/swapped)."""
-        assert _detect_change([None, 1]) is False  # last value is non-null, one unique => stable
+        """None followed by a value: transition from - to value,
+        no timestamp → conservative → change (rule 4b)."""
+        assert _detect_change([None, 1]) is True
+
+    def test_detect_change_none_vs_value_settled(self):
+        """None followed by a value, timestamp > 15 min ago → stable (rule 4a)."""
+        old_ts = datetime.now(timezone.utc) - timedelta(minutes=20)
+        assert _detect_change([None, 1], last_collected_at=old_ts) is False
+
+    def test_detect_change_none_vs_value_recent(self):
+        """None followed by a value, timestamp < 15 min → change (rule 4b)."""
+        recent_ts = datetime.now(timezone.utc) - timedelta(minutes=5)
+        assert _detect_change([None, 1], last_collected_at=recent_ts) is True
 
     def test_detect_change_value_then_none(self):
-        """Value followed by None: last value is None with one unique
-        non-null => change detected (rule 3: device went offline)."""
-        assert _detect_change([1, None]) is True
+        """Value followed by None: device offline → normal (rule 3)."""
+        assert _detect_change([1, None]) is False
 
     def test_detect_change_none_value_none(self):
-        """[None, 1, None]: last is None, one unique non-null => change (rule 3)."""
-        assert _detect_change([None, 1, None]) is True
+        """[None, 1, None]: last is None → normal (rule 3)."""
+        assert _detect_change([None, 1, None]) is False
 
     def test_detect_change_two_same(self):
         """Two identical values: stable, no change."""
@@ -81,8 +90,13 @@ class TestDetectChange:
         assert _detect_change([True, True]) is False
 
     def test_detect_change_none_then_value_last_nonnull(self):
-        """[None, 1]: last value is 1 (non-null), only one unique non-null => stable."""
-        assert _detect_change([None, 1]) is False
+        """[None, 1]: transition - → value, no timestamp → change (rule 4b)."""
+        assert _detect_change([None, 1]) is True
+
+    def test_detect_change_none_then_value_settled_15min(self):
+        """[None, 1] with old timestamp → stable after 15 min."""
+        old_ts = datetime.now(timezone.utc) - timedelta(minutes=16)
+        assert _detect_change([None, 1], last_collected_at=old_ts) is False
 
 
 # ══════════════════════════════════════════════════════════════════
