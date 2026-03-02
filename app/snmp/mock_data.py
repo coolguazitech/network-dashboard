@@ -37,6 +37,8 @@ from app.snmp.oid_maps import (
     ENT_PHYSICAL_CLASS,
     ENT_PHYSICAL_NAME,
     HH3C_ENTITY_EXT_ERROR_STATUS,
+    HH3C_TRANSCEIVER_CHANNEL_RX_POWER,
+    HH3C_TRANSCEIVER_CHANNEL_TX_POWER,
     HH3C_TRANSCEIVER_RX_POWER,
     HH3C_TRANSCEIVER_TEMPERATURE,
     HH3C_TRANSCEIVER_TX_POWER,
@@ -47,6 +49,7 @@ from app.snmp.oid_maps import (
     IF_OPER_STATUS,
     IF_OUT_ERRORS,
     LLDP_LOC_PORT_DESC,
+    LLDP_LOC_PORT_ID,
     LLDP_REM_PORT_DESC,
     LLDP_REM_PORT_ID,
     LLDP_REM_SYS_NAME,
@@ -424,6 +427,8 @@ def mock_walk(
         if fails and len(neighbors) > 1:
             neighbors = neighbors[:1]
         return _mock_lldp_rem_port_desc(interfaces, neighbors)
+    if oid_prefix == LLDP_LOC_PORT_ID:
+        return _mock_lldp_loc_port_id(interfaces)
     if oid_prefix == LLDP_LOC_PORT_DESC:
         return _mock_lldp_loc_port_desc(interfaces)
 
@@ -444,6 +449,10 @@ def mock_walk(
         return _mock_hpe_transceiver_tx(interfaces, rng)
     if oid_prefix == HH3C_TRANSCEIVER_RX_POWER:
         return _mock_hpe_transceiver_rx(interfaces, rng)
+    if oid_prefix == HH3C_TRANSCEIVER_CHANNEL_TX_POWER:
+        return _mock_hpe_transceiver_channel_tx(interfaces, rng)
+    if oid_prefix == HH3C_TRANSCEIVER_CHANNEL_RX_POWER:
+        return _mock_hpe_transceiver_channel_rx(interfaces, rng)
 
     # ── Cisco MIBs (no vendor guard — collector decides) ──────
     if oid_prefix == CISCO_ENV_FAN_STATE:
@@ -698,6 +707,16 @@ def _mock_lldp_rem_port_desc(
     return results
 
 
+def _mock_lldp_loc_port_id(
+    interfaces: list[tuple[str, int, int]],
+) -> list[tuple[str, str]]:
+    """LLDP local port ID. Index: localPortNum"""
+    return [
+        (f"{LLDP_LOC_PORT_ID}.{idx}", name)
+        for name, idx, _ in interfaces
+    ]
+
+
 def _mock_lldp_loc_port_desc(
     interfaces: list[tuple[str, int, int]],
 ) -> list[tuple[str, str]]:
@@ -842,6 +861,34 @@ def _mock_hpe_transceiver_rx(
     uplink = interfaces[-2]
     rx = -800 + rng.randint(-200, 200)  # -8.0 ± 2.0 dBm
     return [(f"{HH3C_TRANSCEIVER_RX_POWER}.{uplink[1]}", str(rx))]
+
+
+def _mock_hpe_transceiver_channel_tx(
+    interfaces: list[tuple[str, int, int]],
+    rng: _random.Random,
+) -> list[tuple[str, str]]:
+    """HH3C QSFP per-channel TX power (0.01 dBm units). 4 lanes."""
+    uplink = interfaces[-2]
+    ifidx = uplink[1]
+    results: list[tuple[str, str]] = []
+    for ch in range(1, 5):
+        tx = -300 + rng.randint(-100, 100)
+        results.append((f"{HH3C_TRANSCEIVER_CHANNEL_TX_POWER}.{ifidx}.{ch}", str(tx)))
+    return results
+
+
+def _mock_hpe_transceiver_channel_rx(
+    interfaces: list[tuple[str, int, int]],
+    rng: _random.Random,
+) -> list[tuple[str, str]]:
+    """HH3C QSFP per-channel RX power (0.01 dBm units). 4 lanes."""
+    uplink = interfaces[-2]
+    ifidx = uplink[1]
+    results: list[tuple[str, str]] = []
+    for ch in range(1, 5):
+        rx = -800 + rng.randint(-200, 200)
+        results.append((f"{HH3C_TRANSCEIVER_CHANNEL_RX_POWER}.{ifidx}.{ch}", str(rx)))
+    return results
 
 
 # ── Cisco fan/power mock ─────────────────────────────────────────

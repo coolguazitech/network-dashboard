@@ -479,9 +479,15 @@ class SchedulerService:
                                 resp = await http.post(
                                     url,
                                     json={
-                                        "app_name": "network_change_orchestrator",
+                                        "app_name": "network-change-orchestrator",
                                         "token": ping_cfg.token,
                                         "addresses": sorted(device_ip_map),
+                                        "count": 2,
+                                        "interval": 0.1,
+                                        "timeout": 2,
+                                        "concurrent_tasks": 10,
+                                        "family": 4,
+                                        "privileged": True,
                                     },
                                 )
                                 resp.raise_for_status()
@@ -628,9 +634,15 @@ class SchedulerService:
                                 resp = await http.post(
                                     url,
                                     json={
-                                        "app_name": "network_change_orchestrator",
+                                        "app_name": "network-change-orchestrator",
                                         "token": ping_cfg.token,
                                         "addresses": sorted(client_ips),
+                                        "count": 2,
+                                        "interval": 0.1,
+                                        "timeout": 2,
+                                        "concurrent_tasks": 10,
+                                        "family": 4,
+                                        "privileged": True,
                                     },
                                 )
                                 resp.raise_for_status()

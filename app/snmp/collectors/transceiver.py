@@ -27,6 +27,8 @@ from app.snmp.oid_maps import (
     CISCO_SENSOR_TYPE_DBM,
     CISCO_SENSOR_TYPE_VOLTS_DC,
     ENT_PHYSICAL_NAME,
+    HH3C_TRANSCEIVER_CHANNEL_RX_POWER,
+    HH3C_TRANSCEIVER_CHANNEL_TX_POWER,
     HH3C_TRANSCEIVER_RX_POWER,
     HH3C_TRANSCEIVER_TEMPERATURE,
     HH3C_TRANSCEIVER_TX_POWER,
@@ -71,17 +73,25 @@ class TransceiverCollector(BaseSnmpCollector):
         engine: AsyncSnmpEngine,
     ) -> tuple[str, list[ParsedData]]:
         """
-        HH3C-TRANSCEIVER-INFO-MIB: indexed by ifIndex.
+        HH3C-TRANSCEIVER-INFO-MIB.
+
+        Single-channel (SFP): hh3cTransceiverInfoEntry indexed by ifIndex.
+        Multi-channel (QSFP): hh3cTransceiverChannelEntry indexed by ifIndex.channel.
 
         Values:
         - temperature: 1 degree C units
-        - voltage: millivolts (0.001 V)
+        - voltage: hundredths of V (0.01 V)
         - tx_power / rx_power: 0.01 dBm
         """
+        # Module-level (per ifIndex)
         temp_varbinds = await engine.walk(target, HH3C_TRANSCEIVER_TEMPERATURE)
         volt_varbinds = await engine.walk(target, HH3C_TRANSCEIVER_VOLTAGE)
+        # Single-channel power (per ifIndex)
         tx_varbinds = await engine.walk(target, HH3C_TRANSCEIVER_TX_POWER)
         rx_varbinds = await engine.walk(target, HH3C_TRANSCEIVER_RX_POWER)
+        # Multi-channel power (per ifIndex.channel — QSFP)
+        ch_tx_varbinds = await engine.walk(target, HH3C_TRANSCEIVER_CHANNEL_TX_POWER)
+        ch_rx_varbinds = await engine.walk(target, HH3C_TRANSCEIVER_CHANNEL_RX_POWER)
 
         # Map ifIndex -> ifName
         ifindex_map = await session_cache.get_ifindex_map(target.ip)
@@ -117,6 +127,7 @@ class TransceiverCollector(BaseSnmpCollector):
                         val_str, idx,
                     )
 
+        # Single-channel TX/RX (SFP)
         tx_powers: dict[int, float] = {}
         for oid_str, val_str in tx_varbinds:
             idx = self.safe_int(
@@ -145,8 +156,40 @@ class TransceiverCollector(BaseSnmpCollector):
                         val_str, idx,
                     )
 
+        # Multi-channel TX/RX (QSFP) — indexed by ifIndex.channel
+        # channel_tx[ifIndex] = {channel_num: dBm_value}
+        channel_tx: dict[int, dict[int, float]] = defaultdict(dict)
+        for oid_str, val_str in ch_tx_varbinds:
+            suffix = self.extract_index(oid_str, HH3C_TRANSCEIVER_CHANNEL_TX_POWER)
+            parts = suffix.split(".", 1) if suffix else []
+            if len(parts) == 2:
+                ifidx = self.safe_int(parts[0], -1)
+                ch_num = self.safe_int(parts[1], -1)
+                if ifidx >= 0 and ch_num >= 1:
+                    try:
+                        channel_tx[ifidx][ch_num] = int(val_str) / 100.0
+                    except (ValueError, TypeError):
+                        pass
+
+        channel_rx: dict[int, dict[int, float]] = defaultdict(dict)
+        for oid_str, val_str in ch_rx_varbinds:
+            suffix = self.extract_index(oid_str, HH3C_TRANSCEIVER_CHANNEL_RX_POWER)
+            parts = suffix.split(".", 1) if suffix else []
+            if len(parts) == 2:
+                ifidx = self.safe_int(parts[0], -1)
+                ch_num = self.safe_int(parts[1], -1)
+                if ifidx >= 0 and ch_num >= 1:
+                    try:
+                        channel_rx[ifidx][ch_num] = int(val_str) / 100.0
+                    except (ValueError, TypeError):
+                        pass
+
         # Build results: one TransceiverData per ifIndex with data
-        all_ifindexes = set(temps) | set(volts) | set(tx_powers) | set(rx_powers)
+        all_ifindexes = (
+            set(temps) | set(volts)
+            | set(tx_powers) | set(rx_powers)
+            | set(channel_tx) | set(channel_rx)
+        )
 
         results: list[ParsedData] = []
         for ifindex in sorted(all_ifindexes):
@@ -160,17 +203,33 @@ class TransceiverCollector(BaseSnmpCollector):
 
             temperature = temps.get(ifindex)
             voltage = volts.get(ifindex)
-            tx_pwr = tx_powers.get(ifindex)
-            rx_pwr = rx_powers.get(ifindex)
 
-            # Single channel (SFP) per interface
-            channels = [
-                TransceiverChannelData(
-                    channel=1,
-                    tx_power=tx_pwr,
-                    rx_power=rx_pwr,
-                ),
-            ]
+            # Prefer multi-channel data (QSFP); fall back to single-channel
+            ch_tx_map = channel_tx.get(ifindex, {})
+            ch_rx_map = channel_rx.get(ifindex, {})
+
+            if ch_tx_map or ch_rx_map:
+                # Multi-channel: build one TransceiverChannelData per lane
+                all_ch_nums = sorted(set(ch_tx_map) | set(ch_rx_map))
+                channels = [
+                    TransceiverChannelData(
+                        channel=ch_num,
+                        tx_power=ch_tx_map.get(ch_num),
+                        rx_power=ch_rx_map.get(ch_num),
+                    )
+                    for ch_num in all_ch_nums
+                ]
+            else:
+                # Single-channel (SFP)
+                tx_pwr = tx_powers.get(ifindex)
+                rx_pwr = rx_powers.get(ifindex)
+                channels = [
+                    TransceiverChannelData(
+                        channel=1,
+                        tx_power=tx_pwr,
+                        rx_power=rx_pwr,
+                    ),
+                ]
 
             results.append(
                 TransceiverData(
@@ -181,7 +240,11 @@ class TransceiverCollector(BaseSnmpCollector):
                 ),
             )
 
-        all_varbinds = temp_varbinds + volt_varbinds + tx_varbinds + rx_varbinds
+        all_varbinds = (
+            temp_varbinds + volt_varbinds
+            + tx_varbinds + rx_varbinds
+            + ch_tx_varbinds + ch_rx_varbinds
+        )
         raw_text = self.format_raw(
             self.api_name, target.ip, device_type, all_varbinds,
         )

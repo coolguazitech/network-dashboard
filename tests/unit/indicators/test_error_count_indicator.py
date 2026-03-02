@@ -1,5 +1,5 @@
 """
-Unit tests for ErrorCountIndicator.evaluate().
+Unit tests for ErrorCountIndicator.evaluate() — device-level evaluation.
 
 Mocking strategy:
 - indicator._get_active_device_hostnames  -> returns list of hostnames
@@ -46,7 +46,7 @@ def _make_record(
 
 
 class TestErrorCountEvaluate:
-    """Tests for ErrorCountIndicator.evaluate()."""
+    """Tests for ErrorCountIndicator.evaluate() — device-level."""
 
     @pytest.fixture()
     def indicator(self) -> ErrorCountIndicator:
@@ -56,12 +56,12 @@ class TestErrorCountEvaluate:
     def mock_session(self) -> AsyncMock:
         return AsyncMock()
 
-    # 1. Delta positive → failure -------------------------------------------
+    # 1. Delta positive → device failure --------------------------------------
 
     async def test_delta_positive_is_failure(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
     ) -> None:
-        """CRC errors grew from 10 to 15 (delta=+5) -> failure with 'CRC 增長 +5'."""
+        """CRC errors grew on an interface -> device fails."""
         current = [_make_record("switch-A", "Gi1/0/1", crc_errors=15, batch_id=200)]
         prev = {"switch-A": {"Gi1/0/1": {"crc_errors": 10}}}
 
@@ -89,18 +89,21 @@ class TestErrorCountEvaluate:
 
         failure = result.failures[0]
         assert failure["device"] == "switch-A"
-        assert failure["interface"] == "Gi1/0/1"
-        assert "CRC 增長 +5" in failure["reason"]
-        assert failure["data"]["delta"] == 5
-        assert failure["data"]["prev_crc_errors"] == 10
-        assert failure["data"]["crc_errors"] == 15
+        assert "CRC 增長" in failure["reason"]
+        # Verify growing_interfaces detail
+        growing = failure["data"]["growing_interfaces"]
+        assert len(growing) == 1
+        assert growing[0]["interface"] == "Gi1/0/1"
+        assert growing[0]["delta"] == 5
+        assert growing[0]["prev_crc_errors"] == 10
+        assert growing[0]["crc_errors"] == 15
 
-    # 2. Delta zero → pass --------------------------------------------------
+    # 2. Delta zero → device pass ---------------------------------------------
 
     async def test_delta_zero_is_pass(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
     ) -> None:
-        """CRC errors unchanged (delta=0) -> pass with '計數器未增長'."""
+        """CRC errors unchanged -> device passes with '計數器未增長'."""
         current = [_make_record("switch-A", "Gi1/0/1", crc_errors=10, batch_id=200)]
         prev = {"switch-A": {"Gi1/0/1": {"crc_errors": 10}}}
 
@@ -125,14 +128,13 @@ class TestErrorCountEvaluate:
         assert result.fail_count == 0
         assert result.passes is not None
         assert result.passes[0]["reason"] == "計數器未增長"
-        assert result.passes[0]["data"]["delta"] == 0
 
-    # 3. Delta negative → pass (counter reset) ------------------------------
+    # 3. Delta negative → device pass (counter reset) -------------------------
 
     async def test_delta_negative_is_pass(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
     ) -> None:
-        """CRC errors decreased (counter reset, delta<0) -> pass with '計數器已重置'."""
+        """CRC errors decreased (counter reset) -> device passes."""
         current = [_make_record("switch-A", "Gi1/0/1", crc_errors=3, batch_id=200)]
         prev = {"switch-A": {"Gi1/0/1": {"crc_errors": 50}}}
 
@@ -156,15 +158,14 @@ class TestErrorCountEvaluate:
         assert result.pass_count == 1
         assert result.fail_count == 0
         assert result.passes is not None
-        assert result.passes[0]["reason"] == "計數器已重置"
-        assert result.passes[0]["data"]["delta"] == -47
+        assert result.passes[0]["reason"] == "計數器未增長"
 
-    # 4. First collection, no previous batch --------------------------------
+    # 4. First collection, no previous batch ----------------------------------
 
     async def test_first_collection_no_previous(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
     ) -> None:
-        """No previous batch data -> pass with '首次採集'."""
+        """No previous batch data -> device passes with '首次採集'."""
         current = [_make_record("switch-A", "Gi1/0/1", crc_errors=5, batch_id=200)]
         prev: dict = {}  # no previous batches at all
 
@@ -190,12 +191,12 @@ class TestErrorCountEvaluate:
         assert result.passes is not None
         assert "首次採集" in result.passes[0]["reason"]
 
-    # 5. Non-active devices are filtered out --------------------------------
+    # 5. Non-active devices are filtered out ----------------------------------
 
     async def test_non_active_devices_filtered(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
     ) -> None:
-        """Records from inactive devices should not be counted at all."""
+        """Records from inactive devices should not be counted."""
         # "switch-B" is in the records but NOT in active device list
         current = [
             _make_record("switch-A", "Gi1/0/1", crc_errors=10, batch_id=200),
@@ -219,7 +220,7 @@ class TestErrorCountEvaluate:
         ):
             result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
 
-        # Only switch-A's record should appear
+        # Only switch-A counted (1 device)
         assert result.total_count == 1
         assert result.pass_count == 1
         assert result.fail_count == 0
@@ -231,7 +232,7 @@ class TestErrorCountEvaluate:
             all_devices.update(f["device"] for f in result.failures)
         assert "switch-B" not in all_devices
 
-    # 6. Empty device list --------------------------------------------------
+    # 6. Empty device list ----------------------------------------------------
 
     async def test_empty_device_list(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
@@ -249,12 +250,12 @@ class TestErrorCountEvaluate:
         assert result.summary == "無設備資料"
         assert result.pass_rates == {"error_no_growth": 0}
 
-    # 7. Multiple interfaces per device -------------------------------------
+    # 7. Multiple interfaces per device — device-level aggregation ------------
 
-    async def test_multiple_interfaces_per_device(
+    async def test_multiple_interfaces_one_growth_device_fails(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
     ) -> None:
-        """Device with 3 interfaces, 1 failure -> total=3, pass=2, fail=1."""
+        """Device with 3 interfaces, 1 has growth -> device fails (total=1, fail=1)."""
         current = [
             _make_record("switch-A", "Gi1/0/1", crc_errors=10, batch_id=200),
             _make_record("switch-A", "Gi1/0/2", crc_errors=20, batch_id=200),
@@ -262,9 +263,9 @@ class TestErrorCountEvaluate:
         ]
         prev = {
             "switch-A": {
-                "Gi1/0/1": {"crc_errors": 10},   # delta=0  -> pass
-                "Gi1/0/2": {"crc_errors": 15},   # delta=+5 -> fail
-                "Gi1/0/3": {"crc_errors": 30},   # delta=0  -> pass
+                "Gi1/0/1": {"crc_errors": 10},   # delta=0  -> ok
+                "Gi1/0/2": {"crc_errors": 15},   # delta=+5 -> growth!
+                "Gi1/0/3": {"crc_errors": 30},   # delta=0  -> ok
             },
         }
 
@@ -284,20 +285,25 @@ class TestErrorCountEvaluate:
         ):
             result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
 
-        assert result.total_count == 3
-        assert result.pass_count == 2
+        # Device level: 1 device, it fails
+        assert result.total_count == 1
+        assert result.pass_count == 0
         assert result.fail_count == 1
         assert result.failures is not None
         assert len(result.failures) == 1
-        assert result.failures[0]["interface"] == "Gi1/0/2"
-        assert "CRC 增長 +5" in result.failures[0]["reason"]
+        assert result.failures[0]["device"] == "switch-A"
+        # Only Gi1/0/2 should be in the growing list
+        growing = result.failures[0]["data"]["growing_interfaces"]
+        assert len(growing) == 1
+        assert growing[0]["interface"] == "Gi1/0/2"
+        assert growing[0]["delta"] == 5
 
-    # 8. Mixed devices and interfaces ---------------------------------------
+    # 8. Mixed devices — each evaluated independently -------------------------
 
-    async def test_mixed_devices_and_interfaces(
+    async def test_mixed_devices(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
     ) -> None:
-        """Multiple devices with mixed pass/fail results."""
+        """Two devices, both have growth on one interface -> both fail."""
         current = [
             # switch-A: two interfaces
             _make_record("switch-A", "Gi1/0/1", crc_errors=10, batch_id=200),
@@ -308,12 +314,12 @@ class TestErrorCountEvaluate:
         ]
         prev = {
             "switch-A": {
-                "Gi1/0/1": {"crc_errors": 10},   # delta=0  -> pass
-                "Gi1/0/2": {"crc_errors": 30},   # delta=+20 -> fail
+                "Gi1/0/1": {"crc_errors": 10},   # delta=0  -> ok
+                "Gi1/0/2": {"crc_errors": 30},   # delta=+20 -> growth
             },
             "switch-B": {
-                "Gi1/0/1": {"crc_errors": 5},    # delta=-5 -> pass (reset)
-                "Gi1/0/2": {"crc_errors": 80},   # delta=+20 -> fail
+                "Gi1/0/1": {"crc_errors": 5},    # delta=-5 -> reset
+                "Gi1/0/2": {"crc_errors": 80},   # delta=+20 -> growth
             },
         }
 
@@ -333,25 +339,92 @@ class TestErrorCountEvaluate:
         ):
             result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
 
-        assert result.total_count == 4
-        assert result.pass_count == 2
+        # Device level: 2 devices, both fail
+        assert result.total_count == 2
+        assert result.pass_count == 0
         assert result.fail_count == 2
-        assert result.pass_rates["error_no_growth"] == 50.0
+        assert result.pass_rates["error_no_growth"] == 0.0
 
-        # Verify failures contain the right interfaces
-        fail_keys = {(f["device"], f["interface"]) for f in result.failures}
-        assert ("switch-A", "Gi1/0/2") in fail_keys
-        assert ("switch-B", "Gi1/0/2") in fail_keys
+        # Verify failures contain the right devices
+        fail_devices = {f["device"] for f in result.failures}
+        assert fail_devices == {"switch-A", "switch-B"}
 
-        # Verify passes contain the right interfaces
-        pass_keys = {(p["device"], p["interface"]) for p in result.passes}
-        assert ("switch-A", "Gi1/0/1") in pass_keys
-        assert ("switch-B", "Gi1/0/1") in pass_keys
+    # 9. Device with no error records (collector skipped) → PASS --------------
 
-        # Verify pass reasons
-        pass_by_key = {(p["device"], p["interface"]): p for p in result.passes}
-        assert pass_by_key[("switch-A", "Gi1/0/1")]["reason"] == "計數器未增長"
-        assert pass_by_key[("switch-B", "Gi1/0/1")]["reason"] == "計數器已重置"
+    async def test_device_no_error_records_is_pass(
+        self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
+    ) -> None:
+        """Active device with no collected error records -> PASS (無錯誤記錄)."""
+        # switch-A has records, switch-B has none (all interfaces zero errors)
+        current = [
+            _make_record("switch-A", "Gi1/0/1", crc_errors=5, batch_id=200),
+        ]
+        prev: dict = {}
+
+        with (
+            patch.object(
+                indicator, "_get_active_device_hostnames",
+                new_callable=AsyncMock, return_value=["switch-A", "switch-B"],
+            ),
+            patch(
+                "app.indicators.error_count.InterfaceErrorRecordRepo.get_latest_per_device",
+                new_callable=AsyncMock, return_value=current,
+            ),
+            patch.object(
+                indicator, "_get_previous_batches",
+                new_callable=AsyncMock, return_value=prev,
+            ),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
+
+        # 2 devices total, both pass
+        assert result.total_count == 2
+        assert result.pass_count == 2
+        assert result.fail_count == 0
+        assert result.passes is not None
+        pass_by_device = {p["device"]: p for p in result.passes}
+        assert pass_by_device["switch-B"]["reason"] == "無錯誤記錄"
+        assert "首次採集" in pass_by_device["switch-A"]["reason"]
+
+    # 10. Mixed pass/fail across devices with different scenarios --------------
+
+    async def test_mixed_pass_fail_devices(
+        self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
+    ) -> None:
+        """3 devices: one no records (pass), one no growth (pass), one growth (fail)."""
+        current = [
+            # switch-A: stable
+            _make_record("switch-A", "Gi1/0/1", crc_errors=10, batch_id=200),
+            # switch-B: growth
+            _make_record("switch-B", "Gi1/0/1", crc_errors=20, batch_id=201),
+            # switch-C: no records (not in current)
+        ]
+        prev = {
+            "switch-A": {"Gi1/0/1": {"crc_errors": 10}},   # delta=0
+            "switch-B": {"Gi1/0/1": {"crc_errors": 5}},    # delta=+15
+        }
+
+        with (
+            patch.object(
+                indicator, "_get_active_device_hostnames",
+                new_callable=AsyncMock, return_value=["switch-A", "switch-B", "switch-C"],
+            ),
+            patch(
+                "app.indicators.error_count.InterfaceErrorRecordRepo.get_latest_per_device",
+                new_callable=AsyncMock, return_value=current,
+            ),
+            patch.object(
+                indicator, "_get_previous_batches",
+                new_callable=AsyncMock, return_value=prev,
+            ),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
+
+        assert result.total_count == 3
+        assert result.pass_count == 2
+        assert result.fail_count == 1
+        assert result.pass_rates["error_no_growth"] == pytest.approx(66.666, abs=0.01)
+        assert result.summary == "錯誤計數: 2/3 設備通過"
 
 
 class TestCalcPercent:
@@ -427,7 +500,7 @@ class TestEvaluateResultStructure:
     async def test_summary_format(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
     ) -> None:
-        """Summary follows '錯誤計數: X/Y 介面通過' format when devices exist."""
+        """Summary follows '錯誤計數: X/Y 設備通過' format."""
         current = [
             _make_record("sw1", "Gi1/0/1", crc_errors=0, batch_id=100),
             _make_record("sw1", "Gi1/0/2", crc_errors=5, batch_id=100),
@@ -435,7 +508,7 @@ class TestEvaluateResultStructure:
         prev = {
             "sw1": {
                 "Gi1/0/1": {"crc_errors": 0},
-                "Gi1/0/2": {"crc_errors": 0},
+                "Gi1/0/2": {"crc_errors": 0},   # delta=+5 -> growth
             },
         }
 
@@ -455,7 +528,8 @@ class TestEvaluateResultStructure:
         ):
             result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
 
-        assert result.summary == "錯誤計數: 1/2 介面通過"
+        # sw1 has growth on Gi1/0/2 -> device fails -> 0/1 pass
+        assert result.summary == "錯誤計數: 0/1 設備通過"
 
     async def test_failures_none_when_all_pass(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
@@ -485,7 +559,7 @@ class TestEvaluateResultStructure:
     async def test_passes_none_when_all_fail(
         self, indicator: ErrorCountIndicator, mock_session: AsyncMock,
     ) -> None:
-        """passes field is None when every interface fails."""
+        """passes field is None when every device fails."""
         current = [_make_record("sw1", "Gi1/0/1", crc_errors=20, batch_id=100)]
         prev = {"sw1": {"Gi1/0/1": {"crc_errors": 5}}}
 

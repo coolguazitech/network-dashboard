@@ -95,12 +95,15 @@ from app.snmp.oid_maps import (  # noqa: E402
     HH3C_TRANSCEIVER_VOLTAGE,
     HH3C_TRANSCEIVER_TX_POWER,
     HH3C_TRANSCEIVER_RX_POWER,
+    HH3C_TRANSCEIVER_CHANNEL_TX_POWER,
+    HH3C_TRANSCEIVER_CHANNEL_RX_POWER,
     CISCO_CDP_CACHE_DEVICE_ID,
     CISCO_CDP_CACHE_DEVICE_PORT,
     LLDP_REM_SYS_NAME,
     LLDP_REM_PORT_ID,
     LLDP_REM_PORT_DESC,
     LLDP_LOC_PORT_DESC,
+    LLDP_LOC_PORT_ID,
 )
 
 
@@ -233,6 +236,9 @@ class TestNeighborLldpCollector:
             LLDP_REM_PORT_DESC: [
                 (f"{LLDP_REM_PORT_DESC}.0.49.1", "GigabitEthernet0/1"),
             ],
+            LLDP_LOC_PORT_ID: [
+                (f"{LLDP_LOC_PORT_ID}.49", "GigabitEthernet1/0/1"),
+            ],
             LLDP_LOC_PORT_DESC: [
                 (f"{LLDP_LOC_PORT_DESC}.49", "GigabitEthernet1/0/1"),
             ],
@@ -261,6 +267,9 @@ class TestNeighborLldpCollector:
             LLDP_REM_PORT_DESC: [
                 (f"{LLDP_REM_PORT_DESC}.0.49.1", "GigabitEthernet0/1 Description"),
             ],
+            LLDP_LOC_PORT_ID: [
+                (f"{LLDP_LOC_PORT_ID}.49", "GigabitEthernet1/0/1"),
+            ],
             LLDP_LOC_PORT_DESC: [
                 (f"{LLDP_LOC_PORT_DESC}.49", "GigabitEthernet1/0/1"),
             ],
@@ -284,6 +293,9 @@ class TestNeighborLldpCollector:
                 (f"{LLDP_REM_PORT_ID}.0.49.1", "Gi0/1"),
             ],
             LLDP_REM_PORT_DESC: [],  # no port_desc entries
+            LLDP_LOC_PORT_ID: [
+                (f"{LLDP_LOC_PORT_ID}.49", "GigabitEthernet1/0/1"),
+            ],
             LLDP_LOC_PORT_DESC: [
                 (f"{LLDP_LOC_PORT_DESC}.49", "GigabitEthernet1/0/1"),
             ],
@@ -312,6 +324,9 @@ class TestNeighborLldpCollector:
             ],
             LLDP_REM_PORT_DESC: [
                 (f"{LLDP_REM_PORT_DESC}.1338488631.45.1", "Ethernet1/49 uplink"),
+            ],
+            LLDP_LOC_PORT_ID: [
+                (f"{LLDP_LOC_PORT_ID}.45", "Twenty-FiveGigE1/0/45"),
             ],
             LLDP_LOC_PORT_DESC: [
                 (f"{LLDP_LOC_PORT_DESC}.45", "Twenty-FiveGigE1/0/45"),
@@ -343,10 +358,11 @@ class TestNeighborLldpCollector:
                 (f"{LLDP_REM_PORT_ID}.1338488631.45.1", "Ethernet1/49"),
             ],
             LLDP_REM_PORT_DESC: [],
-            LLDP_LOC_PORT_DESC: [
-                (f"{LLDP_LOC_PORT_DESC}.2146", "BAGG1"),
-                (f"{LLDP_LOC_PORT_DESC}.45", "Twenty-FiveGigE1/0/45"),
+            LLDP_LOC_PORT_ID: [
+                (f"{LLDP_LOC_PORT_ID}.2146", "BAGG1"),
+                (f"{LLDP_LOC_PORT_ID}.45", "Twenty-FiveGigE1/0/45"),
             ],
+            LLDP_LOC_PORT_DESC: [],  # HPE: no LocPortDesc
         }[oid])
 
         collector = NeighborLldpCollector()
@@ -356,6 +372,41 @@ class TestNeighborLldpCollector:
         names = {p.remote_hostname for p in parsed_items}
         assert "switch-A" in names
         assert "switch-B" in names
+
+    @pytest.mark.asyncio
+    async def test_lldp_hpe_loc_port_id_only(self, target, engine, session_cache):
+        """
+        HPE device with only lldpLocPortId populated (no lldpLocPortDesc).
+        Should use LocPortId for local interface name resolution.
+        """
+        engine.walk = AsyncMock(side_effect=lambda t, oid: {
+            LLDP_REM_SYS_NAME: [
+                (f"{LLDP_REM_SYS_NAME}.21013.2146.1", "HENT-08-TOR-DEV"),
+                (f"{LLDP_REM_SYS_NAME}.1338488631.45.1", "LAB-08-TOR-DEV"),
+            ],
+            LLDP_REM_PORT_ID: [
+                (f"{LLDP_REM_PORT_ID}.21013.2146.1", "GigabitEthernet1/0/3"),
+                (f"{LLDP_REM_PORT_ID}.1338488631.45.1", "Ethernet1/49"),
+            ],
+            LLDP_REM_PORT_DESC: [],
+            LLDP_LOC_PORT_ID: [
+                (f"{LLDP_LOC_PORT_ID}.45", "HundredGigE1/0/29"),
+                (f"{LLDP_LOC_PORT_ID}.2146", "M-GigabitEthernet0/0/0"),
+            ],
+            LLDP_LOC_PORT_DESC: [],  # HPE: no LocPortDesc
+        }[oid])
+
+        collector = NeighborLldpCollector()
+        raw_text, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert len(parsed_items) == 2
+        by_host = {p.remote_hostname: p for p in parsed_items}
+        # Port 2146 -> M-GigabitEthernet0/0/0 via LocPortId
+        assert by_host["HENT-08-TOR-DEV"].local_interface == "M-GigabitEthernet0/0/0"
+        assert by_host["HENT-08-TOR-DEV"].remote_interface == "GigabitEthernet1/0/3"
+        # Port 45 -> HundredGigE1/0/29 via LocPortId
+        assert by_host["LAB-08-TOR-DEV"].local_interface == "HundredGigE1/0/29"
+        assert by_host["LAB-08-TOR-DEV"].remote_interface == "Ethernet1/49"
 
 
 # =====================================================================
@@ -1021,6 +1072,8 @@ class TestTransceiverCollector:
             HH3C_TRANSCEIVER_RX_POWER: [
                 (f"{HH3C_TRANSCEIVER_RX_POWER}.49", "-800"),
             ],
+            HH3C_TRANSCEIVER_CHANNEL_TX_POWER: [],
+            HH3C_TRANSCEIVER_CHANNEL_RX_POWER: [],
         }[oid])
 
         collector = TransceiverCollector()
@@ -1041,6 +1094,58 @@ class TestTransceiverCollector:
         assert channel.rx_power == pytest.approx(-8.0, abs=0.01)
 
     @pytest.mark.asyncio
+    async def test_transceiver_hpe_multichannel_qsfp(self, target, engine, session_cache):
+        """
+        HPE QSFP with 4-lane channel data from hh3cTransceiverChannelTable.
+        Multi-channel data should take precedence over single-channel.
+        Uses ifIndex 49 (mapped to GigabitEthernet1/0/1 in fixture).
+        """
+        engine.walk = AsyncMock(side_effect=lambda t, oid: {
+            HH3C_TRANSCEIVER_TEMPERATURE: [
+                (f"{HH3C_TRANSCEIVER_TEMPERATURE}.49", "25"),
+            ],
+            HH3C_TRANSCEIVER_VOLTAGE: [
+                (f"{HH3C_TRANSCEIVER_VOLTAGE}.49", "338"),
+            ],
+            HH3C_TRANSCEIVER_TX_POWER: [],  # QSFP: no single-channel data
+            HH3C_TRANSCEIVER_RX_POWER: [],
+            HH3C_TRANSCEIVER_CHANNEL_TX_POWER: [
+                (f"{HH3C_TRANSCEIVER_CHANNEL_TX_POWER}.49.1", "38"),
+                (f"{HH3C_TRANSCEIVER_CHANNEL_TX_POWER}.49.2", "-43"),
+                (f"{HH3C_TRANSCEIVER_CHANNEL_TX_POWER}.49.3", "15"),
+                (f"{HH3C_TRANSCEIVER_CHANNEL_TX_POWER}.49.4", "-20"),
+            ],
+            HH3C_TRANSCEIVER_CHANNEL_RX_POWER: [
+                (f"{HH3C_TRANSCEIVER_CHANNEL_RX_POWER}.49.1", "-68"),
+                (f"{HH3C_TRANSCEIVER_CHANNEL_RX_POWER}.49.2", "-120"),
+                (f"{HH3C_TRANSCEIVER_CHANNEL_RX_POWER}.49.3", "-95"),
+                (f"{HH3C_TRANSCEIVER_CHANNEL_RX_POWER}.49.4", "-80"),
+            ],
+        }[oid])
+
+        collector = TransceiverCollector()
+        raw_text, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert raw_text
+        assert len(parsed_items) == 1
+        item = parsed_items[0]
+        assert isinstance(item, TransceiverData)
+        assert item.interface_name == "GigabitEthernet1/0/1"
+        assert item.temperature == 25.0
+        assert item.voltage == pytest.approx(3.38, abs=0.01)
+        assert len(item.channels) == 4
+        # Channel 1
+        assert item.channels[0].channel == 1
+        assert item.channels[0].tx_power == pytest.approx(0.38, abs=0.01)
+        assert item.channels[0].rx_power == pytest.approx(-0.68, abs=0.01)
+        # Channel 2
+        assert item.channels[1].channel == 2
+        assert item.channels[1].tx_power == pytest.approx(-0.43, abs=0.01)
+        # Channel 4
+        assert item.channels[3].channel == 4
+        assert item.channels[3].rx_power == pytest.approx(-0.80, abs=0.01)
+
+    @pytest.mark.asyncio
     async def test_transceiver_hpe_copper_sfp(self, target, engine, session_cache):
         """
         Real HPE FF 5945: copper SFP28 modules return 'Copper' string
@@ -1054,6 +1159,8 @@ class TestTransceiverCollector:
             HH3C_TRANSCEIVER_RX_POWER: [
                 (f"{HH3C_TRANSCEIVER_RX_POWER}.49", "Copper"),  # non-numeric!
             ],
+            HH3C_TRANSCEIVER_CHANNEL_TX_POWER: [],
+            HH3C_TRANSCEIVER_CHANNEL_RX_POWER: [],
         }[oid])
 
         collector = TransceiverCollector()
@@ -1083,6 +1190,8 @@ class TestTransceiverCollector:
                 (f"{HH3C_TRANSCEIVER_RX_POWER}.49", "-800"),
                 (f"{HH3C_TRANSCEIVER_RX_POWER}.50", "Copper"),  # non-numeric
             ],
+            HH3C_TRANSCEIVER_CHANNEL_TX_POWER: [],
+            HH3C_TRANSCEIVER_CHANNEL_RX_POWER: [],
         }[oid])
 
         collector = TransceiverCollector()

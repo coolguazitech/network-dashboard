@@ -22,6 +22,7 @@ from app.snmp.collector_base import BaseSnmpCollector
 from app.snmp.engine import AsyncSnmpEngine, SnmpTarget
 from app.snmp.oid_maps import (
     LLDP_LOC_PORT_DESC,
+    LLDP_LOC_PORT_ID,
     LLDP_REM_PORT_DESC,
     LLDP_REM_PORT_ID,
     LLDP_REM_SYS_NAME,
@@ -66,11 +67,18 @@ class NeighborLldpCollector(BaseSnmpCollector):
         rem_sys_name_varbinds = await engine.walk(target, LLDP_REM_SYS_NAME)
         rem_port_id_varbinds = await engine.walk(target, LLDP_REM_PORT_ID)
         rem_port_desc_varbinds = await engine.walk(target, LLDP_REM_PORT_DESC)
+        loc_port_id_varbinds = await engine.walk(target, LLDP_LOC_PORT_ID)
         loc_port_desc_varbinds = await engine.walk(target, LLDP_LOC_PORT_DESC)
 
-        # Build local port number -> interface name mapping from lldpLocPortDesc
-        # lldpLocPortDesc index: lldpLocPortNum
+        # Build local port number -> interface name mapping.
+        # Prefer lldpLocPortDesc; fall back to lldpLocPortId (HPE only
+        # populates LocPortId on some models).
         local_port_map: dict[str, str] = {}
+        for oid_str, val_str in loc_port_id_varbinds:
+            port_num = self.extract_index(oid_str, LLDP_LOC_PORT_ID)
+            if port_num and val_str:
+                local_port_map[port_num] = val_str
+        # LocPortDesc overwrites LocPortId where present
         for oid_str, val_str in loc_port_desc_varbinds:
             port_num = self.extract_index(oid_str, LLDP_LOC_PORT_DESC)
             if port_num and val_str:
@@ -132,6 +140,7 @@ class NeighborLldpCollector(BaseSnmpCollector):
             rem_sys_name_varbinds
             + rem_port_id_varbinds
             + rem_port_desc_varbinds
+            + loc_port_id_varbinds
             + loc_port_desc_varbinds
         )
         raw_text = self.format_raw(

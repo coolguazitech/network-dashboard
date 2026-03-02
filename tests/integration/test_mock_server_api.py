@@ -147,9 +147,15 @@ class TestGnmsPing:
         resp = client.post(
             "/api/v1/ping",
             json={
-                "app_name": "network_change_orchestrator",
+                "app_name": "network-change-orchestrator",
                 "token": "mock-token",
                 "addresses": ["10.0.0.1", "10.0.0.2", "10.0.0.3"],
+                "count": 2,
+                "interval": 0.1,
+                "timeout": 2,
+                "concurrent_tasks": 10,
+                "family": 4,
+                "privileged": True,
             },
         )
         assert resp.status_code == 200

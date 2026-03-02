@@ -1,12 +1,16 @@
 """
-Interface Error Count indicator evaluator.
+Interface Error Count indicator evaluator (device-level).
 
-增量判定邏輯：
+以設備為單位評估：
+    分母 = 設備清單中的設備數
+    分子 = 任一介面 CRC 計數器有增長的設備數
+
+增量判定邏輯（per interface）：
     delta = 最新變化點 crc_errors - 上一個變化點 crc_errors
-    若 delta > 0 → 異常（error 計數器有增長）
+    若任一介面 delta > 0 → 該設備異常
 
+設備無錯誤記錄（所有介面零錯誤）→ 通過。
 只有一筆 batch（首次採集）時：無歷史可比，視為通過。
-delta <= 0（未增長或計數器重置）→ 通過。
 """
 from __future__ import annotations
 
@@ -30,10 +34,10 @@ from app.repositories.typed_records import InterfaceErrorRecordRepo
 
 class ErrorCountIndicator(BaseIndicator):
     """
-    Error Count 指標評估器。
+    Error Count 指標評估器（設備層級）。
 
-    公式：delta = 最新 crc_errors - 上次變化點 crc_errors
-    若 delta > 0 → 異常（計數器增長代表有新錯誤產生）
+    分母 = 設備數，分子 = 任一介面有 CRC 增長的設備數。
+    設備無錯誤記錄時視為正常（collector 跳過零錯誤介面）。
     """
 
     indicator_type = "error_count"
@@ -77,57 +81,70 @@ class ErrorCountIndicator(BaseIndicator):
             session, maintenance_id, device_batch,
         )
 
-        # 4. 逐介面評估
-        total_count = 0
+        # 4. 逐設備評估（分母 = 設備數，分子 = 有 CRC 增長的設備數）
+        total_count = len(device_hostnames)
         pass_count = 0
         failures: list[dict] = []
         passes: list[dict] = []
 
-        for hostname, current_rows in current_by_device.items():
+        for hostname in device_hostnames:
+            current_rows = current_by_device.get(hostname, [])
+
+            if not current_rows:
+                # 無錯誤記錄（collector 跳過零錯誤介面）→ 設備正常
+                pass_count += 1
+                if len(passes) < 10:
+                    passes.append({
+                        "device": hostname,
+                        "reason": "無錯誤記錄",
+                        "data": {},
+                    })
+                continue
+
             prev_rows = prev_by_device.get(hostname, {})
 
+            if not prev_rows:
+                # 首次採集，無歷史比對 → 通過
+                pass_count += 1
+                if len(passes) < 10:
+                    passes.append({
+                        "device": hostname,
+                        "reason": "首次採集，無歷史比對",
+                        "data": {},
+                    })
+                continue
+
+            # 檢查每個介面的增長
+            growing_interfaces: list[dict] = []
             for record in current_rows:
-                total_count += 1
-                iface = record.interface_name
-                cur_crc = record.crc_errors
-
-                prev_info = prev_rows.get(iface)
+                prev_info = prev_rows.get(record.interface_name)
                 if prev_info is None:
-                    # 首次採集，無歷史比對 → 通過
-                    pass_count += 1
-                    if len(passes) < 10:
-                        passes.append({
-                            "device": hostname,
-                            "interface": iface,
-                            "reason": "首次採集，無歷史比對",
-                            "data": {"crc_errors": cur_crc, "delta": 0},
-                        })
-                    continue
+                    continue  # 新介面，無歷史 → 不視為異常
+                delta = record.crc_errors - prev_info["crc_errors"]
+                if delta > 0:
+                    growing_interfaces.append({
+                        "interface": record.interface_name,
+                        "delta": delta,
+                        "prev_crc_errors": prev_info["crc_errors"],
+                        "crc_errors": record.crc_errors,
+                    })
 
-                prev_crc = prev_info["crc_errors"]
-                delta = cur_crc - prev_crc
-
-                if delta <= 0:
-                    # 未增長 or 計數器重置 → 通過
-                    pass_count += 1
-                    if len(passes) < 10:
-                        passes.append({
-                            "device": hostname,
-                            "interface": iface,
-                            "reason": "計數器未增長" if delta == 0 else "計數器已重置",
-                            "data": {"crc_errors": cur_crc, "delta": delta},
-                        })
-                else:
-                    # delta > 0 → 異常
+            if growing_interfaces:
+                # 設備有 CRC 增長 → 異常
+                if len(failures) < 10:
                     failures.append({
                         "device": hostname,
-                        "interface": iface,
-                        "reason": f"CRC 增長 +{delta} ({prev_crc} → {cur_crc})",
-                        "data": {
-                            "crc_errors": cur_crc,
-                            "prev_crc_errors": prev_crc,
-                            "delta": delta,
-                        },
+                        "reason": f"CRC 增長（{len(growing_interfaces)} 介面）",
+                        "data": {"growing_interfaces": growing_interfaces},
+                    })
+            else:
+                # 所有介面未增長 → 通過
+                pass_count += 1
+                if len(passes) < 10:
+                    passes.append({
+                        "device": hostname,
+                        "reason": "計數器未增長",
+                        "data": {},
                     })
 
         return IndicatorEvaluationResult(
@@ -141,7 +158,7 @@ class ErrorCountIndicator(BaseIndicator):
             },
             failures=failures if failures else None,
             passes=passes if passes else None,
-            summary=f"錯誤計數: {pass_count}/{total_count} 介面通過",
+            summary=f"錯誤計數: {pass_count}/{total_count} 設備通過",
         )
 
     @staticmethod
@@ -202,8 +219,8 @@ class ErrorCountIndicator(BaseIndicator):
         return IndicatorMetadata(
             name="error_count",
             title="Interface Error 監控",
-            description="監控介面 CRC 錯誤計數增量（兩次變化點之間有增長即異常）",
-            object_type="interface",
+            description="監控設備 CRC 錯誤計數增量（任一介面兩次變化點之間有增長即異常）",
+            object_type="device",
             data_type="integer",
             observed_fields=[
                 ObservedField(

@@ -120,10 +120,12 @@ if [ "$VENDOR" = "cisco" ]; then
     run_walk "entPhysicalName"          "1.3.6.1.2.1.47.1.1.1.1.7"
     run_walk "entPhysicalContainedIn"   "1.3.6.1.2.1.47.1.1.1.1.4"
 else
-    run_walk "HPE hh3cTransceiverTxPower"     "1.3.6.1.4.1.25506.2.70.1.1.1.1.9"
-    run_walk "HPE hh3cTransceiverRxPower"     "1.3.6.1.4.1.25506.2.70.1.1.1.1.12"
-    run_walk "HPE hh3cTransceiverTemperature" "1.3.6.1.4.1.25506.2.70.1.1.1.1.15"
-    run_walk "HPE hh3cTransceiverVoltage"     "1.3.6.1.4.1.25506.2.70.1.1.1.1.16"
+    run_walk "HPE hh3cTransceiverTxPower"     "1.3.6.1.4.1.25506.2.70.1.1.1.9"
+    run_walk "HPE hh3cTransceiverRxPower"     "1.3.6.1.4.1.25506.2.70.1.1.1.12"
+    run_walk "HPE hh3cTransceiverTemperature" "1.3.6.1.4.1.25506.2.70.1.1.1.15"
+    run_walk "HPE hh3cTransceiverVoltage"     "1.3.6.1.4.1.25506.2.70.1.1.1.16"
+    run_walk "HPE hh3cTransceiverChTxPower"   "1.3.6.1.4.1.25506.2.70.1.2.1.2"
+    run_walk "HPE hh3cTransceiverChRxPower"   "1.3.6.1.4.1.25506.2.70.1.2.1.3"
 fi
 
 # ── 6. Interface 狀態 ──

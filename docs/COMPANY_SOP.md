@@ -1,12 +1,16 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.5.3 (2026-03-02)
+> **版本**: v2.6.0 (2026-03-02)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
 >
+> **v2.6.0 變更摘要**:
+> - **HPE Transceiver OID 修正**：5 個 HH3C-TRANSCEIVER-INFO-MIB OID 移除多餘 `.1` 路徑段，新增 QSFP 多通道 (per-lane TX/RX) OID 支援
+> - **HPE LLDP 本地介面修正**：新增 `lldpLocPortId` 走訪，修復 HPE 僅填充 LocPortId 而非 LocPortDesc 導致的本地介面名稱錯誤
+> - **CRC Error 指標改為設備層級**：分母 = 設備數（非介面數），分子 = 任一介面有 CRC 增長的設備數，修復全零設備顯示 0/0 的問題
+> - **GNMS Ping 請求體修正**：補齊 `count`、`interval`、`timeout`、`family`、`privileged` 等必要欄位，修復 400 Bad Request
+>
 > **v2.5.3 變更摘要**:
-> - **Docker image 重建**：使用 `buildx --platform linux/amd64 --push` 確保 DockerHub manifest 正確標記 amd64 平台
-> - **SNMP 程式碼除錯指南**：新增附錄 D，包含資料流圖、日誌判讀、案例追蹤、除錯 Checklist、歷史 Bug 參考
-> - **OID 全量驗證**：31 個 OID 常數已全部線上比對確認正確
+> - Docker image 重建、SNMP 除錯指南、OID 全量驗證
 >
 > **v2.5.2 變更摘要**（基於 HPE FF 5945 真實設備 SNMP 驗證）:
 > - **LLDP 鄰居解析修正**：`_parse_lldp_remote_index` 支援 >= 3 段索引（真實設備 TimeMark 可能很大），修正鄰居資料全部被跳過的問題
@@ -46,16 +50,16 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.5.3` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.6.0` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.5.3` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.6.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
 掃描通過後會拿到公司內部的 image URL，例如：
 
 ```
-registry.company.com/netora/network-dashboard-base:v2.5.3
+registry.company.com/netora/network-dashboard-base:v2.6.0
 registry.company.com/netora/netora-mariadb:10.11
 ...
 ```
@@ -84,17 +88,17 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.5.3
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.6.0
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.5.3
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.6.0
 ```
 
 拉取 image：
 
 ```bash
-docker pull registry.company.com/netora/network-dashboard-base:v2.5.3
+docker pull registry.company.com/netora/network-dashboard-base:v2.6.0
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.5.3
+docker pull registry.company.com/netora/netora-mock-server:v2.6.0
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 
@@ -128,7 +132,7 @@ DB_ROOT_PASSWORD=<強密碼>
 JWT_SECRET=<隨機字串>
 
 # ===== Image URL（必改）=====
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.5.3
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.6.0
 
 # ===== 真實 API 來源（必改）=====
 # FNA: Bearer token 認證; DNA: 不需認證; 皆無 SSL
@@ -561,11 +565,14 @@ snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.13.1.5.1.2        # ciscoEnvMo
 
 **光模組（Transceiver DOM）：**
 ```bash
-# HPE/H3C — HH3C-TRANSCEIVER-INFO-MIB
-snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.9  # hh3cTransceiverCurTXPower (Tx Power)
-snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.12 # rxPower (Rx)
-snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.15 # temperature
-snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.1.16 # voltage
+# HPE/H3C — HH3C-TRANSCEIVER-INFO-MIB (hh3cTransceiverInfoEntry, indexed by ifIndex)
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.9    # hh3cTransceiverCurTXPower (單通道 Tx)
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.12   # hh3cTransceiverCurRXPower (單通道 Rx)
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.15   # hh3cTransceiverTemperature
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.1.1.16   # hh3cTransceiverVoltage
+# HPE/H3C — hh3cTransceiverChannelEntry (QSFP 多通道, indexed by ifIndex.channel)
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.2.1.2    # hh3cTransceiverChannelCurTXPower
+snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.25506.2.70.1.2.1.3    # hh3cTransceiverChannelCurRXPower
 
 # Cisco — CISCO-ENTITY-SENSOR-MIB
 snmpwalk -v2c -c <community> <IP> 1.3.6.1.4.1.9.9.91.1.1.1.1.4     # entSensorValue
@@ -671,19 +678,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.5.3 \
+    -t coolguazi/network-dashboard-base:v2.6.0 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.5.3
+    coolguazi/network-dashboard-base:v2.6.0
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.5.3
+docker push coolguazi/network-dashboard-base:v2.6.0
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.5.3 | gzip > netora-app-v2.5.3.tar.gz
+docker save coolguazi/network-dashboard-base:v2.6.0 | gzip > netora-app-v2.5.3.tar.gz
 ```
 
 #### 在公司環境（無外網）
@@ -692,7 +699,7 @@ docker save coolguazi/network-dashboard-base:v2.5.3 | gzip > netora-app-v2.5.3.t
 
 ```bash
 docker build \
-    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.5.3 \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.6.0 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.5.3-fix1 \
     .
@@ -1076,7 +1083,7 @@ cd netora
 
 # BASE_IMAGE = 公司 registry 掃描通過後的 URL
 docker build \
-    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.5.3 \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.6.0 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.5.3 \
     .
@@ -1651,7 +1658,7 @@ app/snmp/
      ↓
 5. 在公司重建 image（見 SOP 1b.8）：
    docker build \
-     --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.5.3 \
+     --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.6.0 \
      -f docker/production/Dockerfile \
      -t netora-production:v2.5.3-fix1 .
      ↓
@@ -1685,9 +1692,9 @@ app/snmp/
 ```
 # ===== Phase 1: 起服務（SNMP Mock，推薦首次驗證）=====
 unzip netora-main.zip && cd netora-main
-docker pull <公司registry>/network-dashboard-base:v2.5.3
+docker pull <公司registry>/network-dashboard-base:v2.6.0
 cp .env.mock .env
-# 編輯 .env：APP_IMAGE=<公司registry>/network-dashboard-base:v2.5.3
+# 編輯 .env：APP_IMAGE=<公司registry>/network-dashboard-base:v2.6.0
 docker compose -f docker-compose.production.yml --profile mock up -d
 # alembic 自動執行，等 30 秒
 curl http://localhost:8000/health
@@ -1722,7 +1729,7 @@ make parse-debug                            # 產生 AI bundle
 
 # ===== Phase 3: 最終部署 =====
 docker build \
-    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.5.3 \
+    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.6.0 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.5.3 .
 # 編輯 .env: APP_IMAGE=netora-production:v2.5.3
