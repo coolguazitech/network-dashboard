@@ -16,6 +16,9 @@ from app.parsers.protocols import (
     TransceiverData,
 )
 from app.snmp.collector_base import BaseSnmpCollector
+
+# SNMP sentinel values indicating "not available / not supported"
+_SNMP_SENTINELS = {2147483647, -2147483648}  # INT32_MAX, INT32_MIN
 from app.snmp.engine import AsyncSnmpEngine, SnmpTarget
 from app.snmp.oid_maps import (
     CISCO_ENT_SENSOR_PRECISION,
@@ -106,7 +109,9 @@ class TransceiverCollector(BaseSnmpCollector):
             )
             if idx >= 0:
                 try:
-                    temps[idx] = float(int(val_str))  # 1 degree C
+                    raw = int(val_str)
+                    if raw not in _SNMP_SENTINELS:
+                        temps[idx] = float(raw)  # 1 degree C
                 except (ValueError, TypeError):
                     logger.debug(
                         "Transceiver: non-numeric temperature '%s' for ifIndex %d",
@@ -120,7 +125,9 @@ class TransceiverCollector(BaseSnmpCollector):
             )
             if idx >= 0:
                 try:
-                    volts[idx] = int(val_str) / 100.0  # 0.01V -> V
+                    raw = int(val_str)
+                    if raw not in _SNMP_SENTINELS:
+                        volts[idx] = raw / 100.0  # 0.01V -> V
                 except (ValueError, TypeError):
                     logger.debug(
                         "Transceiver: non-numeric voltage '%s' for ifIndex %d",
@@ -135,7 +142,9 @@ class TransceiverCollector(BaseSnmpCollector):
             )
             if idx >= 0:
                 try:
-                    tx_powers[idx] = int(val_str) / 100.0  # 0.01 dBm -> dBm
+                    raw = int(val_str)
+                    if raw not in _SNMP_SENTINELS:
+                        tx_powers[idx] = raw / 100.0  # 0.01 dBm -> dBm
                 except (ValueError, TypeError):
                     logger.debug(
                         "Transceiver: non-numeric TX power '%s' for ifIndex %d",
@@ -149,7 +158,9 @@ class TransceiverCollector(BaseSnmpCollector):
             )
             if idx >= 0:
                 try:
-                    rx_powers[idx] = int(val_str) / 100.0  # 0.01 dBm -> dBm
+                    raw = int(val_str)
+                    if raw not in _SNMP_SENTINELS:
+                        rx_powers[idx] = raw / 100.0  # 0.01 dBm -> dBm
                 except (ValueError, TypeError):
                     logger.debug(
                         "Transceiver: non-numeric RX power '%s' for ifIndex %d",
@@ -167,7 +178,9 @@ class TransceiverCollector(BaseSnmpCollector):
                 ch_num = self.safe_int(parts[1], -1)
                 if ifidx >= 0 and ch_num >= 1:
                     try:
-                        channel_tx[ifidx][ch_num] = int(val_str) / 100.0
+                        raw = int(val_str)
+                        if raw not in _SNMP_SENTINELS:
+                            channel_tx[ifidx][ch_num] = raw / 100.0
                     except (ValueError, TypeError):
                         pass
 
@@ -180,7 +193,9 @@ class TransceiverCollector(BaseSnmpCollector):
                 ch_num = self.safe_int(parts[1], -1)
                 if ifidx >= 0 and ch_num >= 1:
                     try:
-                        channel_rx[ifidx][ch_num] = int(val_str) / 100.0
+                        raw = int(val_str)
+                        if raw not in _SNMP_SENTINELS:
+                            channel_rx[ifidx][ch_num] = raw / 100.0
                     except (ValueError, TypeError):
                         pass
 

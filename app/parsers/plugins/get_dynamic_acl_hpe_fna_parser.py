@@ -27,21 +27,20 @@ class GetDynamicAclHpeFnaParser(BaseParser[AclData]):
     """
     Parser for HPE dynamic ACL bindings from MAC authentication output.
 
-    Real CLI output (``display mac-authentication connection``)::
+    Real CLI output (``display mac-authentication connection``) — block format::
 
-        Slot ID   : 1
-        Total connections : 3
+        Slot ID: 1
+        User MAC address: b47a-f1ad-b058
+        Access interface: GigabitEthernet1/0/1
+        ...
+        Authorization ACL number/name: 3240
+        ...
+
+    Tabular format (older firmware / FNA simplified)::
 
         Interface         MAC Address     Auth State      ACL Number
         GE1/0/1           aabb-ccdd-0001  Authenticated   3001
         GE1/0/2           aabb-ccdd-0002  Unauthenticated --
-        GE1/0/3           aabb-ccdd-0003  Authenticated   3001
-
-    The FNA API may also return a simplified format::
-
-        Interface         MAC Address        ACL Number  Auth State
-        GE1/0/1           aabb-ccdd-0001     3001        Authenticated
-        GE1/0/2           aabb-ccdd-0002     --          Unauthenticated
 
     CSV fallback::
 
@@ -51,12 +50,23 @@ class GetDynamicAclHpeFnaParser(BaseParser[AclData]):
 
     Notes:
         - MAC format: xxxx-xxxx-xxxx (HPE hyphenated).
-        - ACL Number: numeric or ``--`` (no ACL).
+        - ACL Number: numeric, named, or ``N/A`` / ``--`` (no ACL).
         - Column order may vary between firmware versions.
     """
 
     device_type = DeviceType.HPE
     command = "get_dynamic_acl_hpe_fna"
+
+    # Block format: "Access interface: GigabitEthernet1/0/1"
+    BLOCK_INTERFACE_PATTERN = re.compile(
+        r"^Access interface\s*:\s*(\S+)", re.MULTILINE | re.IGNORECASE,
+    )
+
+    # Block format: "Authorization ACL number/name: 3240"
+    BLOCK_ACL_PATTERN = re.compile(
+        r"^Authorization ACL number/name\s*:\s*(.+?)\s*$",
+        re.MULTILINE | re.IGNORECASE,
+    )
 
     # Tabular data row: interface, MAC, ACL number (or --), auth state
     # Flexible whitespace-separated columns
@@ -84,18 +94,56 @@ class GetDynamicAclHpeFnaParser(BaseParser[AclData]):
         "mac-auth", "auth", "unauth",
     }
 
+    # Values that mean "no ACL"
+    NO_ACL_VALUES = {"--", "-", "N/A", "n/a", ""}
+
     def parse(self, raw_output: str) -> list[AclData]:
         results: list[AclData] = []
 
         if not raw_output or not raw_output.strip():
             return results
 
-        # Try tabular format first
-        results = self._parse_table_format(raw_output)
+        # Try block format first (real display mac-authentication connection)
+        if "Access interface" in raw_output:
+            results = self._parse_block_format(raw_output)
 
-        # Fall back to CSV if no tabular results found
+        # Try tabular format
+        if not results:
+            results = self._parse_table_format(raw_output)
+
+        # Fall back to CSV if no results found
         if not results and "," in raw_output:
             results = self._parse_csv_format(raw_output)
+
+        return results
+
+    def _parse_block_format(self, raw_output: str) -> list[AclData]:
+        """Parse block-style ``display mac-authentication connection`` output.
+
+        Each user block contains key-value lines like::
+
+            Access interface: GigabitEthernet1/0/1
+            Authorization ACL number/name: 3240
+        """
+        results: list[AclData] = []
+
+        # Split into per-user blocks by "Slot ID:" boundaries
+        blocks = re.split(r"(?=^Slot ID\s*:)", raw_output, flags=re.MULTILINE)
+
+        for block in blocks:
+            if_match = self.BLOCK_INTERFACE_PATTERN.search(block)
+            if not if_match:
+                continue
+
+            interface_name = if_match.group(1)
+
+            acl_match = self.BLOCK_ACL_PATTERN.search(block)
+            acl_val = acl_match.group(1).strip() if acl_match else ""
+            acl_number = None if acl_val in self.NO_ACL_VALUES else acl_val
+
+            results.append(
+                AclData(interface_name=interface_name, acl_number=acl_number)
+            )
 
         return results
 
@@ -132,7 +180,7 @@ class GetDynamicAclHpeFnaParser(BaseParser[AclData]):
 
             acl_val = self._pick_acl_value(match.group(3), match.group(4))
             acl_number = (
-                None if acl_val in ("--", "-", "N/A", "") else acl_val
+                None if acl_val in self.NO_ACL_VALUES else acl_val
             )
 
             results.append(

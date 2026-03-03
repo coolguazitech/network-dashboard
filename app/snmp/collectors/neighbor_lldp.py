@@ -2,15 +2,17 @@
 SNMP Collector — LLDP Neighbor Discovery (LLDP-MIB).
 
 Walks lldpRemSysName, lldpRemPortId, lldpRemPortDesc to discover
-remote neighbors. Also walks lldpLocPortDesc to map local port numbers
-to interface names.
+remote neighbors. Also walks lldpLocPortId / lldpLocPortDesc to map
+local port numbers to interface names.
 
 LLDP remote table index structure:
     lldpRemTimeMark.lldpRemLocalPortNum.lldpRemIndex
 
 Output: NeighborData(local_interface, remote_hostname, remote_interface)
-For remote_interface: prefers lldpRemPortDesc if non-empty, falls back
-to lldpRemPortId.
+For remote_interface: prefers lldpRemPortId if non-empty, falls back
+to lldpRemPortDesc.
+For local_interface: prefers lldpLocPortId if non-empty, falls back
+to lldpLocPortDesc.
 """
 from __future__ import annotations
 
@@ -71,16 +73,15 @@ class NeighborLldpCollector(BaseSnmpCollector):
         loc_port_desc_varbinds = await engine.walk(target, LLDP_LOC_PORT_DESC)
 
         # Build local port number -> interface name mapping.
-        # Prefer lldpLocPortDesc; fall back to lldpLocPortId (HPE only
-        # populates LocPortId on some models).
+        # Prefer lldpLocPortId; fall back to lldpLocPortDesc.
         local_port_map: dict[str, str] = {}
-        for oid_str, val_str in loc_port_id_varbinds:
-            port_num = self.extract_index(oid_str, LLDP_LOC_PORT_ID)
-            if port_num and val_str:
-                local_port_map[port_num] = val_str
-        # LocPortDesc overwrites LocPortId where present
         for oid_str, val_str in loc_port_desc_varbinds:
             port_num = self.extract_index(oid_str, LLDP_LOC_PORT_DESC)
+            if port_num and val_str:
+                local_port_map[port_num] = val_str
+        # LocPortId overwrites LocPortDesc where present
+        for oid_str, val_str in loc_port_id_varbinds:
+            port_num = self.extract_index(oid_str, LLDP_LOC_PORT_ID)
             if port_num and val_str:
                 local_port_map[port_num] = val_str
 
@@ -116,10 +117,10 @@ class NeighborLldpCollector(BaseSnmpCollector):
             local_port_num = rem_local_ports.get(key, "")
             local_interface = local_port_map.get(local_port_num, f"port{local_port_num}")
 
-            # Prefer lldpRemPortDesc, fallback to lldpRemPortId
-            remote_port_desc = rem_port_descs.get(key, "")
+            # Prefer lldpRemPortId, fallback to lldpRemPortDesc
             remote_port_id = rem_port_ids.get(key, "")
-            remote_interface = remote_port_desc if remote_port_desc else remote_port_id
+            remote_port_desc = rem_port_descs.get(key, "")
+            remote_interface = remote_port_id if remote_port_id else remote_port_desc
 
             if not remote_interface:
                 logger.debug(

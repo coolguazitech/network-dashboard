@@ -498,7 +498,7 @@ class SchedulerService:
                                 )
                                 continue
 
-                            parsed_items = self._parse_ping_csv(resp.text)
+                            parsed_items = self._parse_ping_response(resp.text)
                             ip_to_result = {i.target: i for i in parsed_items}
 
                             ping_repo = get_typed_repo("ping_batch", session)
@@ -653,7 +653,7 @@ class SchedulerService:
                                 )
                                 continue
 
-                            parsed_items = self._parse_ping_csv(resp.text)
+                            parsed_items = self._parse_ping_response(resp.text)
                             ip_to_result = {i.target: i for i in parsed_items}
 
                             # 存入 ping_records（純採集）
@@ -693,12 +693,48 @@ class SchedulerService:
                      len(maintenance_ids), elapsed)
 
     @staticmethod
-    def _parse_ping_csv(raw_output: str) -> list:
-        """Parse ping CSV response into PingResultData list."""
+    def _parse_ping_response(raw_output: str) -> list:
+        """Parse ping response into PingResultData list.
+
+        Supports two formats:
+        1. JSON (real GNMS Ping API)::
+
+            {"result": {"10.1.1.1": {"is_alive": true, ...}, ...}}
+
+        2. CSV (mock server fallback)::
+
+            IP,Reachable,Latency_ms
+            10.1.1.1,True,1.2
+        """
+        import json
+
         from app.parsers.protocols import PingResultData
 
+        stripped = raw_output.strip()
+        if not stripped:
+            return []
+
+        # Try JSON first (real GNMS Ping API format)
+        try:
+            data = json.loads(stripped)
+            if isinstance(data, dict) and "result" in data:
+                results = []
+                for ip, stats in data["result"].items():
+                    if isinstance(stats, dict):
+                        is_alive = bool(stats.get("is_alive", False))
+                    else:
+                        is_alive = False
+                    results.append(PingResultData(
+                        target=str(ip),
+                        is_reachable=is_alive,
+                    ))
+                return results
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Fallback: CSV format (mock server)
         results = []
-        for line in raw_output.strip().splitlines():
+        for line in stripped.splitlines():
             line = line.strip()
             if not line or line.startswith("IP,"):
                 continue

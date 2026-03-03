@@ -52,9 +52,11 @@ class GetStaticAclHpeFnaParser(BaseParser[AclData]):
         r"^interface\s+(\S+)", re.MULTILINE | re.IGNORECASE
     )
 
-    # Matches "packet-filter <acl_number> inbound/outbound" under an interface
+    # Matches "packet-filter [name] <acl_number> inbound/outbound" under an interface
+    # Type 1: packet-filter 3330 inbound
+    # Type 2: packet-filter name AntiVirusPortACL_5_OneWay inbound
     PACKET_FILTER_PATTERN = re.compile(
-        r"^\s+packet-filter\s+(\S+)", re.MULTILINE
+        r"^\s+packet-filter\s+(?:name\s+)?(\S+)", re.MULTILINE
     )
 
     # CSV row: Interface,ACL  (ACL may be empty)

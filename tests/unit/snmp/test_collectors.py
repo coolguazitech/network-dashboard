@@ -252,11 +252,11 @@ class TestNeighborLldpCollector:
         assert isinstance(parsed_items[0], NeighborData)
         assert parsed_items[0].local_interface == "GigabitEthernet1/0/1"
         assert parsed_items[0].remote_hostname == "switch-remote.example.com"
-        assert parsed_items[0].remote_interface == "GigabitEthernet0/1"
+        assert parsed_items[0].remote_interface == "Gi0/1"
 
     @pytest.mark.asyncio
-    async def test_lldp_prefers_port_desc(self, target, engine, session_cache):
-        """Both lldpRemPortDesc and lldpRemPortId present. Should use port_desc."""
+    async def test_lldp_prefers_port_id(self, target, engine, session_cache):
+        """Both lldpRemPortDesc and lldpRemPortId present. Should use port_id."""
         engine.walk = AsyncMock(side_effect=lambda t, oid: {
             LLDP_REM_SYS_NAME: [
                 (f"{LLDP_REM_SYS_NAME}.0.49.1", "remote-switch"),
@@ -280,22 +280,20 @@ class TestNeighborLldpCollector:
 
         assert raw_text
         assert len(parsed_items) == 1
-        assert parsed_items[0].remote_interface == "GigabitEthernet0/1 Description"
+        assert parsed_items[0].remote_interface == "Gi0/1"
 
     @pytest.mark.asyncio
-    async def test_lldp_fallback_to_port_id(self, target, engine, session_cache):
-        """Only lldpRemPortId present (no port_desc). Should use port_id."""
+    async def test_lldp_fallback_to_port_desc(self, target, engine, session_cache):
+        """Only lldpRemPortDesc present (no port_id). Should use port_desc."""
         engine.walk = AsyncMock(side_effect=lambda t, oid: {
             LLDP_REM_SYS_NAME: [
                 (f"{LLDP_REM_SYS_NAME}.0.49.1", "remote-switch"),
             ],
-            LLDP_REM_PORT_ID: [
-                (f"{LLDP_REM_PORT_ID}.0.49.1", "Gi0/1"),
+            LLDP_REM_PORT_ID: [],  # no port_id entries
+            LLDP_REM_PORT_DESC: [
+                (f"{LLDP_REM_PORT_DESC}.0.49.1", "GigabitEthernet0/1"),
             ],
-            LLDP_REM_PORT_DESC: [],  # no port_desc entries
-            LLDP_LOC_PORT_ID: [
-                (f"{LLDP_LOC_PORT_ID}.49", "GigabitEthernet1/0/1"),
-            ],
+            LLDP_LOC_PORT_ID: [],  # no port_id entries
             LLDP_LOC_PORT_DESC: [
                 (f"{LLDP_LOC_PORT_DESC}.49", "GigabitEthernet1/0/1"),
             ],
@@ -306,7 +304,7 @@ class TestNeighborLldpCollector:
 
         assert raw_text
         assert len(parsed_items) == 1
-        assert parsed_items[0].remote_interface == "Gi0/1"
+        assert parsed_items[0].remote_interface == "GigabitEthernet0/1"
 
     @pytest.mark.asyncio
     async def test_lldp_large_timemark_index(self, target, engine, session_cache):
@@ -339,7 +337,7 @@ class TestNeighborLldpCollector:
         assert len(parsed_items) == 1
         assert parsed_items[0].local_interface == "Twenty-FiveGigE1/0/45"
         assert parsed_items[0].remote_hostname == "hpe-core-switch"
-        assert parsed_items[0].remote_interface == "Ethernet1/49 uplink"
+        assert parsed_items[0].remote_interface == "Ethernet1/49"
 
     @pytest.mark.asyncio
     async def test_lldp_multiple_neighbors_mixed_index_lengths(self, target, engine, session_cache):

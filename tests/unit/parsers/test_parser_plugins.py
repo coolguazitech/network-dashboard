@@ -788,6 +788,22 @@ class TestStaticAclHpe:
         assert result[1].acl_number == "3002"
         assert result[2].acl_number is None
 
+    def test_cli_format_named_acl(self):
+        """packet-filter name <name> inbound — named ACL variant."""
+        raw = textwrap.dedent("""\
+            interface GigabitEthernet1/0/1
+             packet-filter name AntiVirusPortACL_5_OneWay inbound
+            interface GigabitEthernet1/0/2
+             packet-filter 3330 inbound
+            interface GigabitEthernet1/0/3
+        """)
+        result = self.parser.parse(raw)
+        assert len(result) == 3
+        assert result[0].interface_name == "GigabitEthernet1/0/1"
+        assert result[0].acl_number == "AntiVirusPortACL_5_OneWay"
+        assert result[1].acl_number == "3330"
+        assert result[2].acl_number is None
+
     def test_csv_format(self):
         raw = "Interface,ACL\nGE1/0/1,3001\nGE1/0/2,\n"
         result = self.parser.parse(raw)
@@ -879,6 +895,75 @@ class TestDynamicAclHpe:
         result = self.parser.parse(raw)
         assert len(result) == 1
         assert result[0].acl_number == "3001"
+
+    def test_block_format_single_user(self):
+        """Real display mac-authentication connection — single user block."""
+        raw = textwrap.dedent("""\
+            Slot ID: 1
+            User MAC address: b47a-f1ad-b058
+            Access interface: GigabitEthernet1/0/1
+            Username: b47af1adb058
+            User access state: Successful
+            Authentication domain: admin-aaa
+            IPv6 address: FE80::946A:9014:F6B4:E6CE
+            IPv6 address source: User packet
+            Initial VLAN: 999
+            Authorization untagged VLAN: 36
+            Authorization tagged VLAN: N/A
+            Authorization VSI: N/A
+            Authorization ACL number/name: 3240
+            Authorization user profile: N/A
+            Authorization CAR: N/A
+            Authorization URL: N/A
+            Start accounting: Successful
+            Real-time accounting-update failures: 0
+            Termination action: Default
+            Session timeout period: N/A
+            Online from: 2026/02/26 12:19:17
+            Online duration: 124h 24m 42s
+            Port-down keep online: Disabled (offline)
+        """)
+        result = self.parser.parse(raw)
+        assert len(result) == 1
+        assert result[0].interface_name == "GigabitEthernet1/0/1"
+        assert result[0].acl_number == "3240"
+
+    def test_block_format_multiple_users(self):
+        """Multiple user blocks — each Slot ID starts a new block."""
+        raw = textwrap.dedent("""\
+            Slot ID: 1
+            User MAC address: b47a-f1ad-b058
+            Access interface: GigabitEthernet1/0/1
+            Username: b47af1adb058
+            User access state: Successful
+            Authorization ACL number/name: 3240
+
+            Slot ID: 1
+            User MAC address: aabb-ccdd-0001
+            Access interface: GigabitEthernet1/0/5
+            Username: aabbccdd0001
+            User access state: Successful
+            Authorization ACL number/name: 3330
+        """)
+        result = self.parser.parse(raw)
+        assert len(result) == 2
+        assert result[0].interface_name == "GigabitEthernet1/0/1"
+        assert result[0].acl_number == "3240"
+        assert result[1].interface_name == "GigabitEthernet1/0/5"
+        assert result[1].acl_number == "3330"
+
+    def test_block_format_no_acl(self):
+        """Block where Authorization ACL number/name is N/A."""
+        raw = textwrap.dedent("""\
+            Slot ID: 1
+            User MAC address: b47a-f1ad-b058
+            Access interface: GigabitEthernet1/0/1
+            Authorization ACL number/name: N/A
+        """)
+        result = self.parser.parse(raw)
+        assert len(result) == 1
+        assert result[0].interface_name == "GigabitEthernet1/0/1"
+        assert result[0].acl_number is None
 
 
 class TestDynamicAclIos:
@@ -1675,6 +1760,70 @@ class TestPingBatchJsonEdgeCases:
         data = {"message": "Device unreachable"}
         result = self.parser.parse(json.dumps(data))
         assert result == []
+
+
+# ====================================================================
+# 14. Scheduler _parse_ping_response (JSON + CSV)
+# ====================================================================
+
+
+class TestSchedulerParsePingResponse:
+    """Test SchedulerService._parse_ping_response handles JSON and CSV."""
+
+    @staticmethod
+    def _parse(raw: str) -> list:
+        from app.services.scheduler import SchedulerService
+        return SchedulerService._parse_ping_response(raw)
+
+    def test_json_real_gnms_response(self):
+        """Real GNMS Ping API returns JSON with 'result' dict."""
+        raw = json.dumps({
+            "result": {
+                "10.19.81.13": {
+                    "min_rtt": 3.661,
+                    "avg_rtt": 3.687,
+                    "max_rtt": 3.713,
+                    "rtts": [3.713, 3.661],
+                    "packets_sent": 2,
+                    "packets_received": 2,
+                    "packet_loss": 0,
+                    "jitter": 0.052,
+                    "is_alive": True,
+                },
+                "10.19.81.14": {
+                    "min_rtt": 0,
+                    "avg_rtt": 0,
+                    "max_rtt": 0,
+                    "rtts": [],
+                    "packets_sent": 2,
+                    "packets_received": 0,
+                    "packet_loss": 100,
+                    "jitter": 0,
+                    "is_alive": False,
+                },
+            }
+        })
+        results = self._parse(raw)
+        assert len(results) == 2
+        by_ip = {r.target: r for r in results}
+        assert by_ip["10.19.81.13"].is_reachable is True
+        assert by_ip["10.19.81.14"].is_reachable is False
+
+    def test_csv_mock_format(self):
+        """Mock server returns CSV format."""
+        raw = "IP,Reachable,Latency_ms\n10.0.0.1,True,1.2\n10.0.0.2,False,0"
+        results = self._parse(raw)
+        assert len(results) == 2
+        by_ip = {r.target: r for r in results}
+        assert by_ip["10.0.0.1"].is_reachable is True
+        assert by_ip["10.0.0.2"].is_reachable is False
+
+    def test_empty_string(self):
+        assert self._parse("") == []
+
+    def test_json_empty_result(self):
+        raw = json.dumps({"result": {}})
+        assert self._parse(raw) == []
 
 
 class TestFanStatusNormalization:

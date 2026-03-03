@@ -318,31 +318,35 @@ class TestTransceiverData:
         with pytest.raises(ValidationError):
             TransceiverChannelData(channel=0, tx_power=-1.0, rx_power=-2.0)
 
-    def test_temperature_out_of_range(self):
-        with pytest.raises(ValidationError):
-            TransceiverData(
-                interface_name="Gi1",
-                temperature=200.0,
-                voltage=3.3,
-                channels=[],
-            )
+    def test_temperature_extreme_accepted(self):
+        """極端溫度值不再被 Pydantic 擋下（SNMP sentinel 由 collector 處理）。"""
+        d = TransceiverData(
+            interface_name="Gi1",
+            temperature=200.0,
+            voltage=3.3,
+            channels=[],
+        )
+        assert d.temperature == 200.0
 
-    def test_voltage_out_of_range(self):
-        with pytest.raises(ValidationError):
-            TransceiverData(
-                interface_name="Gi1",
-                temperature=30.0,
-                voltage=20.0,
-                channels=[],
-            )
+    def test_voltage_extreme_accepted(self):
+        """極端電壓值不再被 Pydantic 擋下。"""
+        d = TransceiverData(
+            interface_name="Gi1",
+            temperature=30.0,
+            voltage=20.0,
+            channels=[],
+        )
+        assert d.voltage == 20.0
 
-    def test_tx_power_out_of_range(self):
-        with pytest.raises(ValidationError):
-            TransceiverChannelData(channel=1, tx_power=20.0, rx_power=-1.0)
+    def test_tx_power_extreme_accepted(self):
+        """極端 tx_power 值不再被 Pydantic 擋下。"""
+        ch = TransceiverChannelData(channel=1, tx_power=20.0, rx_power=-1.0)
+        assert ch.tx_power == 20.0
 
-    def test_rx_power_out_of_range(self):
-        with pytest.raises(ValidationError):
-            TransceiverChannelData(channel=1, tx_power=-1.0, rx_power=-50.0)
+    def test_rx_power_extreme_accepted(self):
+        """極端 rx_power 值不再被 Pydantic 擋下。"""
+        ch = TransceiverChannelData(channel=1, tx_power=-1.0, rx_power=-50.0)
+        assert ch.rx_power == -50.0
 
     def test_none_values_allowed(self):
         d = TransceiverData(

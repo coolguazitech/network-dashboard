@@ -123,8 +123,8 @@ class TransceiverChannelData(BaseModel):
     """單一通道的光模組診斷資料。"""
 
     channel: int = Field(ge=1, le=4, description="通道編號 (SFP=1, QSFP=1~4)")
-    tx_power: float | None = Field(None, ge=-40.0, le=10.0, description="發射功率 (dBm)")
-    rx_power: float | None = Field(None, ge=-40.0, le=10.0, description="接收功率 (dBm)")
+    tx_power: float | None = Field(None, description="發射功率 (dBm)")
+    rx_power: float | None = Field(None, description="接收功率 (dBm)")
 
 
 class TransceiverData(ParsedData):
@@ -137,8 +137,8 @@ class TransceiverData(ParsedData):
     """
 
     interface_name: str
-    temperature: float | None = Field(None, ge=-10.0, le=100.0, description="模組溫度 (°C)")
-    voltage: float | None = Field(None, ge=0.0, le=10.0, description="模組電壓 (V)")
+    temperature: float | None = Field(None, description="模組溫度 (°C)")
+    voltage: float | None = Field(None, description="模組電壓 (V)")
     channels: list[TransceiverChannelData]
 
 
