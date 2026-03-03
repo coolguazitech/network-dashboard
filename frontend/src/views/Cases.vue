@@ -259,12 +259,14 @@
               <!-- 摘要 -->
               <input
                 v-if="canEditCase(c)"
-                :value="c.summary || ''"
+                :value="editingSummaryId === c.id ? editingSummaryValue : (c.summary || '')"
                 type="text"
                 maxlength="35"
                 placeholder="摘要..."
                 class="ml-2 text-sm font-bold text-slate-300 leading-snug px-2 py-0.5 bg-slate-700/30 border border-slate-600/25 rounded focus:border-cyan-500/50 focus:outline-none transition w-[480px] max-w-[480px]"
-                @blur="inlineSaveSummary(c, $event.target.value)"
+                @focus="startEditSummary(c)"
+                @input="editingSummaryValue = $event.target.value"
+                @blur="finishEditSummary(c, $event.target.value)"
                 @keyup.enter="$event.target.blur()"
                 @click.stop
               />
@@ -704,6 +706,9 @@ export default {
       pendingImages: [],
       // 使用者列表（供指派 dropdown）
       userList: [],
+      // 摘要編輯中的本地狀態（防止 Vue 重新渲染覆蓋使用者輸入）
+      editingSummaryId: null,
+      editingSummaryValue: '',
       // 自動刷新
       refreshTimer: null,
       debounceTimer: null,
@@ -1050,7 +1055,14 @@ export default {
       return canWrite.value
     },
 
-    async inlineSaveSummary(c, value) {
+    startEditSummary(c) {
+      this.editingSummaryId = c.id
+      this.editingSummaryValue = c.summary || ''
+    },
+
+    async finishEditSummary(c, value) {
+      this.editingSummaryId = null
+      this.editingSummaryValue = ''
       const trimmed = value.trim()
       if (trimmed === (c.summary || '')) return
       await this.updateCase(c, { summary: trimmed })

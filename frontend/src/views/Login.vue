@@ -138,7 +138,7 @@
 
           <!-- 歲修 ID 選擇 -->
           <div class="mb-4 field-stagger" style="animation-delay: 0ms">
-            <label class="block text-sm text-slate-400 mb-1.5">選擇歲修</label>
+            <label class="block text-sm text-slate-400 mb-1.5">選擇歲修 <span class="text-red-400">*</span></label>
             <select
               v-model="regMaintenanceId"
               class="w-full px-4 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition"
@@ -153,7 +153,7 @@
 
           <!-- 帳號 -->
           <div class="mb-4 field-stagger" style="animation-delay: 80ms">
-            <label class="block text-sm text-slate-400 mb-1.5">帳號</label>
+            <label class="block text-sm text-slate-400 mb-1.5">帳號 <span class="text-red-400">*</span></label>
             <input
               v-model="regUsername"
               type="text"
@@ -192,7 +192,7 @@
 
           <!-- 密碼 -->
           <div class="mb-4 field-stagger" style="animation-delay: 240ms">
-            <label class="block text-sm text-slate-400 mb-1.5">密碼</label>
+            <label class="block text-sm text-slate-400 mb-1.5">密碼 <span class="text-red-400">*</span></label>
             <div class="relative">
               <input
                 v-model="regPassword"
@@ -222,7 +222,7 @@
 
           <!-- 確認密碼 -->
           <div class="mb-6 field-stagger" style="animation-delay: 320ms">
-            <label class="block text-sm text-slate-400 mb-1.5">確認密碼</label>
+            <label class="block text-sm text-slate-400 mb-1.5">確認密碼 <span class="text-red-400">*</span></label>
             <div class="relative">
               <input
                 v-model="regPasswordConfirm"
