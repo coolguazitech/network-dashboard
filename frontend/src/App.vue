@@ -182,7 +182,7 @@
     <div
       v-if="showMaintenanceModal"
       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      @click.self="showMaintenanceModal = false"
+      @mousedown.self="showMaintenanceModal = false"
     >
       <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-2xl p-5 max-h-[80vh] overflow-auto">
         <div class="flex justify-between items-center mb-4">

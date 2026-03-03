@@ -1,7 +1,7 @@
 <template>
   <!-- 通用訊息 Modal -->
   <Transition name="modal">
-  <div v-if="messageModal.show" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60]" @click.self="closeMessage">
+  <div v-if="messageModal.show" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60]" @mousedown.self="closeMessage">
     <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-96">
       <div class="flex items-start gap-3">
         <span v-if="messageModal.type === 'success'" class="text-2xl text-green-400">✓</span>

@@ -406,6 +406,96 @@ class TestNeighborLldpCollector:
         assert by_host["LAB-08-TOR-DEV"].local_interface == "HundredGigE1/0/29"
         assert by_host["LAB-08-TOR-DEV"].remote_interface == "Ethernet1/49"
 
+    @pytest.mark.asyncio
+    async def test_lldp_hex_loc_port_id_fallback_to_desc(self, target, engine, session_cache):
+        """
+        When lldpLocPortId is hex-encoded (MAC address subtype), should
+        fall back to lldpLocPortDesc for the local interface name.
+        """
+        engine.walk = AsyncMock(side_effect=lambda t, oid: {
+            LLDP_REM_SYS_NAME: [
+                (f"{LLDP_REM_SYS_NAME}.0.49.1", "core-switch"),
+            ],
+            LLDP_REM_PORT_ID: [
+                (f"{LLDP_REM_PORT_ID}.0.49.1", "Gi0/1"),
+            ],
+            LLDP_REM_PORT_DESC: [],
+            LLDP_LOC_PORT_ID: [
+                (f"{LLDP_LOC_PORT_ID}.49", "0x54778a1ba584"),  # MAC address
+            ],
+            LLDP_LOC_PORT_DESC: [
+                (f"{LLDP_LOC_PORT_DESC}.49", "HGE1/0/30"),
+            ],
+        }[oid])
+
+        collector = NeighborLldpCollector()
+        _, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert len(parsed_items) == 1
+        # Should use LocPortDesc, NOT the hex LocPortId
+        assert parsed_items[0].local_interface == "HGE1/0/30"
+        assert parsed_items[0].remote_interface == "Gi0/1"
+
+    @pytest.mark.asyncio
+    async def test_lldp_hex_rem_port_id_fallback_to_desc(self, target, engine, session_cache):
+        """
+        When lldpRemPortId is hex-encoded (MAC address subtype), should
+        fall back to lldpRemPortDesc for the remote interface name.
+        """
+        engine.walk = AsyncMock(side_effect=lambda t, oid: {
+            LLDP_REM_SYS_NAME: [
+                (f"{LLDP_REM_SYS_NAME}.0.49.1", "remote-switch"),
+            ],
+            LLDP_REM_PORT_ID: [
+                (f"{LLDP_REM_PORT_ID}.0.49.1", "0xaabbccddeeff"),  # MAC
+            ],
+            LLDP_REM_PORT_DESC: [
+                (f"{LLDP_REM_PORT_DESC}.0.49.1", "TenGigE0/0/0/1"),
+            ],
+            LLDP_LOC_PORT_ID: [
+                (f"{LLDP_LOC_PORT_ID}.49", "GigabitEthernet1/0/1"),
+            ],
+            LLDP_LOC_PORT_DESC: [],
+        }[oid])
+
+        collector = NeighborLldpCollector()
+        _, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert len(parsed_items) == 1
+        assert parsed_items[0].remote_interface == "TenGigE0/0/0/1"
+        assert parsed_items[0].local_interface == "GigabitEthernet1/0/1"
+
+    @pytest.mark.asyncio
+    async def test_lldp_hex_both_ports_fallback(self, target, engine, session_cache):
+        """
+        Both local and remote PortId are hex-encoded. Both should fall
+        back to PortDesc.
+        """
+        engine.walk = AsyncMock(side_effect=lambda t, oid: {
+            LLDP_REM_SYS_NAME: [
+                (f"{LLDP_REM_SYS_NAME}.0.49.1", "remote-switch"),
+            ],
+            LLDP_REM_PORT_ID: [
+                (f"{LLDP_REM_PORT_ID}.0.49.1", "0x001122334455"),
+            ],
+            LLDP_REM_PORT_DESC: [
+                (f"{LLDP_REM_PORT_DESC}.0.49.1", "Ethernet1/1"),
+            ],
+            LLDP_LOC_PORT_ID: [
+                (f"{LLDP_LOC_PORT_ID}.49", "0xffeeddccbbaa"),
+            ],
+            LLDP_LOC_PORT_DESC: [
+                (f"{LLDP_LOC_PORT_DESC}.49", "XGE1/0/49"),
+            ],
+        }[oid])
+
+        collector = NeighborLldpCollector()
+        _, parsed_items = await collector.collect(target, DeviceType.HPE, session_cache, engine)
+
+        assert len(parsed_items) == 1
+        assert parsed_items[0].local_interface == "XGE1/0/49"
+        assert parsed_items[0].remote_interface == "Ethernet1/1"
+
 
 # =====================================================================
 # 3. InterfaceStatusCollector

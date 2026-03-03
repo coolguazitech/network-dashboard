@@ -357,6 +357,107 @@ class TestUplinkEvaluateMultipleDevices:
 
 
 @pytest.mark.asyncio
+class TestUplinkEvaluateReverseLookup:
+    """Bidirectional check: if hostname/neighbor are swapped, reverse lookup should still pass."""
+
+    async def test_reverse_lookup_passes(self):
+        """Expectation hostname=B, neighbor=A, but only A is polled and sees B."""
+        indicator = UplinkIndicator()
+        session = AsyncMock()
+
+        # Only A (CORE-SW-01) is polled and sees B (SW-01)
+        neighbor_records = [
+            _make_neighbor_record("CORE-SW-01", remote_hostname="SW-01"),
+        ]
+
+        with (
+            patch.object(
+                indicator, "_load_expectations",
+                new_callable=AsyncMock,
+                return_value={
+                    # User filled it "backwards": hostname=SW-01, neighbor=CORE-SW-01
+                    # SW-01 has no collected data, but CORE-SW-01's data shows SW-01
+                    "SW-01": ["CORE-SW-01"],
+                },
+            ),
+            patch.object(
+                indicator, "_get_latest_all_protocols",
+                new_callable=AsyncMock,
+                return_value=neighbor_records,
+            ),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, session)
+
+        assert result.total_count == 1
+        assert result.pass_count == 1
+        assert result.fail_count == 0
+        assert result.passes is not None
+        assert "已連接" in result.passes[0]["reason"]
+
+    async def test_reverse_lookup_no_data_both_sides(self):
+        """Neither side has data -> still reports '無採集數據'."""
+        indicator = UplinkIndicator()
+        session = AsyncMock()
+
+        # Some unrelated device is polled
+        neighbor_records = [
+            _make_neighbor_record("SW-99", remote_hostname="SW-98"),
+        ]
+
+        with (
+            patch.object(
+                indicator, "_load_expectations",
+                new_callable=AsyncMock,
+                return_value={
+                    "SW-01": ["CORE-SW-01"],
+                },
+            ),
+            patch.object(
+                indicator, "_get_latest_all_protocols",
+                new_callable=AsyncMock,
+                return_value=neighbor_records,
+            ),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, session)
+
+        assert result.total_count == 1
+        assert result.pass_count == 0
+        assert result.fail_count == 1
+        assert result.failures[0]["reason"] == "無採集數據"
+
+    async def test_reverse_lookup_neighbor_has_data_but_no_match(self):
+        """Neighbor has data but doesn't see hostname -> still fails."""
+        indicator = UplinkIndicator()
+        session = AsyncMock()
+
+        # CORE-SW-01 is polled but sees SW-99, not SW-01
+        neighbor_records = [
+            _make_neighbor_record("CORE-SW-01", remote_hostname="SW-99"),
+        ]
+
+        with (
+            patch.object(
+                indicator, "_load_expectations",
+                new_callable=AsyncMock,
+                return_value={
+                    "SW-01": ["CORE-SW-01"],
+                },
+            ),
+            patch.object(
+                indicator, "_get_latest_all_protocols",
+                new_callable=AsyncMock,
+                return_value=neighbor_records,
+            ),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, session)
+
+        assert result.total_count == 1
+        assert result.pass_count == 0
+        assert result.fail_count == 1
+        assert "未找到" in result.failures[0]["reason"]
+
+
+@pytest.mark.asyncio
 class TestUplinkPassesCappedAtTen:
     """passes list should not exceed 10 items."""
 

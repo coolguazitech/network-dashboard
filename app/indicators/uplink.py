@@ -11,7 +11,7 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import MaintenanceDeviceList, UplinkExpectation, NeighborRecord
+from app.db.models import UplinkExpectation, NeighborRecord
 from app.repositories.typed_records import (
     NeighborLldpRecordRepo,
     NeighborCdpRecordRepo,
@@ -87,20 +87,23 @@ class UplinkIndicator(BaseIndicator):
             if not expected_neighbors:
                 continue
 
-            # 取得該設備的實際鄰居
+            # 取得該設備的實際鄰居（正向）
             actual_neighbors = device_neighbors.get(device_hostname, set())
 
             # 驗證每個期望的鄰居
             for expected_neighbor in expected_neighbors:
                 total_count += 1
 
-                if not actual_neighbors:
-                    failures.append({
-                        "device": device_hostname,
-                        "expected_neighbor": expected_neighbor,
-                        "reason": "無採集數據",
-                    })
-                elif expected_neighbor in actual_neighbors:
+                # 正向: hostname 的鄰居包含 expected_neighbor
+                forward_match = expected_neighbor in actual_neighbors
+                # 反向: expected_neighbor 的鄰居包含 hostname
+                # （處理用戶填反本地/鄰居的情況）
+                reverse_neighbors = device_neighbors.get(
+                    expected_neighbor, set()
+                )
+                reverse_match = device_hostname in reverse_neighbors
+
+                if forward_match or reverse_match:
                     pass_count += 1
                     if len(passes) < 10:
                         passes.append({
@@ -108,6 +111,12 @@ class UplinkIndicator(BaseIndicator):
                             "interface": "Uplink",
                             "reason": f"鄰居 '{expected_neighbor}' 已連接",
                         })
+                elif not actual_neighbors and not reverse_neighbors:
+                    failures.append({
+                        "device": device_hostname,
+                        "expected_neighbor": expected_neighbor,
+                        "reason": "無採集數據",
+                    })
                 else:
                     failures.append({
                         "device": device_hostname,
@@ -142,18 +151,9 @@ class UplinkIndicator(BaseIndicator):
         session: AsyncSession,
         maintenance_id: str,
     ) -> dict[str, list[str]]:
-        """從 DB 讀取 uplink 期望（僅限仍在設備清單中的設備）。"""
-        active_hostnames = (
-            select(MaintenanceDeviceList.new_hostname)
-            .where(
-                MaintenanceDeviceList.maintenance_id == maintenance_id,
-                MaintenanceDeviceList.new_hostname.isnot(None),
-            )
-        )
-
+        """從 DB 讀取 uplink 期望。"""
         stmt = select(UplinkExpectation).where(
             UplinkExpectation.maintenance_id == maintenance_id,
-            UplinkExpectation.hostname.in_(active_hostnames),
         )
         result = await session.execute(stmt)
         expectations = result.scalars().all()
@@ -215,14 +215,20 @@ class UplinkIndicator(BaseIndicator):
             key = (record.collected_at, record.switch_hostname)
             groups[key].add(record.remote_hostname)
 
-        # 按時間戳聚合：同一時間點所有設備的平均匹配率
+        # 按時間戳聚合：同一時間點所有設備的平均匹配率（雙向查找）
         ts_map: dict[object, list[float]] = defaultdict(list)
         for (collected_at, hostname), actual_neighbors in groups.items():
             expected_neighbors = uplink_expectations.get(hostname, [])
             if expected_neighbors:
-                match_count = sum(
-                    1 for n in expected_neighbors if n in actual_neighbors
-                )
+                match_count = 0
+                for n in expected_neighbors:
+                    forward = n in actual_neighbors
+                    reverse_neighbors = groups.get(
+                        (collected_at, n), set()
+                    )
+                    reverse = hostname in reverse_neighbors
+                    if forward or reverse:
+                        match_count += 1
                 match_rate = (match_count / len(expected_neighbors)) * 100
             else:
                 match_rate = 100.0

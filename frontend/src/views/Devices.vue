@@ -329,7 +329,7 @@
 
     <!-- 新增/編輯 Client Modal -->
     <Transition name="modal">
-    <div v-if="showAddMacModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closeClientModal">
+    <div v-if="showAddMacModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @mousedown.self="closeClientModal">
       <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[450px]">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingClient ? '編輯 Client' : '新增 Client' }}</h3>
         <div class="space-y-4">
@@ -405,7 +405,7 @@
 
     <!-- 新增/編輯設備對應 Modal -->
     <Transition name="modal">
-    <div v-if="showAddDeviceModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closeDeviceModal">
+    <div v-if="showAddDeviceModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @mousedown.self="closeDeviceModal">
       <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[650px]">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingDevice ? '編輯設備對應' : '新增設備對應' }}</h3>
         <p class="text-sm text-slate-400 mb-4">💡 至少需填寫一側，該側需填寫完整設備資訊（Hostname、IP、Device Type）</p>
@@ -485,7 +485,7 @@
 
     <!-- 匯入結果 Modal -->
     <Transition name="modal">
-    <div v-if="importResultModal.show" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4" @click.self="closeImportResultModal">
+    <div v-if="importResultModal.show" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4" @mousedown.self="closeImportResultModal">
       <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[550px] max-h-[80vh] flex flex-col">
         <div class="flex items-start gap-3 mb-4">
           <span class="text-2xl" :class="importResultModal.totalErrors > 0 ? 'text-amber-400' : 'text-green-400'">

@@ -22,64 +22,9 @@ from app.db.models import (
     UplinkExpectation,
     VersionExpectation,
     PortChannelExpectation,
-    MaintenanceDeviceList,
 )
 
 router = APIRouter(tags=["expectations"])
-
-
-# ========== Helper Functions ==========
-
-async def validate_hostname_in_device_list(
-    maintenance_id: str,
-    hostname: str,
-    session: AsyncSession,
-    field_name: str = "hostname",
-) -> None:
-    """
-    驗證 hostname 是否存在於設備清單的「新設備」中。
-
-    Args:
-        maintenance_id: 歲修 ID
-        hostname: 要驗證的主機名稱
-        session: 資料庫 session
-        field_name: 欄位名稱（用於錯誤訊息）
-
-    Raises:
-        HTTPException: 如果 hostname 不在設備清單中
-    """
-    stmt = select(MaintenanceDeviceList).where(
-        MaintenanceDeviceList.maintenance_id == maintenance_id,
-        MaintenanceDeviceList.new_hostname == hostname,
-    )
-    result = await session.execute(stmt)
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"{field_name} '{hostname}' 不在設備清單的新設備中，"
-                   f"請先在設備清單中新增此設備"
-        )
-
-
-
-async def get_valid_new_hostnames(
-    maintenance_id: str,
-    session: AsyncSession,
-) -> set[str]:
-    """
-    取得設備清單中所有新設備的 hostname。
-
-    用於批量匯入時的驗證。
-
-    Returns:
-        新設備 hostname 的集合
-    """
-    stmt = select(MaintenanceDeviceList.new_hostname).where(
-        MaintenanceDeviceList.maintenance_id == maintenance_id
-    )
-    result = await session.execute(stmt)
-    return {row[0] for row in result.fetchall()}
-
 
 
 # ========== Pydantic Models ==========
@@ -198,14 +143,6 @@ async def create_uplink_expectation(
     local_interface = data.local_interface.strip()
     expected_neighbor = data.expected_neighbor.strip()
     expected_interface = data.expected_interface.strip() if data.expected_interface else None
-
-    # 驗證 hostname 和 expected_neighbor 必須為新設備（Uplink 期望只允許新設備）
-    await validate_hostname_in_device_list(
-        maintenance_id, hostname, session, "本地設備"
-    )
-    await validate_hostname_in_device_list(
-        maintenance_id, expected_neighbor, session, "鄰居設備"
-    )
 
     # 當鄰居是自己時，本地介面與鄰居介面必須不同
     if hostname == expected_neighbor:
@@ -334,16 +271,6 @@ async def update_uplink_expectation(
         if data.expected_neighbor is not None
         else item.expected_neighbor
     )
-
-    # 驗證變更的 hostname 和 expected_neighbor 必須為新設備（Uplink 期望只允許新設備）
-    if data.hostname is not None and new_hostname != item.hostname:
-        await validate_hostname_in_device_list(
-            maintenance_id, new_hostname, session, "本地設備"
-        )
-    if data.expected_neighbor is not None and new_neighbor != item.expected_neighbor:
-        await validate_hostname_in_device_list(
-            maintenance_id, new_neighbor, session, "鄰居設備"
-        )
 
     # 計算更新後的鄰居介面
     new_neighbor_int_for_self_check = (
@@ -606,9 +533,6 @@ async def import_uplink_csv(
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
 
-    # 預先載入有效的新設備 hostname（Uplink 期望只允許新設備）
-    valid_hostnames = await get_valid_new_hostnames(maintenance_id, session)
-
     imported = 0
     updated = 0
     errors = []
@@ -623,18 +547,6 @@ async def import_uplink_csv(
 
             if not hostname or not local_interface or not expected_neighbor or not expected_interface:
                 errors.append(f"Row {row_num}: 必填欄位不完整 (hostname, local_interface, expected_neighbor, expected_interface)")
-                continue
-
-            # 驗證 hostname 和 expected_neighbor 必須為新設備
-            if hostname not in valid_hostnames:
-                errors.append(
-                    f"Row {row_num}: 本地設備 '{hostname}' 不在新設備清單中（Uplink 期望只允許新設備）"
-                )
-                continue
-            if expected_neighbor not in valid_hostnames:
-                errors.append(
-                    f"Row {row_num}: 鄰居設備 '{expected_neighbor}' 不在新設備清單中（Uplink 期望只允許新設備）"
-                )
                 continue
 
             # 檢查是否已存在
@@ -743,9 +655,6 @@ async def create_version_expectation(
     """新增版本期望。"""
     hostname = data.hostname.strip()
 
-    # 驗證 hostname 存在於設備清單的新設備中
-    await validate_hostname_in_device_list(maintenance_id, hostname, session, "設備")
-
     # 檢查 hostname 是否已存在（一台設備只能有一筆版本期望）
     dup_stmt = select(VersionExpectation).where(
         VersionExpectation.maintenance_id == maintenance_id,
@@ -813,11 +722,6 @@ async def update_version_expectation(
     if data.hostname is not None:
         new_hostname = data.hostname.strip()
         if new_hostname != item.hostname:
-            # 驗證新 hostname 存在於設備清單的新設備中
-            await validate_hostname_in_device_list(
-                maintenance_id, new_hostname, session, "設備"
-            )
-
             dup_stmt = select(VersionExpectation).where(
                 VersionExpectation.maintenance_id == maintenance_id,
                 VersionExpectation.hostname == new_hostname,
@@ -997,9 +901,6 @@ async def import_version_csv(
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
 
-    # 預先載入有效的新設備 hostname
-    valid_hostnames = await get_valid_new_hostnames(maintenance_id, session)
-
     imported = 0
     updated = 0
     errors = []
@@ -1012,13 +913,6 @@ async def import_version_csv(
 
             if not hostname or not expected_versions:
                 errors.append(f"Row {row_num}: 必填欄位不完整")
-                continue
-
-            # 驗證 hostname 存在於設備清單的新設備中
-            if hostname not in valid_hostnames:
-                errors.append(
-                    f"Row {row_num}: 設備 '{hostname}' 不在設備清單的新設備中"
-                )
                 continue
 
             # 標準化版本格式（排序確保順序無關唯一性）
@@ -1153,9 +1047,6 @@ async def create_port_channel_expectation(
     hostname = data.hostname.strip()
     port_channel = data.port_channel.strip()
 
-    # 驗證 hostname 存在於設備清單的新設備中
-    await validate_hostname_in_device_list(maintenance_id, hostname, session, "設備")
-
     # 檢查是否已存在相同的 hostname + port_channel
     stmt = select(PortChannelExpectation).where(
         PortChannelExpectation.maintenance_id == maintenance_id,
@@ -1235,12 +1126,6 @@ async def update_port_channel_expectation(
         if data.port_channel is not None
         else item.port_channel
     )
-
-    # 驗證變更的 hostname 存在於設備清單的新設備中
-    if data.hostname is not None and new_hostname != item.hostname:
-        await validate_hostname_in_device_list(
-            maintenance_id, new_hostname, session, "設備"
-        )
 
     # 檢查更新後是否會與其他記錄重複（排除自己）
     if data.hostname is not None or data.port_channel is not None:
@@ -1436,9 +1321,6 @@ async def import_port_channel_csv(
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
 
-    # 預先載入有效的新設備 hostname
-    valid_hostnames = await get_valid_new_hostnames(maintenance_id, session)
-
     imported = 0
     updated = 0
     errors = []
@@ -1452,13 +1334,6 @@ async def import_port_channel_csv(
 
             if not hostname or not port_channel or not member_interfaces:
                 errors.append(f"Row {row_num}: 必填欄位不完整")
-                continue
-
-            # 驗證 hostname 存在於設備清單的新設備中
-            if hostname not in valid_hostnames:
-                errors.append(
-                    f"Row {row_num}: 設備 '{hostname}' 不在設備清單的新設備中"
-                )
                 continue
 
             # 標準化成員介面格式（排序以確保順序無關的唯一性）

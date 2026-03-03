@@ -259,7 +259,7 @@
     <div
       v-if="showCleanupModal"
       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      @click.self="showCleanupModal = false"
+      @mousedown.self="showCleanupModal = false"
     >
       <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-sm p-5">
         <h3 class="text-lg font-bold text-white mb-4">清理舊日誌</h3>

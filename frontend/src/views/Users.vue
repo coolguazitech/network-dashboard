@@ -151,7 +151,7 @@
     <div
       v-if="showUserModal"
       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      @click.self="showUserModal = false"
+      @mousedown.self="showUserModal = false"
     >
       <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-md p-5">
         <div class="flex justify-between items-center mb-4">
@@ -300,7 +300,7 @@
     <div
       v-if="showResetPasswordModal"
       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      @click.self="showResetPasswordModal = false"
+      @mousedown.self="showResetPasswordModal = false"
     >
       <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-sm p-5">
         <div class="flex justify-between items-center mb-4">
@@ -347,7 +347,7 @@
     <div
       v-if="showDeleteModal"
       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      @click.self="showDeleteModal = false"
+      @mousedown.self="showDeleteModal = false"
     >
       <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-red-700/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-sm p-5">
         <h3 class="text-lg font-bold text-red-400 mb-4">確認刪除</h3>

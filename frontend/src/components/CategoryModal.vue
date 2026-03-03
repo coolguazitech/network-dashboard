@@ -1,5 +1,5 @@
 <template>
-  <div class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="$emit('close')">
+  <div class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @mousedown.self="$emit('close')">
     <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
       <!-- Header -->
       <div class="flex justify-between items-center p-4 border-b border-slate-700 bg-slate-800">

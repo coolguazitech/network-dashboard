@@ -40,6 +40,17 @@ class NeighborLldpCollector(BaseSnmpCollector):
     api_name = "get_uplink_lldp"
 
     @staticmethod
+    def _is_hex_encoded(value: str) -> bool:
+        """Check if a value is hex-encoded binary (e.g. MAC address subtype).
+
+        When the LLDP Port ID subtype is macAddress (3) or another binary
+        type, pysnmp's ``prettyPrint()`` returns a hex string like
+        ``0x54778a1ba584``.  These are not human-readable interface names
+        and should be skipped in favour of the Port Description.
+        """
+        return value.startswith(("0x", "0X"))
+
+    @staticmethod
     def _parse_lldp_remote_index(oid_str: str, prefix: str) -> tuple[str, str, str] | None:
         """
         Parse LLDP remote table index from full OID.
@@ -79,10 +90,11 @@ class NeighborLldpCollector(BaseSnmpCollector):
             port_num = self.extract_index(oid_str, LLDP_LOC_PORT_DESC)
             if port_num and val_str:
                 local_port_map[port_num] = val_str
-        # LocPortId overwrites LocPortDesc where present
+        # LocPortId overwrites LocPortDesc where present,
+        # UNLESS it is hex-encoded binary (e.g. MAC address subtype).
         for oid_str, val_str in loc_port_id_varbinds:
             port_num = self.extract_index(oid_str, LLDP_LOC_PORT_ID)
-            if port_num and val_str:
+            if port_num and val_str and not self._is_hex_encoded(val_str):
                 local_port_map[port_num] = val_str
 
         # Build keyed dictionaries for remote entries
@@ -117,10 +129,14 @@ class NeighborLldpCollector(BaseSnmpCollector):
             local_port_num = rem_local_ports.get(key, "")
             local_interface = local_port_map.get(local_port_num, f"port{local_port_num}")
 
-            # Prefer lldpRemPortId, fallback to lldpRemPortDesc
+            # Prefer lldpRemPortId, fallback to lldpRemPortDesc.
+            # Skip hex-encoded binary values (e.g. MAC address subtype).
             remote_port_id = rem_port_ids.get(key, "")
             remote_port_desc = rem_port_descs.get(key, "")
-            remote_interface = remote_port_id if remote_port_id else remote_port_desc
+            if remote_port_id and not self._is_hex_encoded(remote_port_id):
+                remote_interface = remote_port_id
+            else:
+                remote_interface = remote_port_desc
 
             if not remote_interface:
                 logger.debug(

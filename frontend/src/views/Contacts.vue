@@ -266,7 +266,7 @@
     <div
       v-if="showContactModal"
       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      @click.self="showContactModal = false"
+      @mousedown.self="showContactModal = false"
     >
       <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-5 w-[500px] max-w-full modal-content">
         <div class="flex justify-between items-center mb-4">
@@ -345,7 +345,7 @@
     <div
       v-if="showCategoryModal"
       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      @click.self="showCategoryModal = false"
+      @mousedown.self="showCategoryModal = false"
     >
       <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-5 w-96 max-w-full modal-content">
         <div class="flex justify-between items-center mb-4">
@@ -399,7 +399,7 @@
     <div
       v-if="showDeleteModal"
       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      @click.self="showDeleteModal = false"
+      @mousedown.self="showDeleteModal = false"
     >
       <div class="bg-slate-800/95 backdrop-blur-xl border border-red-500/30 rounded-2xl shadow-2xl shadow-black/30 p-5 w-96 max-w-full modal-content">
         <div class="flex items-center gap-3 mb-4">
@@ -441,7 +441,7 @@
     <div
       v-if="showImportModal"
       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      @click.self="showImportModal = false"
+      @mousedown.self="showImportModal = false"
     >
       <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-5 w-[500px] max-w-full modal-content">
         <div class="flex justify-between items-center mb-4">

@@ -347,7 +347,7 @@
 
     <!-- 新增/編輯 Uplink 期望 Modal -->
     <Transition name="modal">
-    <div v-if="showAddUplinkModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closeUplinkModal">
+    <div v-if="showAddUplinkModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @mousedown.self="closeUplinkModal">
       <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[500px] modal-content">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingUplink ? '編輯 Uplink 期望' : '新增 Uplink 期望' }}</h3>
         <p class="text-xs text-yellow-400 mb-4">注意：本地設備與鄰居設備都必須來自設備清單中的「新設備」</p>
@@ -385,7 +385,7 @@
 
     <!-- 新增/編輯 Version 期望 Modal -->
     <Transition name="modal">
-    <div v-if="showAddVersionModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closeVersionModal">
+    <div v-if="showAddVersionModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @mousedown.self="closeVersionModal">
       <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[500px] modal-content">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingVersion ? '編輯 Version 期望' : '新增 Version 期望' }}</h3>
         <p class="text-xs text-yellow-400 mb-4">注意：設備 Hostname 必須來自設備清單中的「新設備」</p>
@@ -416,7 +416,7 @@
 
     <!-- 新增/編輯 Port Channel 期望 Modal -->
     <Transition name="modal">
-    <div v-if="showAddPortChannelModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="closePortChannelModal">
+    <div v-if="showAddPortChannelModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @mousedown.self="closePortChannelModal">
       <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[500px] modal-content">
         <h3 class="text-lg font-semibold text-white mb-4">{{ editingPortChannel ? '編輯 Port Channel 期望' : '新增 Port Channel 期望' }}</h3>
         <p class="text-xs text-yellow-400 mb-4">注意：設備 Hostname 必須來自設備清單中的「新設備」</p>

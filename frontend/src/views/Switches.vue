@@ -91,7 +91,7 @@
       <div
         v-if="showModal"
         class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center z-50 p-4 pt-20"
-        @click.self="closeModal"
+        @mousedown.self="closeModal"
       >
         <div class="modal-content bg-slate-800/95 backdrop-blur-xl rounded-2xl border border-slate-600/40 w-full max-w-2xl shadow-2xl shadow-black/30">
           <div class="flex justify-between items-center px-5 py-4 border-b border-slate-700">
@@ -181,7 +181,7 @@
       <div
         v-if="showDeleteConfirm"
         class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-        @click.self="cancelDelete"
+        @mousedown.self="cancelDelete"
       >
         <div class="modal-content bg-slate-800/95 backdrop-blur-xl rounded-2xl border border-slate-600/40 w-full max-w-sm shadow-2xl shadow-black/30 p-6 text-center">
           <h3 class="text-lg font-semibold text-white mb-2">確認刪除</h3>

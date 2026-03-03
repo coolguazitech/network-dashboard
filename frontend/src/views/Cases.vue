@@ -521,7 +521,7 @@
       <div
         v-if="timelineModal.show"
         class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-        @click.self="timelineModal.show = false"
+        @mousedown.self="timelineModal.show = false"
       >
         <div class="modal-content bg-slate-800/95 backdrop-blur-xl rounded-2xl border border-slate-600/40 w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl shadow-black/30" style="box-shadow: 0 25px 50px rgba(0,0,0,0.4), 0 0 40px rgba(0,210,255,0.03)">
           <!-- Header -->
@@ -875,16 +875,17 @@ export default {
     },
 
     async silentRefreshCases() {
-      // Skip if user is editing inline
-      const activeEl = document.activeElement
-      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'SELECT' || activeEl.tagName === 'TEXTAREA')) {
-        const caseList = this.$refs.caseListRef || this.$el
-        if (caseList && caseList.contains(activeEl)) return
-      }
       if (!this.selectedMaintenanceId) return
       try {
         const params = this._buildCaseParams()
         const { data } = await api.get(`/cases/${this.selectedMaintenanceId}`, { params })
+        // Check AFTER the API call returns — the user may have started
+        // editing between the request and the response.
+        const activeEl = document.activeElement
+        if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'SELECT' || activeEl.tagName === 'TEXTAREA')) {
+          const caseList = this.$refs.caseListRef || this.$el
+          if (caseList && caseList.contains(activeEl)) return
+        }
         this.cases = data.cases || []
         this.totalPages = data.total_pages || 1
         this.totalCount = data.total || 0

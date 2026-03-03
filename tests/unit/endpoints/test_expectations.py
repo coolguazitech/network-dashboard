@@ -115,14 +115,6 @@ def _make_port_channel_obj(**kwargs):
     return obj
 
 
-def _make_device_obj(**kwargs):
-    """Create a mock MaintenanceDeviceList object for hostname validation."""
-    obj = MagicMock()
-    obj.maintenance_id = kwargs.get("maintenance_id", "MAINT-001")
-    obj.new_hostname = kwargs.get("new_hostname", "SW-01")
-    return obj
-
-
 # ========== TestUplinkExpectations ==========
 
 
@@ -157,11 +149,6 @@ class TestUplinkExpectations:
         session = _make_mock_session()
         app = _build_app(ROOT_USER, session)
 
-        # validate_hostname_in_device_list (2 calls: hostname + neighbor)
-        device_result1 = MagicMock()
-        device_result1.scalar_one_or_none.return_value = _make_device_obj(new_hostname="SW-01")
-        device_result2 = MagicMock()
-        device_result2.scalar_one_or_none.return_value = _make_device_obj(new_hostname="SW-02")
         # dup check (hostname + local_interface)
         dup_result = MagicMock()
         dup_result.scalar_one_or_none.return_value = None
@@ -176,8 +163,6 @@ class TestUplinkExpectations:
         topo3.scalar_one_or_none.return_value = None
 
         session.execute.side_effect = [
-            device_result1,
-            device_result2,
             dup_result,
             topo1,
             topo2,
@@ -358,14 +343,11 @@ class TestVersionExpectations:
         session = _make_mock_session()
         app = _build_app(PM_USER, session)
 
-        # validate_hostname_in_device_list
-        device_result = MagicMock()
-        device_result.scalar_one_or_none.return_value = _make_device_obj(new_hostname="SW-01")
         # dup check
         dup_result = MagicMock()
         dup_result.scalar_one_or_none.return_value = None
 
-        session.execute.side_effect = [device_result, dup_result]
+        session.execute.side_effect = [dup_result]
         session.refresh.side_effect = lambda obj: setattr(obj, "id", 50)
 
         with patch("app.api.endpoints.expectations.write_log", new_callable=AsyncMock):
@@ -442,14 +424,11 @@ class TestPortChannelExpectations:
         session = _make_mock_session()
         app = _build_app(PM_USER, session)
 
-        # validate_hostname_in_device_list
-        device_result = MagicMock()
-        device_result.scalar_one_or_none.return_value = _make_device_obj(new_hostname="SW-01")
         # dup check (hostname + port_channel)
         dup_result = MagicMock()
         dup_result.scalar_one_or_none.return_value = None
 
-        session.execute.side_effect = [device_result, dup_result]
+        session.execute.side_effect = [dup_result]
         session.refresh.side_effect = lambda obj: setattr(obj, "id", 77)
 
         with patch("app.api.endpoints.expectations.write_log", new_callable=AsyncMock):
