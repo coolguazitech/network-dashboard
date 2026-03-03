@@ -395,11 +395,17 @@ class TestDeleteClient:
         # Calls:
         # 1. find MAC -> scalar_one_or_none
         # 2. get category IDs -> fetchall
-        # 3. session.delete()
+        # 3. delete Case -> execute
+        # 4-6. delete SeverityOverride / ReferenceClient / LatestClientRecord
+        # 7. session.delete()
         session.execute = AsyncMock(
             side_effect=[
                 _scalar_one_or_none(existing),   # find entry
                 _fetchall([]),                    # category IDs (none)
+                MagicMock(),                     # delete Case
+                MagicMock(),                     # delete SeverityOverride
+                MagicMock(),                     # delete ReferenceClient
+                MagicMock(),                     # delete LatestClientRecord
             ]
         )
         session.delete = AsyncMock()
@@ -431,7 +437,7 @@ class TestDeleteClient:
         # Calls:
         # 1. get MAC addresses for IDs -> fetchall
         # 2. get category IDs -> fetchall
-        # 3. delete member records -> execute
+        # 3. delete Case -> execute
         # 4. delete MAC records -> execute (with rowcount)
         mac_result = MagicMock()
         mac_result.fetchall.return_value = [("AA:BB:CC:DD:EE:01",)]
@@ -446,6 +452,10 @@ class TestDeleteClient:
             side_effect=[
                 mac_result,       # macs to delete
                 cat_result,       # category IDs (none)
+                MagicMock(),      # delete Case
+                MagicMock(),      # delete SeverityOverride
+                MagicMock(),      # delete ReferenceClient
+                MagicMock(),      # delete LatestClientRecord
                 delete_result,    # delete MaintenanceMacList
             ]
         )

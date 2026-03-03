@@ -21,7 +21,8 @@ from app.db.base import get_session_context
 from app.core.enums import UserRole
 from app.db.models import (
     MaintenanceMacList, ClientCategoryMember, ClientCategory, User,
-    PingRecord, LatestCollectionBatch,
+    PingRecord, LatestCollectionBatch, Case,
+    SeverityOverride, ReferenceClient, LatestClientRecord,
 )
 from app.services.client_comparison_service import ClientComparisonService
 from app.services.system_log import write_log
@@ -686,6 +687,22 @@ async def remove_mac(
             )
             await session.execute(del_member_stmt)
 
+        # 刪除對應的 Case（CaseNote 有 CASCADE 自動刪除）
+        del_case_stmt = delete(Case).where(
+            Case.maintenance_id == maintenance_id,
+            Case.mac_address == mac,
+        )
+        await session.execute(del_case_stmt)
+
+        # 刪除關聯的 SeverityOverride / ReferenceClient / LatestClientRecord
+        for model in (SeverityOverride, ReferenceClient, LatestClientRecord):
+            await session.execute(
+                delete(model).where(
+                    model.maintenance_id == maintenance_id,
+                    model.mac_address == mac,
+                )
+            )
+
         await session.delete(entry)
         await session.commit()
 
@@ -742,6 +759,23 @@ async def batch_delete_macs(
                 )
                 await session.execute(del_member_stmt)
 
+        # 刪除對應的 Case（CaseNote 有 CASCADE 自動刪除）
+        if macs_to_delete:
+            del_case_stmt = delete(Case).where(
+                Case.maintenance_id == maintenance_id,
+                Case.mac_address.in_(macs_to_delete),
+            )
+            await session.execute(del_case_stmt)
+
+            # 刪除關聯的 SeverityOverride / ReferenceClient / LatestClientRecord
+            for model in (SeverityOverride, ReferenceClient, LatestClientRecord):
+                await session.execute(
+                    delete(model).where(
+                        model.maintenance_id == maintenance_id,
+                        model.mac_address.in_(macs_to_delete),
+                    )
+                )
+
         # 刪除 MAC 記錄
         stmt = delete(MaintenanceMacList).where(
             MaintenanceMacList.maintenance_id == maintenance_id,
@@ -775,6 +809,20 @@ async def clear_all(
 ) -> dict[str, Any]:
     """清空該歲修的所有 MAC。"""
     async with get_session_context() as session:
+        # 刪除所有 Case（CaseNote 有 CASCADE 自動刪除）
+        del_case_stmt = delete(Case).where(
+            Case.maintenance_id == maintenance_id,
+        )
+        await session.execute(del_case_stmt)
+
+        # 刪除所有 SeverityOverride / ReferenceClient / LatestClientRecord
+        for model in (SeverityOverride, ReferenceClient, LatestClientRecord):
+            await session.execute(
+                delete(model).where(
+                    model.maintenance_id == maintenance_id,
+                )
+            )
+
         stmt = delete(MaintenanceMacList).where(
             MaintenanceMacList.maintenance_id == maintenance_id
         )
