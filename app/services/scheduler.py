@@ -279,7 +279,7 @@ class SchedulerService:
 
     # ── Client Collection ─────────────────────────────────────
 
-    def add_client_collection_job(self, interval_seconds: int = 120) -> str:
+    def add_client_collection_job(self, interval_seconds: int = 600) -> str:
         """
         Add a scheduled client collection job.
 
@@ -290,7 +290,7 @@ class SchedulerService:
         4. Auto-reopens resolved cases with ping failure
 
         Args:
-            interval_seconds: Collection interval in seconds (default: 120)
+            interval_seconds: Collection interval in seconds (default: 600)
 
         Returns:
             str: Job ID
@@ -630,50 +630,66 @@ class SchedulerService:
                                 continue
 
                             url = base_url.rstrip("/") + ping_cfg.endpoint
-                            try:
-                                resp = await http.post(
-                                    url,
-                                    json={
-                                        "app_name": "network-change-orchestrator",
-                                        "token": ping_cfg.token,
-                                        "addresses": sorted(client_ips),
-                                        "count": 2,
-                                        "interval": 0.1,
-                                        "timeout": 2,
-                                        "concurrent_tasks": 10,
-                                        "family": 4,
-                                        "privileged": True,
-                                    },
-                                )
-                                resp.raise_for_status()
-                            except Exception as fetch_err:
-                                logger.error(
-                                    "client_ping fetch failed for %s/%s: %s",
-                                    mid, tg.value, fetch_err,
-                                )
-                                continue
+                            sorted_ips = sorted(client_ips)
 
-                            parsed_items = self._parse_ping_response(resp.text)
-                            ip_to_result = {i.target: i for i in parsed_items}
+                            # 分批送出，每批最多 300 個 IP
+                            chunk_size = 300
+                            all_results: list = []
+                            all_raw: list[str] = []
+                            for i in range(0, len(sorted_ips), chunk_size):
+                                chunk = sorted_ips[i:i + chunk_size]
+                                try:
+                                    resp = await http.post(
+                                        url,
+                                        json={
+                                            "app_name": "network-change-orchestrator",
+                                            "token": ping_cfg.token,
+                                            "addresses": chunk,
+                                            "count": 2,
+                                            "interval": 0.1,
+                                            "timeout": 2,
+                                            "concurrent_tasks": 10,
+                                            "family": 4,
+                                            "privileged": True,
+                                        },
+                                    )
+                                    resp.raise_for_status()
+                                except Exception as fetch_err:
+                                    logger.error(
+                                        "client_ping fetch failed for "
+                                        "%s/%s chunk %d-%d: %s",
+                                        mid, tg.value,
+                                        i, i + len(chunk), fetch_err,
+                                    )
+                                    continue
+
+                                parsed_items = self._parse_ping_response(
+                                    resp.text,
+                                )
+                                ip_to_result = {
+                                    it.target: it for it in parsed_items
+                                }
+                                all_results.extend(
+                                    ip_to_result[ip]
+                                    for ip in chunk
+                                    if ip in ip_to_result
+                                )
+                                all_raw.append(resp.text)
 
                             # 存入 ping_records（純採集）
-                            client_results = [
-                                ip_to_result[ip]
-                                for ip in client_ips
-                                if ip in ip_to_result
-                            ]
-                            if client_results:
+                            if all_results:
                                 client_repo = get_typed_repo("gnms_ping", session)
                                 await client_repo.save_batch(
                                     switch_hostname=f"__CLIENT_PING_{tg.value}__",
-                                    raw_data=resp.text,
-                                    parsed_items=client_results,
+                                    raw_data="\n".join(all_raw),
+                                    parsed_items=all_results,
                                     maintenance_id=mid,
                                 )
 
                             logger.info(
-                                "client_ping %s/%s: %d IPs",
-                                mid, tg.value, len(client_results),
+                                "client_ping %s/%s: %d IPs (%d chunks)",
+                                mid, tg.value, len(all_results),
+                                (len(sorted_ips) + chunk_size - 1) // chunk_size,
                             )
 
                 except Exception as e:
@@ -863,8 +879,8 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
     scheduler.add_device_ping_job(interval_seconds=ping_interval)
     scheduler.add_client_ping_job(interval_seconds=ping_interval)
 
-    # 加入 client collection 任務（每 120 秒）
-    scheduler.add_client_collection_job(interval_seconds=120)
+    # 加入 client collection 任務（每 600 秒）
+    scheduler.add_client_collection_job(interval_seconds=600)
 
     # 加入 retention cleanup 任務（每 30 分鐘）
     scheduler.add_retention_job(interval_minutes=30)

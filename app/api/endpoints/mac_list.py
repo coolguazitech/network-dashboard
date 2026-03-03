@@ -21,7 +21,7 @@ from app.db.base import get_session_context
 from app.core.enums import UserRole
 from app.db.models import (
     MaintenanceMacList, ClientCategoryMember, ClientCategory, User,
-    ClientRecord,
+    PingRecord, LatestCollectionBatch,
 )
 from app.services.client_comparison_service import ClientComparisonService
 from app.services.system_log import write_log
@@ -275,37 +275,31 @@ async def list_clients(
 
                 stmt = stmt.where(or_(*field_conditions))
 
-        # 子查詢：每個 MAC 最新的 ping_reachable
-
-        latest_ping = (
-            select(
-                ClientRecord.mac_address,
-                ClientRecord.ping_reachable,
-                func.row_number().over(
-                    partition_by=ClientRecord.mac_address,
-                    order_by=ClientRecord.collected_at.desc(),
-                ).label("rn"),
-            )
+        # 子查詢：從 ping_records 取每個 IP 的最新 ping 結果
+        latest_ping_batches = (
+            select(LatestCollectionBatch.batch_id)
             .where(
-                ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.ping_reachable.isnot(None),
+                LatestCollectionBatch.maintenance_id == maintenance_id,
+                LatestCollectionBatch.collection_type == "gnms_ping",
             )
-            .subquery()
         )
-        latest_ping_sq = (
-            select(latest_ping.c.mac_address, latest_ping.c.ping_reachable)
-            .where(latest_ping.c.rn == 1)
+        ping_by_ip = (
+            select(
+                PingRecord.target.label("ip"),
+                PingRecord.is_reachable,
+            )
+            .where(PingRecord.batch_id.in_(latest_ping_batches))
             .subquery()
         )
         stmt = stmt.outerjoin(
-            latest_ping_sq,
-            MaintenanceMacList.mac_address == latest_ping_sq.c.mac_address,
+            ping_by_ip,
+            MaintenanceMacList.ip_address == ping_by_ip.c.ip,
         )
         # 排序：ping 不可達優先
         stmt = stmt.order_by(
             case(
-                (latest_ping_sq.c.ping_reachable == None, 0),   # noqa: E711
-                (latest_ping_sq.c.ping_reachable == False, 1),   # noqa: E712
+                (ping_by_ip.c.is_reachable == None, 0),   # noqa: E711
+                (ping_by_ip.c.is_reachable == False, 1),   # noqa: E712
                 else_=2,
             ),
             MaintenanceMacList.mac_address,
@@ -1034,36 +1028,30 @@ async def list_clients_detailed(
                 )
             )
 
-        # ── SQL 層分頁（ping 不可達優先）──
-
-        latest_ping_d = (
-            select(
-                ClientRecord.mac_address,
-                ClientRecord.ping_reachable,
-                func.row_number().over(
-                    partition_by=ClientRecord.mac_address,
-                    order_by=ClientRecord.collected_at.desc(),
-                ).label("rn"),
-            )
+        # ── SQL 層分頁（ping 不可達優先，直接讀 ping_records）──
+        latest_ping_batches_d = (
+            select(LatestCollectionBatch.batch_id)
             .where(
-                ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.ping_reachable.isnot(None),
+                LatestCollectionBatch.maintenance_id == maintenance_id,
+                LatestCollectionBatch.collection_type == "gnms_ping",
             )
-            .subquery()
         )
-        latest_ping_dsq = (
-            select(latest_ping_d.c.mac_address, latest_ping_d.c.ping_reachable)
-            .where(latest_ping_d.c.rn == 1)
+        ping_by_ip_d = (
+            select(
+                PingRecord.target.label("ip"),
+                PingRecord.is_reachable,
+            )
+            .where(PingRecord.batch_id.in_(latest_ping_batches_d))
             .subquery()
         )
         stmt = stmt.outerjoin(
-            latest_ping_dsq,
-            MaintenanceMacList.mac_address == latest_ping_dsq.c.mac_address,
+            ping_by_ip_d,
+            MaintenanceMacList.ip_address == ping_by_ip_d.c.ip,
         )
         stmt = stmt.order_by(
             case(
-                (latest_ping_dsq.c.ping_reachable == None, 0),   # noqa: E711
-                (latest_ping_dsq.c.ping_reachable == False, 1),   # noqa: E712
+                (ping_by_ip_d.c.is_reachable == None, 0),   # noqa: E711
+                (ping_by_ip_d.c.is_reachable == False, 1),   # noqa: E712
                 else_=2,
             ),
             MaintenanceMacList.mac_address,
@@ -1092,36 +1080,31 @@ async def list_clients_detailed(
                         "name": cat.name,
                     })
 
-        # 獲取每個 MAC 最新的 ping_reachable 狀態（只查本頁的 MAC）
+        # 從 ping_records 直接取 ping 狀態（by IP → 映射回 MAC）
         ping_status: dict[str, bool | None] = {}
-        if mac_addresses:
-            from sqlalchemy import and_
-            latest_sub = (
-                select(
-                    ClientRecord.mac_address,
-                    func.max(ClientRecord.collected_at).label("max_at"),
-                )
+        ip_addresses = [c.ip_address for c in clients if c.ip_address]
+        if ip_addresses:
+            latest_ping_batches_s = (
+                select(LatestCollectionBatch.batch_id)
                 .where(
-                    ClientRecord.maintenance_id == maintenance_id,
-                    ClientRecord.mac_address.in_(mac_addresses),
-                    ClientRecord.ping_reachable.isnot(None),
+                    LatestCollectionBatch.maintenance_id == maintenance_id,
+                    LatestCollectionBatch.collection_type == "gnms_ping",
                 )
-                .group_by(ClientRecord.mac_address)
-                .subquery()
             )
             ping_stmt = (
-                select(ClientRecord.mac_address, ClientRecord.ping_reachable)
-                .join(
-                    latest_sub,
-                    and_(
-                        ClientRecord.mac_address == latest_sub.c.mac_address,
-                        ClientRecord.collected_at == latest_sub.c.max_at,
-                    ),
+                select(PingRecord.target, PingRecord.is_reachable)
+                .where(
+                    PingRecord.batch_id.in_(latest_ping_batches_s),
+                    PingRecord.target.in_(ip_addresses),
                 )
             )
             ping_result = await session.execute(ping_stmt)
-            for row in ping_result:
-                ping_status[row.mac_address] = row.ping_reachable
+            ip_to_reachable = {
+                row.target: row.is_reachable for row in ping_result
+            }
+            for c in clients:
+                if c.ip_address and c.ip_address in ip_to_reachable:
+                    ping_status[c.mac_address] = ip_to_reachable[c.ip_address]
 
         # 組合結果
         results = []
@@ -1244,35 +1227,30 @@ async def export_csv(
                     )
                 )
 
-        # ping 不可達優先排序
-        latest_ping_c = (
-            select(
-                ClientRecord.mac_address,
-                ClientRecord.ping_reachable,
-                func.row_number().over(
-                    partition_by=ClientRecord.mac_address,
-                    order_by=ClientRecord.collected_at.desc(),
-                ).label("rn"),
-            )
+        # ping 不可達優先排序（直接讀 ping_records）
+        latest_ping_batches_c = (
+            select(LatestCollectionBatch.batch_id)
             .where(
-                ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.ping_reachable.isnot(None),
+                LatestCollectionBatch.maintenance_id == maintenance_id,
+                LatestCollectionBatch.collection_type == "gnms_ping",
             )
-            .subquery()
         )
-        latest_ping_csq = (
-            select(latest_ping_c.c.mac_address, latest_ping_c.c.ping_reachable)
-            .where(latest_ping_c.c.rn == 1)
+        ping_by_ip_c = (
+            select(
+                PingRecord.target.label("ip"),
+                PingRecord.is_reachable,
+            )
+            .where(PingRecord.batch_id.in_(latest_ping_batches_c))
             .subquery()
         )
         stmt = stmt.outerjoin(
-            latest_ping_csq,
-            MaintenanceMacList.mac_address == latest_ping_csq.c.mac_address,
+            ping_by_ip_c,
+            MaintenanceMacList.ip_address == ping_by_ip_c.c.ip,
         )
         stmt = stmt.order_by(
             case(
-                (latest_ping_csq.c.ping_reachable == None, 0),   # noqa: E711
-                (latest_ping_csq.c.ping_reachable == False, 1),   # noqa: E712
+                (ping_by_ip_c.c.is_reachable == None, 0),   # noqa: E711
+                (ping_by_ip_c.c.is_reachable == False, 1),   # noqa: E712
                 else_=2,
             ),
             MaintenanceMacList.mac_address,
