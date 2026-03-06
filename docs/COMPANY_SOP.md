@@ -1,7 +1,12 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.12.1 (2026-03-03)
+> **版本**: v2.13.0 (2026-03-06)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.13.0 變更摘要**:
+> - **Client MAC 匹配優先級修復**：設備清單包含 AGG/CORE 交換機時，同一 MAC 會出現在 edge access port 和 uplink port，舊邏輯只看資料完整度會選到錯誤的 uplink。新增五層逐步篩選規則：(1) 有 ACL → (2) 非 port-channel → (3) 無 LLDP/CDP 鄰居 → (4) Speed 最小 → (5) MAC 數量最少，全部平手則該次 client 屬性設為空
+> - **LLDP/CDP 介面名稱正規化修復**：`local_interface` 欄位在 DB 寫入時未經過 `normalize_interface_name()`，導致鄰居比對永遠不匹配，修復 repository 層並在讀取時加上防禦性正規化
+> - **測試覆蓋**：1374 tests 全部通過
 >
 > **v2.12.1 變更摘要**:
 > - **Client 刪除孤兒資料修復**：刪除 Client 時同步清理 Case（含 CaseNote CASCADE）、SeverityOverride、ReferenceClient、LatestClientRecord，涵蓋單筆刪除、批量刪除、全部清空三個入口

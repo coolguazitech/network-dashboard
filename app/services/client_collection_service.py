@@ -24,6 +24,38 @@ from app.db.models import ClientRecord, LatestClientRecord, MaintenanceMacList
 
 logger = logging.getLogger(__name__)
 
+# ── MAC 匹配 helpers ────────────────────────────────────────────
+
+_PORT_CHANNEL_PREFIXES = ("BAGG", "Po", "BE", "AE", "BOND")
+
+
+def _is_port_channel(interface_name: str | None) -> bool:
+    """正規化後的 interface 是否為 port-channel 類型。"""
+    if not interface_name:
+        return False
+    return interface_name.startswith(_PORT_CHANNEL_PREFIXES)
+
+
+def _parse_speed_mbps(speed: str | None) -> int | None:
+    """將 speed 字串轉為 Mbps 數值。'1G'→1000, '2.5G'→2500, '100M'→100。"""
+    if not speed:
+        return None
+    s = speed.strip().upper()
+    if s.endswith("G"):
+        try:
+            return int(float(s[:-1]) * 1000)
+        except ValueError:
+            return None
+    if s.endswith("M"):
+        try:
+            return int(s[:-1])
+        except ValueError:
+            return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
 
 class ClientCollectionService:
     """
@@ -113,6 +145,16 @@ class ClientCollectionService:
                 maintenance_id,
             )
 
+            # 5b. 從 DB 讀取最新 neighbor records (LLDP + CDP)
+            lldp_repo = get_typed_repo("get_uplink_lldp", session)
+            lldp_records = await lldp_repo.get_latest_per_device(
+                maintenance_id,
+            )
+            cdp_repo = get_typed_repo("get_uplink_cdp", session)
+            cdp_records = await cdp_repo.get_latest_per_device(
+                maintenance_id,
+            )
+
             # 6. 建立 lookup maps
             # interface_status: (switch_hostname, interface_name) → record
             if_map: dict[tuple[str, str], Any] = {}
@@ -134,8 +176,26 @@ class ClientCollectionService:
                 if r.acl_number:
                     acl_map[(r.switch_hostname, r.interface_name)] = r.acl_number
 
-            # 7. 組裝 ClientRecord（每個 MAC 只保留一筆最佳記錄）
-            best_per_mac: dict[str, ClientRecord] = {}
+            # neighbor: (switch_hostname, interface_name) 有鄰居 = uplink port
+            # local_interface 可能尚未正規化（舊資料），統一 normalize
+            from app.repositories.typed_records import normalize_interface_name
+
+            neighbor_ports: set[tuple[str, str]] = set()
+            for r in lldp_records:
+                iface = normalize_interface_name(r.local_interface) if r.local_interface else r.local_interface
+                neighbor_ports.add((r.switch_hostname, iface))
+            for r in cdp_records:
+                iface = normalize_interface_name(r.local_interface) if r.local_interface else r.local_interface
+                neighbor_ports.add((r.switch_hostname, iface))
+
+            # mac_count: 每個 port 上學到幾個 MAC（uplink 通常遠多於 access）
+            mac_count_per_port: dict[tuple[str, str], int] = {}
+            for r in mac_records:
+                key = (r.switch_hostname, r.interface_name)
+                mac_count_per_port[key] = mac_count_per_port.get(key, 0) + 1
+
+            # 7. 組裝 ClientRecord 候選人（同一 MAC 可能出現在多台 switch）
+            candidates_per_mac: dict[str, list[ClientRecord]] = {}
             found_macs: set[str] = set()
 
             results["total"] = len(mac_records)
@@ -175,24 +235,90 @@ class ClientCollectionService:
                     acl_rules_applied=acl_number,
                 )
 
-                # 同一 MAC 出現在多台 switch → 保留資料最完整的
-                prev = best_per_mac.get(mac_upper)
-                if prev is None:
-                    best_per_mac[mac_upper] = record
-                else:
-                    # 優先選有 ACL、有 interface status、有 link_status 的
-                    def _score(r: ClientRecord) -> int:
-                        s = 0
-                        if r.acl_rules_applied is not None:
-                            s += 4
-                        if r.speed is not None:
-                            s += 2
-                        if r.link_status is not None:
-                            s += 1
-                        return s
+                candidates_per_mac.setdefault(mac_upper, []).append(record)
 
-                    if _score(record) > _score(prev):
-                        best_per_mac[mac_upper] = record
+            # 7b. 從候選人中選出最佳記錄（四條規則逐步篩選）
+            best_per_mac: dict[str, ClientRecord] = {}
+            for mac_upper, candidates in candidates_per_mac.items():
+                if len(candidates) == 1:
+                    best_per_mac[mac_upper] = candidates[0]
+                    continue
+
+                remaining = candidates
+
+                # Rule 1: 有 ACL 資料的優先
+                with_acl = [r for r in remaining
+                            if r.acl_rules_applied is not None]
+                if with_acl:
+                    remaining = with_acl
+                if len(remaining) == 1:
+                    best_per_mac[mac_upper] = remaining[0]
+                    continue
+
+                # Rule 2: 非 port-channel 優先
+                non_pc = [r for r in remaining
+                          if not _is_port_channel(r.interface_name)]
+                if non_pc:
+                    remaining = non_pc
+                if len(remaining) == 1:
+                    best_per_mac[mac_upper] = remaining[0]
+                    continue
+
+                # Rule 3: 沒有鄰居的 interface 優先（access port）
+                no_nbr = [
+                    r for r in remaining
+                    if (r.switch_hostname, r.interface_name)
+                    not in neighbor_ports
+                ]
+                if no_nbr:
+                    remaining = no_nbr
+                if len(remaining) == 1:
+                    best_per_mac[mac_upper] = remaining[0]
+                    continue
+
+                # Rule 4: 有 Speed 且 Speed 最小的
+                with_speed = [
+                    (r, _parse_speed_mbps(r.speed))
+                    for r in remaining
+                    if _parse_speed_mbps(r.speed) is not None
+                ]
+                if with_speed:
+                    min_spd = min(s for _, s in with_speed)
+                    min_records = [r for r, s in with_speed if s == min_spd]
+                    if len(min_records) == 1:
+                        best_per_mac[mac_upper] = min_records[0]
+                        continue
+                    # Speed 篩選後仍有多筆 → 更新 remaining
+                    remaining = min_records
+
+                # Rule 5: MAC 數量最少的 port 優先（access port 學到的 MAC 少）
+                counted = [
+                    (r, mac_count_per_port.get(
+                        (r.switch_hostname, r.interface_name), 0))
+                    for r in remaining
+                ]
+                min_cnt = min(c for _, c in counted)
+                fewest = [r for r, c in counted if c == min_cnt]
+                if len(fewest) == 1:
+                    best_per_mac[mac_upper] = fewest[0]
+                    continue
+
+                # 五條規則都無法分出唯一 → 各項數值設為空
+                base = remaining[0]
+                best_per_mac[mac_upper] = ClientRecord(
+                    maintenance_id=base.maintenance_id,
+                    collected_at=base.collected_at,
+                    mac_address=base.mac_address,
+                    ip_address=base.ip_address,
+                    switch_hostname=None,
+                    interface_name=None,
+                    vlan_id=None,
+                    speed=None,
+                    duplex=None,
+                    link_status=None,
+                    ping_reachable=base.ping_reachable,
+                    acl_rules_applied=None,
+                )
 
             all_records: list[ClientRecord] = list(best_per_mac.values())
             results["success"] = 1 if mac_records else 0
