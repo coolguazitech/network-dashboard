@@ -211,7 +211,7 @@ class Settings(BaseSettings):
         default=25, description="SNMP GETBULK max-repetitions per PDU",
     )
     snmp_concurrency: int = Field(
-        default=10, description="Max concurrent SNMP device collections",
+        default=50, description="Max concurrent SNMP device collections",
     )
     snmp_walk_timeout: float = Field(
         default=120.0, description="Overall timeout for a single SNMP walk (seconds)",

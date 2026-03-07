@@ -24,27 +24,27 @@ fetchers:
   # ---------------------------------------------------------------------------
   get_gbic_details:
     source: FNA
-    interval: 600
+    interval: 300
     description: "光模組 Tx/Rx 功率"
 
   get_channel_group:
     source: FNA
-    interval: 600
+    interval: 300
     description: "Port-Channel 狀態及成員"
 
   get_error_count:
     source: FNA
-    interval: 600
+    interval: 300
     description: "Interface 錯誤計數"
 
   get_static_acl:
     source: FNA
-    interval: 600
+    interval: 300
     description: "Static ACL 綁定"
 
   get_dynamic_acl:
     source: FNA
-    interval: 600
+    interval: 300
     description: "Dynamic ACL 綁定"
 
   # ---------------------------------------------------------------------------
@@ -52,37 +52,37 @@ fetchers:
   # ---------------------------------------------------------------------------
   get_mac_table:
     source: DNA
-    interval: 600
+    interval: 300
     description: "MAC 位址表"
 
   get_fan:
     source: DNA
-    interval: 600
+    interval: 300
     description: "風扇狀態"
 
   get_power:
     source: DNA
-    interval: 600
+    interval: 300
     description: "電源供應器狀態"
 
   get_version:
     source: DNA
-    interval: 600
+    interval: 300
     description: "韌體版本"
 
   get_interface_status:
     source: DNA
-    interval: 600
+    interval: 300
     description: "Interface 狀態（速率/雙工）"
 
   get_uplink_lldp:
     source: DNA
-    interval: 600
+    interval: 300
     description: "Uplink 鄰居拓撲 (LLDP)"
 
   get_uplink_cdp:
     source: DNA
-    interval: 600
+    interval: 300
     description: "Uplink 鄰居拓撲 (CDP，僅 Cisco IOS/NXOS)"
 
   # ---------------------------------------------------------------------------
@@ -92,5 +92,5 @@ fetchers:
   # ---------------------------------------------------------------------------
   gnms_ping:
     source: GNMSPING
-    interval: 30
+    interval: 15
     description: "Ping（設備 / Client IP 獨立排程，按 tenant_group 分組）"

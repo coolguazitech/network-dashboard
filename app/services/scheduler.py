@@ -482,10 +482,10 @@ class SchedulerService:
                                         "app_name": "network-change-orchestrator",
                                         "token": ping_cfg.token,
                                         "addresses": sorted(device_ip_map),
-                                        "count": 2,
+                                        "count": 1,
                                         "interval": 0.1,
-                                        "timeout": 2,
-                                        "concurrent_tasks": 10,
+                                        "timeout": 1,
+                                        "concurrent_tasks": 100,
                                         "family": 4,
                                         "privileged": True,
                                     },
@@ -632,8 +632,8 @@ class SchedulerService:
                             url = base_url.rstrip("/") + ping_cfg.endpoint
                             sorted_ips = sorted(client_ips)
 
-                            # 分批送出，每批最多 300 個 IP
-                            chunk_size = 300
+                            # 分批送出，每批最多 500 個 IP
+                            chunk_size = 500
                             all_results: list = []
                             all_raw: list[str] = []
                             for i in range(0, len(sorted_ips), chunk_size):
@@ -645,10 +645,10 @@ class SchedulerService:
                                             "app_name": "network-change-orchestrator",
                                             "token": ping_cfg.token,
                                             "addresses": chunk,
-                                            "count": 2,
+                                            "count": 1,
                                             "interval": 0.1,
-                                            "timeout": 2,
-                                            "concurrent_tasks": 10,
+                                            "timeout": 1,
+                                            "concurrent_tasks": 100,
                                             "family": 4,
                                             "privileged": True,
                                         },
@@ -850,10 +850,10 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
 
     # gnms_ping / ping_batch 由獨立的 device_ping + client_ping 處理
     _CUSTOM_JOBS = {"gnms_ping", "ping_batch"}
-    ping_interval = 30
+    ping_interval = 15
     for config in job_configs:
         if config["name"] in _CUSTOM_JOBS:
-            ping_interval = config.get("interval", 30)
+            ping_interval = config.get("interval", 15)
 
     # 收集需要標準 per-device 採集的 job（排除自訂 job）
     standard_jobs = [
@@ -879,8 +879,8 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
     scheduler.add_device_ping_job(interval_seconds=ping_interval)
     scheduler.add_client_ping_job(interval_seconds=ping_interval)
 
-    # 加入 client collection 任務（每 600 秒）
-    scheduler.add_client_collection_job(interval_seconds=600)
+    # 加入 client collection 任務（每 300 秒）
+    scheduler.add_client_collection_job(interval_seconds=300)
 
     # 加入 retention cleanup 任務（每 30 分鐘）
     scheduler.add_retention_job(interval_minutes=30)

@@ -1,7 +1,14 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.13.0 (2026-03-06)
+> **版本**: v2.14.0 (2026-03-07)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.14.0 變更摘要**:
+> - **Ping 效能優化**：`concurrent_tasks` 10→100、`count` 2→1、`timeout` 2s→1s、`chunk_size` 300→500，2000 IPs 預估從 ~50s 降至 ~8s
+> - **Ping 間隔加速**：device_ping / client_ping 從 30s 縮至 15s，燈號更即時
+> - **SNMP 採集加速**：`snmp_concurrency` 10→50，400 台設備每 job 從 ~200s 降至 ~40s
+> - **採集間隔縮短**：所有 SNMP/FNA 採集從 600s 降至 300s，client_collection 同步降至 300s
+> - **測試覆蓋**：1374 tests 全部通過
 >
 > **v2.13.0 變更摘要**:
 > - **Client MAC 匹配優先級修復**：設備清單包含 AGG/CORE 交換機時，同一 MAC 會出現在 edge access port 和 uplink port，舊邏輯只看資料完整度會選到錯誤的 uplink。新增五層逐步篩選規則：(1) 有 ACL → (2) 非 port-channel → (3) 無 LLDP/CDP 鄰居 → (4) Speed 最小 → (5) MAC 數量最少，全部平手則該次 client 屬性設為空
