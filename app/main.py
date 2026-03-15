@@ -270,6 +270,7 @@ def create_app() -> FastAPI:
         switches,
         system_logs,
         thresholds,
+        topology,
         uploads,
         users,
     )
@@ -292,6 +293,7 @@ def create_app() -> FastAPI:
     app.include_router(switches.router, prefix=prefix, tags=["Switches"])
     app.include_router(system_logs.router, prefix=prefix, tags=["System Logs"])
     app.include_router(users.router, prefix=prefix, tags=["Users"])
+    app.include_router(topology.router, prefix=prefix, tags=["Topology"])
     app.include_router(uploads.router, prefix=prefix, tags=["Uploads"])
 
     # Health check endpoint

@@ -184,43 +184,78 @@ class ErrorCountIndicator(BaseIndicator):
         """
         取每台設備上一個變化點的 interface error 資料。
 
+        使用兩次批量查詢取代 N+1 迴圈：
+        1. 一次查出所有設備的倒數第二個 batch_id
+        2. 一次查出這些 batch 的所有 error records
+
         Returns:
             {hostname: {interface_name: {"crc_errors": int}}}
         """
+        if not device_batch:
+            return {}
+
+        from sqlalchemy import func as sa_func, and_, literal_column
+
+        # ── 第 1 步：批量找每台設備的 prev batch_id ──
+        # 用 lateral / correlated subquery 替代 N 次迴圈查詢
+        # 構建 UNION ALL: 每台設備一個 (hostname, max_id < latest) 子查詢
+        # 但更高效的做法：用 window function 在一次查詢中找到每台設備倒數第二批
+        all_batches_stmt = (
+            select(
+                CollectionBatch.switch_hostname,
+                CollectionBatch.id,
+                sa_func.row_number().over(
+                    partition_by=CollectionBatch.switch_hostname,
+                    order_by=CollectionBatch.id.desc(),
+                ).label("rn"),
+            )
+            .where(
+                CollectionBatch.collection_type == "get_error_count",
+                CollectionBatch.maintenance_id == maintenance_id,
+                CollectionBatch.switch_hostname.in_(list(device_batch.keys())),
+            )
+            .subquery()
+        )
+
+        # rn=1 是最新，rn=2 是倒數第二
+        prev_batch_stmt = (
+            select(
+                all_batches_stmt.c.switch_hostname,
+                all_batches_stmt.c.id,
+            )
+            .where(all_batches_stmt.c.rn == 2)
+        )
+        prev_batch_result = await session.execute(prev_batch_stmt)
+        prev_batch_rows = prev_batch_result.all()
+
+        if not prev_batch_rows:
+            return {}
+
+        # hostname → prev_batch_id
+        prev_batch_map: dict[str, int] = {
+            row.switch_hostname: row.id for row in prev_batch_rows
+        }
+
+        # ── 第 2 步：批量取所有 prev batch 的 error records ──
+        prev_batch_ids = list(prev_batch_map.values())
+        rows_stmt = select(InterfaceErrorRecord).where(
+            InterfaceErrorRecord.batch_id.in_(prev_batch_ids),
+        )
+        rows_result = await session.execute(rows_stmt)
+        prev_records = rows_result.scalars().all()
+
+        # 按 batch_id 分組，再映射回 hostname
+        batch_to_host = {bid: host for host, bid in prev_batch_map.items()}
         result: dict[str, dict[str, dict]] = {}
-
-        for hostname, latest_batch_id in device_batch.items():
-            # 找倒數第二個 batch
-            stmt = (
-                select(CollectionBatch.id)
-                .where(
-                    CollectionBatch.collection_type == "get_error_count",
-                    CollectionBatch.maintenance_id == maintenance_id,
-                    CollectionBatch.switch_hostname == hostname,
-                    CollectionBatch.id < latest_batch_id,
-                )
-                .order_by(CollectionBatch.id.desc())
-                .limit(1)
-            )
-            batch_result = await session.execute(stmt)
-            prev_row = batch_result.scalar_one_or_none()
-
-            if prev_row is None:
+        for r in prev_records:
+            hostname = batch_to_host.get(r.batch_id)
+            if hostname is None:
                 continue
-
-            # 取該 batch 的所有 rows
-            rows_stmt = select(InterfaceErrorRecord).where(
-                InterfaceErrorRecord.batch_id == prev_row,
-            )
-            rows_result = await session.execute(rows_stmt)
-            prev_records = rows_result.scalars().all()
-
-            iface_map: dict[str, dict] = {}
-            for r in prev_records:
-                iface_map[r.interface_name] = {
-                    "crc_errors": r.crc_errors,
-                }
-            result[hostname] = iface_map
+            if hostname not in result:
+                result[hostname] = {}
+            result[hostname][r.interface_name] = {
+                "crc_errors": r.crc_errors,
+            }
 
         return result
 

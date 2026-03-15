@@ -87,102 +87,8 @@ class BaseRepository(Generic[ModelT]):
 
 
 # ── Interface Name Normalization ─────────────────────────────────
-
-_PREFIX_MAP: list[tuple[re.Pattern[str], str]] = [
-    # ══════════════════════════════════════════════════════════════
-    # 長格式：最長 prefix 優先比對
-    # ══════════════════════════════════════════════════════════════
-    # ── HPE/Comware（帶 hyphen 區別 Cisco）──
-    (re.compile(r"(?i)^Twenty-FiveGigabitEthernet"), "WGE"),    # 25G
-    (re.compile(r"(?i)^Twenty-FiveGigE"), "WGE"),               # 25G
-    (re.compile(r"(?i)^Ten-GigabitEthernet"), "XGE"),           # 10G
-    (re.compile(r"(?i)^TenGigE"), "XGE"),                       # 10G alt
-    (re.compile(r"(?i)^FourHundredGigE"), "FourHu"),            # 400G
-    (re.compile(r"(?i)^TwoHundredGigE"), "TwoHu"),             # 200G
-    (re.compile(r"(?i)^HundredGigE"), "HGE"),                   # 100G
-    (re.compile(r"(?i)^FortyGigE"), "FGE"),                     # 40G
-    (re.compile(r"(?i)^Bridge-Aggregation"), "BAGG"),           # LAG
-    (re.compile(r"(?i)^Vlan-interface\s*"), "Vlan"),            # SVI
-    # ── Cisco IOS / IOS-XE / IOS-XR ──
-    (re.compile(r"(?i)^TwentyFiveGigabitEthernet"), "Twe"),     # 25G
-    (re.compile(r"(?i)^TwentyFiveGigE"), "Twe"),                # 25G
-    (re.compile(r"(?i)^HundredGigabitEthernet"), "Hu"),         # 100G
-    (re.compile(r"(?i)^FortyGigabitEthernet"), "Fo"),           # 40G
-    (re.compile(r"(?i)^TenGigabitEthernet"), "TE"),             # 10G
-    (re.compile(r"(?i)^GigabitEthernet"), "GE"),                # 1G
-    (re.compile(r"(?i)^FastEthernet"), "FE"),                   # 100M
-    (re.compile(r"(?i)^Bundle-Ether"), "BE"),                   # IOS-XR LAG
-    (re.compile(r"(?i)^Port-[Cc]hannel"), "Po"),                # LAG
-    (re.compile(r"(?i)^Management"), "Mgmt"),                   # Mgmt
-    (re.compile(r"(?i)^Loopback"), "Lo"),                       # Loopback
-    (re.compile(r"(?i)^Tunnel"), "Tu"),                         # Tunnel
-    (re.compile(r"(?i)^Vxlan"), "VXLAN"),                       # VXLAN
-    # ── NX-OS ──
-    (re.compile(r"(?i)^Ethernet"), "Eth"),                      # physical
-    (re.compile(r"(?i)^Nve"), "NVE"),                           # VXLAN NVE
-    # ── Juniper ──
-    (re.compile(r"(?i)^ge-"), "GE"),                            # 1G
-    (re.compile(r"(?i)^xe-"), "XE"),                            # 10G
-    (re.compile(r"(?i)^et-"), "ET"),                            # 100G
-    (re.compile(r"(?i)^ae(?=\d)"), "AE"),                       # LAG
-    (re.compile(r"(?i)^IRB\."), "IRB"),                         # routed VLAN
-    # ══════════════════════════════════════════════════════════════
-    # 短格式（2-6 字元 + 數字）：放在長格式後面
-    # ══════════════════════════════════════════════════════════════
-    (re.compile(r"(?i)^FourHu(?=\d)"), "FourHu"),               # 400G
-    (re.compile(r"(?i)^TwoHu(?=\d)"), "TwoHu"),                # 200G
-    (re.compile(r"(?i)^XGE(?=[\d/])"), "XGE"),                  # HPE 10G
-    (re.compile(r"(?i)^WGE(?=[\d/])"), "WGE"),                  # HPE 25G
-    (re.compile(r"(?i)^FGE(?=[\d/])"), "FGE"),                  # HPE 40G
-    (re.compile(r"(?i)^HGE(?=[\d/])"), "HGE"),                  # HPE 100G
-    (re.compile(r"(?i)^BAGG(?=[\d.])"), "BAGG"),                # HPE LAG
-    (re.compile(r"(?i)^MGE(?=[\d/])"), "MGE"),                  # HPE Mgmt
-    (re.compile(r"(?i)^MEth"), "Mgmt"),                         # IOS-XR Mgmt
-    (re.compile(r"(?i)^Twe(?=\d)"), "Twe"),                     # Cisco 25G
-    (re.compile(r"(?i)^Te(?=\d)"), "TE"),                       # Cisco 10G
-    (re.compile(r"(?i)^Gi(?=\d)"), "GE"),                       # Cisco 1G
-    (re.compile(r"(?i)^Ge(?=\d)"), "GE"),                       # alt 1G
-    (re.compile(r"(?i)^Fa(?=\d)"), "FE"),                       # Cisco 100M
-    (re.compile(r"(?i)^Fe(?=\d)"), "FE"),                       # alt 100M
-    (re.compile(r"(?i)^Fo(?=\d)"), "Fo"),                       # Cisco 40G
-    (re.compile(r"(?i)^Hu(?=\d)"), "Hu"),                       # Cisco 100G
-    (re.compile(r"^Eth(?=[\d/])"), "Eth"),                      # NX-OS (大寫 E)
-    (re.compile(r"(?i)^Po(?=[\d.])"), "Po"),                    # Cisco LAG
-    (re.compile(r"(?i)^BE(?=\d)"), "BE"),                       # IOS-XR LAG
-    (re.compile(r"(?i)^NVE(?=\d)"), "NVE"),                     # NX-OS NVE
-    (re.compile(r"(?i)^BDI(?=\d)"), "BDI"),                     # Cisco BDI
-    (re.compile(r"(?i)^Tu(?=\d)"), "Tu"),                       # Tunnel
-    (re.compile(r"(?i)^Lo(?=\d)"), "Lo"),                       # Loopback
-    (re.compile(r"(?i)^Mgmt(?=\d)"), "Mgmt"),                   # NX-OS/Cisco Mgmt
-    (re.compile(r"(?i)^Null(?=\d)"), "Null"),                   # Null
-    (re.compile(r"(?i)^Vlan(?=\d)"), "Vlan"),                   # Cisco/HPE SVI
-    (re.compile(r"(?i)^VXLAN(?=\d)"), "VXLAN"),                 # VXLAN
-    # ── Linux ──
-    (re.compile(r"^ens(?=\d)"), "ENS"),                         # Linux
-    (re.compile(r"^bond(?=\d)"), "BOND"),                       # Linux LAG
-    (re.compile(r"^br(?=\d)"), "BR"),                           # Linux bridge
-    (re.compile(r"^eth(?=\d)"), "ETH"),                         # Linux (小寫 e)
-]
-
-
-def normalize_interface_name(name: str) -> str:
-    """Normalize interface name to a canonical short form.
-
-    HPE Comware: Ten-GigabitEthernet→XGE, Twenty-FiveGigE→WGE,
-                 FortyGigE→FGE, HundredGigE→HGE, Bridge-Aggregation→BAGG
-    Cisco IOS:   GigabitEthernet→GE, TenGigabitEthernet→TE,
-                 FortyGigabitEthernet→Fo, HundredGigabitEthernet→Hu,
-                 TwentyFiveGigE→Twe, Port-Channel→Po
-    NX-OS:       Ethernet→Eth
-    Juniper:     ge-→GE, xe-→XE, et-→ET, ae→AE
-    """
-    if not name:
-        return name
-    for pattern, replacement in _PREFIX_MAP:
-        m = pattern.match(name)
-        if m:
-            return replacement + name[m.end():]
-    return name
+# 集中定義在 app.core.interfaces，此處保留 re-export 相容性
+from app.core.interfaces import normalize_interface_name  # noqa: F401
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -551,10 +457,104 @@ class InterfaceStatusRecordRepo(TypedRecordRepository[InterfaceStatusRecord]):
 
 
 class ClientPingRecordRepo(TypedRecordRepository[PingRecord]):
-    """Client IP Ping records (gnms_ping)，與 PingRecordRepo 共用 PingRecord model。"""
+    """
+    Client IP Ping records (gnms_ping)，與 PingRecordRepo 共用 PingRecord model。
+
+    覆寫 save_batch：在既有 batch 上做 in-place 更新，
+    只 INSERT/UPDATE 有變化的 record，避免每次寫入全部 client。
+    """
 
     model = PingRecord
     collection_type = "gnms_ping"
+
+    async def save_batch(
+        self,
+        switch_hostname: str,
+        raw_data: str,
+        parsed_items: list[BaseModel],
+        maintenance_id: str,
+    ) -> CollectionBatch | None:
+        """
+        差異寫入：比對 latest batch 中每筆 target 的 is_reachable，
+        只寫入有變化的 record + 新增的 target。
+
+        - 首次採集 → 建 batch + 全部 typed rows
+        - hash 相同 → 只更新 last_checked_at
+        - hash 不同 → 在同一個 batch 中 UPDATE 有變化的 record
+        """
+        from sqlalchemy import update
+
+        now = datetime.now(UTC)
+        data_hash = _compute_hash(parsed_items)
+
+        # 查找現有指標
+        stmt = select(LatestCollectionBatch).where(
+            LatestCollectionBatch.maintenance_id == maintenance_id,
+            LatestCollectionBatch.collection_type == self.collection_type,
+            LatestCollectionBatch.switch_hostname == switch_hostname,
+        )
+        result = await self.session.execute(stmt)
+        latest = result.scalar_one_or_none()
+
+        if latest and latest.data_hash == data_hash:
+            # 完全沒變 → 只更新 last_checked_at
+            latest.last_checked_at = now
+            await self.session.flush()
+            return None
+
+        if not latest:
+            # 首次採集 → 走原本的完整寫入
+            return await super().save_batch(
+                switch_hostname, raw_data, parsed_items, maintenance_id,
+            )
+
+        # ── 差異更新：讀取現有 batch 中的 record，比對變化 ──
+        batch_id = latest.batch_id
+        existing_stmt = select(PingRecord).where(
+            PingRecord.batch_id == batch_id,
+        )
+        existing_result = await self.session.execute(existing_stmt)
+        existing_records = {r.target: r for r in existing_result.scalars().all()}
+
+        changed = 0
+        for item in parsed_items:
+            data = item.model_dump()
+            target = data["target"]
+            existing = existing_records.get(target)
+
+            if existing is None:
+                # 新 target → INSERT
+                self.session.add(PingRecord(
+                    batch_id=batch_id,
+                    switch_hostname=switch_hostname,
+                    maintenance_id=maintenance_id,
+                    collected_at=now,
+                    **data,
+                ))
+                changed += 1
+            elif existing.is_reachable != data["is_reachable"]:
+                # 狀態變化 → UPDATE
+                existing.is_reachable = data["is_reachable"]
+                existing.collected_at = now
+                changed += 1
+
+        # 更新 batch metadata
+        batch_stmt = select(CollectionBatch).where(
+            CollectionBatch.id == batch_id,
+        )
+        batch_result = await self.session.execute(batch_stmt)
+        batch = batch_result.scalar_one_or_none()
+        if batch:
+            batch.collected_at = now
+            batch.item_count = len(parsed_items)
+
+        # 更新 latest 指標
+        latest.data_hash = data_hash
+        latest.collected_at = now
+        latest.last_checked_at = now
+
+        await self.session.flush()
+        return batch if changed > 0 else None
 
 
 # ── Factory ──────────────────────────────────────────────────────

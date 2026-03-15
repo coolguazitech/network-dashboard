@@ -27,21 +27,10 @@ from app.snmp.oid_maps import (
     IF_OPER_STATUS,
     IF_OPER_STATUS_MAP,
 )
+from app.core.interfaces import is_non_physical_interface
 from app.snmp.session_cache import SnmpSessionCache
 
 logger = logging.getLogger(__name__)
-
-# Prefixes of non-physical interfaces to skip
-_SKIP_PREFIXES = (
-    "Loopback", "Lo",
-    "Vlan", "Vl",
-    "Null", "Nu",
-    "Tunnel", "Tu",
-    "mgmt", "Management",
-    "Cpu", "cpu",
-    "Stack", "InLoopBack",
-    "Register", "Aux",
-)
 
 # Speed mapping: ifHighSpeed (Mbps) -> display string
 _SPEED_MAP: dict[int, str] = {
@@ -121,7 +110,7 @@ class InterfaceStatusCollector(BaseSnmpCollector):
                 continue
 
             # Skip non-physical interfaces
-            if ifname.startswith(_SKIP_PREFIXES):
+            if is_non_physical_interface(ifname):
                 continue
 
             # Link status

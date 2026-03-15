@@ -23,6 +23,17 @@
       </button>
     </div>
 
+    <!-- 內容區載入遮罩 -->
+    <div v-if="loading" class="fixed top-14 left-0 right-0 bottom-0 bg-slate-950/60 backdrop-blur-[2px] flex items-center justify-center z-40">
+      <div class="flex flex-col items-center gap-4 px-8 py-6 rounded-2xl bg-slate-800/80 border border-slate-700/50 shadow-2xl">
+        <div class="relative h-10 w-10">
+          <div class="absolute inset-0 rounded-full border-2 border-slate-700"></div>
+          <div class="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-400 animate-spin"></div>
+        </div>
+        <span class="text-slate-300 text-sm tracking-wide">載入中...</span>
+      </div>
+    </div>
+
     <!-- Tab 內容 -->
     <div class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-600/40 p-4">
       <!-- Client 清單 Tab (歲修特定) -->
@@ -137,7 +148,7 @@
                     <button v-if="userCanWrite" @click="deleteMac(mac)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
                 </tr>
-                <tr v-if="macList.length === 0">
+                <tr v-if="macList.length === 0 && !loading">
                   <td colspan="7" class="px-4 py-8 text-center text-slate-500">
                     尚無 Client 資料，請匯入 CSV 或手動新增
                   </td>
@@ -314,7 +325,7 @@
                     <button v-if="userCanWrite" @click="deleteDeviceItem(device)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
                 </tr>
-                <tr v-if="deviceList.length === 0">
+                <tr v-if="deviceList.length === 0 && !loading">
                   <td colspan="8" class="px-4 py-8 text-center text-slate-500">
                     尚無設備資料，請匯入 CSV 或手動新增
                   </td>
@@ -553,15 +564,6 @@
     </div>
     </Transition>
 
-    <!-- Loading -->
-    <Transition name="modal">
-    <div v-if="loading" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div class="modal-content bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6">
-        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-400 mx-auto mb-2"></div>
-        <p class="text-slate-300">載入中...</p>
-      </div>
-    </div>
-    </Transition>
   </div>
 </template>
 
@@ -720,6 +722,8 @@ export default {
     }
   },
   beforeUnmount() {
+    this._unmounted = true;
+    if (this._abortController) this._abortController.abort();
     this.stopReachabilityPolling();
     this.stopClientPingPolling();
     clearTimeout(this.macSearchTimeout);
@@ -729,16 +733,21 @@ export default {
     async loadMaintenanceData() {
       if (!this.selectedMaintenanceId) return;
 
+      // 取消上一次未完成的請求
+      if (this._abortController) {
+        this._abortController.abort();
+      }
+      this._abortController = new AbortController();
+
       this.loading = true;
       try {
-        // 載入 MAC 清單
-        await this.loadMacList();
-        await this.loadMacStats();
-
-        // 載入設備清單
-        await this.loadDeviceList();
-        await this.loadDeviceStats();
-        await this.loadReachabilityStatus();
+        await Promise.all([
+          this.loadMacList(),
+          this.loadMacStats(),
+          this.loadDeviceList(),
+          this.loadDeviceStats(),
+          this.loadReachabilityStatus(),
+        ]);
 
         if (this.activeTab === 'devices' && this.deviceList.length > 0) {
           this.startReachabilityPolling();
@@ -746,8 +755,9 @@ export default {
           this.startClientPingPolling();
         }
       } catch (e) {
-        console.error('載入歲修數據失敗:', e);
-        this.showMessage('載入歲修數據失敗', 'error');
+        if (e?.name !== 'CanceledError') {
+          console.error('載入歲修數據失敗:', e);
+        }
       } finally {
         this.loading = false;
       }
@@ -790,7 +800,7 @@ export default {
         });
       } catch (e) {
         console.error('載入 MAC 清單失敗:', e);
-        this.showMessage('載入 MAC 清單失敗', 'error');
+        if (!this._unmounted) this.showMessage('載入 MAC 清單失敗', 'error');
       } finally {
         this.macLoading = false;
       }
@@ -1089,7 +1099,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,,`;
         });
       } catch (e) {
         console.error('載入設備清單失敗:', e);
-        this.showMessage('載入設備清單失敗', 'error');
+        if (!this._unmounted) this.showMessage('載入設備清單失敗', 'error');
       } finally {
         this.deviceLoading = false;
       }
@@ -1312,9 +1322,11 @@ OLD-SW-004,10.1.1.4,Cisco-NXOS,,,,,只填舊設備`;
     async refreshDeviceData() {
       if (!this.selectedMaintenanceId || this.deviceList.length === 0) return;
       try {
-        await this.loadDeviceList();
-        await this.loadDeviceStats();
-        await this.loadReachabilityStatus();
+        await Promise.all([
+          this.loadDeviceList(),
+          this.loadDeviceStats(),
+          this.loadReachabilityStatus(),
+        ]);
       } catch (e) {
         console.error('刷新設備資料失敗:', e);
       }

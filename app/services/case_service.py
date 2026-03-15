@@ -250,7 +250,7 @@ class CaseService:
                 search_conditions.append(field_match)
             stmt = stmt.where(or_(*search_conditions))
 
-        # 計算篩選後總數（在排序和分頁之前）
+        # 計算篩選後總數
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await session.execute(count_stmt)).scalar() or 0
 
@@ -284,36 +284,16 @@ class CaseService:
         result = await session.execute(stmt)
         rows = result.all()
 
-        # 即時計算 change_tags（批量查詢當前頁面的 MAC）
-        mac_addresses = [row[0].mac_address.upper() for row in rows]
-        records_by_mac: dict[str, list] = {}
-        if mac_addresses:
-            from collections import defaultdict
-            records_by_mac = defaultdict(list)
-            records_stmt = (
-                select(ClientRecord)
-                .where(
-                    ClientRecord.maintenance_id == maintenance_id,
-                    ClientRecord.mac_address.in_(mac_addresses),
-                )
-                .order_by(ClientRecord.mac_address, ClientRecord.collected_at)
-            )
-            records_result = await session.execute(records_stmt)
-            for r in records_result.scalars().all():
-                records_by_mac[r.mac_address.upper()].append(r)
-
+        # 使用預算的 change_flags（由排程 update_change_flags 維護），
+        # 不再即時查 client_records，省掉一次大查詢 + N×7 次 _detect_change。
         cases = []
         for case_obj, ip_address, description, tenant_group in rows:
-            # 即時計算屬性變化標籤（與 detail API 使用相同邏輯）
-            mac_records = records_by_mac.get(case_obj.mac_address.upper(), [])
+            flags = case_obj.change_flags or {}
             change_tags = [
                 {
                     "attribute": attr,
                     "label": ATTRIBUTE_LABELS.get(attr, attr),
-                    "has_change": _detect_change(
-                        [getattr(r, attr, None) for r in mac_records],
-                        last_collected_at=_get_transition_ts(mac_records, attr),
-                    ),
+                    "has_change": bool(flags.get(attr, False)),
                 }
                 for attr in TRACKED_ATTRIBUTES
             ]

@@ -6,7 +6,7 @@ import './compact.css'
 import ECharts from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { LineChart, BarChart } from 'echarts/charts'
+import { LineChart, BarChart, GraphChart } from 'echarts/charts'
 import {
   TitleComponent,
   TooltipComponent,
@@ -23,6 +23,7 @@ use([
   CanvasRenderer,
   LineChart,
   BarChart,
+  GraphChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
@@ -55,6 +56,12 @@ const routes = [
     path: '/devices',
     name: 'Devices',
     component: () => import('./views/Devices.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/topology',
+    name: 'Topology',
+    component: () => import('./views/Topology.vue'),
     meta: { requiresAuth: true },
   },
   {

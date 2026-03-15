@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, and_
 
 from app.core.config import settings
 from app.db.base import get_session_context
@@ -98,5 +98,45 @@ class RetentionService:
                 stats["latest_deleted"],
                 stats["errors_deleted"],
             )
+
+        return stats
+
+    async def cleanup_old_batches(self, retention_days: int = 7) -> dict[str, int]:
+        """
+        清理活躍歲修中超過 retention_days 的非最新 batch。
+
+        保留 latest_collection_batches 指向的 batch（目前使用中），
+        刪除同 maintenance + collection_type 下超齡的舊 batch。
+        CASCADE 會自動刪除對應的 typed records（ping_records 等）。
+
+        Returns:
+            dict: {batches_deleted}
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+        stats = {"batches_deleted": 0}
+
+        async with get_session_context() as session:
+            # 取得所有 latest batch_id（這些不能刪）
+            latest_ids_subq = (
+                select(LatestCollectionBatch.batch_id).subquery()
+            )
+
+            # 刪除：collected_at < cutoff 且不是 latest 的 batch
+            stmt = delete(CollectionBatch).where(
+                and_(
+                    CollectionBatch.collected_at < cutoff,
+                    CollectionBatch.id.notin_(select(latest_ids_subq.c.batch_id)),
+                )
+            )
+            result = await session.execute(stmt)
+            stats["batches_deleted"] = result.rowcount
+
+            if stats["batches_deleted"] > 0:
+                await session.commit()
+                logger.info(
+                    "Old batch cleanup: deleted %d batches older than %d days",
+                    stats["batches_deleted"], retention_days,
+                )
 
         return stats

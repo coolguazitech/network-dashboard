@@ -242,7 +242,7 @@
             </div>
 
             <!-- Row 2: 屬性標籤 + 摘要 -->
-            <div class="mt-2 pl-[22px] flex items-center gap-3 min-h-[30px]">
+            <div class="mt-2 pl-[22px] pr-[22px] flex items-center gap-3 min-h-[30px]">
               <!-- 屬性標籤 -->
               <div v-if="c.change_tags" class="flex gap-1.5 flex-wrap">
                 <button
@@ -261,16 +261,16 @@
                 v-if="canEditCase(c)"
                 :value="editingSummaryId === c.id ? editingSummaryValue : (c.summary || '')"
                 type="text"
-                maxlength="35"
+                maxlength="500"
                 placeholder="摘要..."
-                class="ml-2 text-sm font-bold text-slate-300 leading-snug px-2 py-0.5 bg-slate-700/30 border border-slate-600/25 rounded focus:border-cyan-500/50 focus:outline-none transition w-[480px] max-w-[480px]"
+                class="ml-2 text-sm font-bold text-slate-300 leading-snug px-2 py-0.5 bg-slate-700/30 border border-slate-600/25 rounded focus:border-cyan-500/50 focus:outline-none transition flex-1 min-w-0"
                 @focus="startEditSummary(c)"
                 @input="editingSummaryValue = $event.target.value"
                 @blur="finishEditSummary(c, $event.target.value)"
                 @keyup.enter="$event.target.blur()"
                 @click.stop
               />
-              <span v-else-if="c.summary" class="ml-2 text-sm font-bold text-slate-300 leading-snug px-2 py-0.5 bg-slate-700/30 border border-slate-600/25 rounded truncate w-[480px] max-w-[480px]">{{ c.summary }}</span>
+              <span v-else-if="c.summary" class="ml-2 text-sm font-bold text-slate-300 leading-snug px-2 py-0.5 bg-slate-700/30 border border-slate-600/25 rounded truncate flex-1 min-w-0">{{ c.summary }}</span>
             </div>
           </div>
 
@@ -574,7 +574,7 @@
               <!-- 垂直時間線 -->
               <div class="relative ml-1">
                 <!-- 垂直連接線 -->
-                <div class="absolute left-[5px] top-3 bottom-3 w-px bg-gradient-to-b from-cyan-500/30 via-slate-600/15 to-red-500/30"></div>
+                <div class="absolute left-[5px] top-3 bottom-3 w-px bg-gradient-to-b from-cyan-500/30 via-slate-600/20 to-slate-600/10"></div>
 
                 <div
                   v-for="(pt, i) in timelineModal.changePoints"
@@ -582,36 +582,54 @@
                   class="relative pl-7 pb-3 last:pb-0 row-stagger"
                   :style="{ animationDelay: i * 80 + 'ms' }"
                 >
-                  <!-- 節點圓點 -->
+                  <!-- 節點圓點：按 changeType 配色 -->
                   <div
                     class="absolute left-0 top-2.5 w-[11px] h-[11px] rounded-full border-2 border-slate-800 z-10"
-                    :class="pt.isInitial ? 'bg-cyan-400' : 'bg-red-400'"
-                    :style="pt.isInitial ? 'box-shadow: 0 0 6px rgba(34,211,238,0.35)' : 'box-shadow: 0 0 6px rgba(248,113,113,0.25)'"
+                    :class="{
+                      'bg-cyan-400': pt.changeType === 'initial',
+                      'bg-emerald-400': pt.changeType === 'recovered',
+                      'bg-amber-400': pt.changeType === 'offline',
+                      'bg-red-400': pt.changeType === 'changed',
+                    }"
+                    :style="{
+                      'box-shadow': pt.changeType === 'initial' ? '0 0 6px rgba(34,211,238,0.35)'
+                        : pt.changeType === 'recovered' ? '0 0 6px rgba(52,211,153,0.35)'
+                        : pt.changeType === 'offline' ? '0 0 6px rgba(251,191,36,0.25)'
+                        : '0 0 6px rgba(248,113,113,0.25)'
+                    }"
                   ></div>
 
-                  <!-- 內容卡片 -->
+                  <!-- 內容卡片：按 changeType 配色 -->
                   <div
                     class="rounded-lg px-3 py-2 border"
-                    :class="pt.isInitial
-                      ? 'bg-cyan-500/5 border-cyan-500/15'
-                      : 'bg-red-500/5 border-red-500/15'"
+                    :class="{
+                      'bg-cyan-500/5 border-cyan-500/15': pt.changeType === 'initial',
+                      'bg-emerald-500/5 border-emerald-500/15': pt.changeType === 'recovered',
+                      'bg-amber-500/5 border-amber-500/15': pt.changeType === 'offline',
+                      'bg-red-500/5 border-red-500/15': pt.changeType === 'changed',
+                    }"
                   >
                     <div class="flex items-center justify-between mb-1">
                       <span class="text-xs text-slate-500 tabular-nums">{{ formatTime(pt.collected_at) }}</span>
                       <span
                         class="text-[10px] font-medium px-1.5 py-0.5 rounded"
-                        :class="pt.isInitial
-                          ? 'text-cyan-400/80 bg-cyan-500/10'
-                          : 'text-red-400/80 bg-red-500/10'"
-                      >{{ pt.isInitial ? '初始' : '變更' }}</span>
+                        :class="{
+                          'text-cyan-400/80 bg-cyan-500/10': pt.changeType === 'initial',
+                          'text-emerald-400/80 bg-emerald-500/10': pt.changeType === 'recovered',
+                          'text-amber-400/80 bg-amber-500/10': pt.changeType === 'offline',
+                          'text-red-400/80 bg-red-500/10': pt.changeType === 'changed',
+                        }"
+                      >{{ { initial: '初始', recovered: '恢復', offline: '中斷', changed: '變更' }[pt.changeType] }}</span>
                     </div>
                     <!-- 變更：old → new -->
-                    <div v-if="!pt.isInitial && i > 0" class="flex items-center gap-1.5 text-sm font-mono">
+                    <div v-if="pt.changeType !== 'initial' && i > 0" class="flex items-center gap-1.5 text-sm font-mono">
                       <span class="text-slate-500">{{ timelineModal.changePoints[i-1].value === null ? '—' : String(timelineModal.changePoints[i-1].value) }}</span>
                       <svg class="w-3.5 h-3.5 text-slate-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
                       </svg>
-                      <span :class="pt.value === null ? 'text-slate-500' : 'text-white'">{{ pt.value === null ? '—' : String(pt.value) }}</span>
+                      <span :class="pt.value === null ? 'text-slate-500' : pt.changeType === 'recovered' ? 'text-emerald-300' : 'text-white'">
+                        {{ pt.value === null ? '—' : String(pt.value) }}
+                      </span>
                     </div>
                     <!-- 初始值 -->
                     <div v-else class="text-sm font-mono" :class="pt.value === null ? 'text-slate-500' : 'text-slate-100'">
@@ -1306,11 +1324,21 @@ export default {
           const chrono = [...entries].reverse()
 
           // Build change points: initial value + all subsequent changes
+          // changeType: 'initial' | 'recovered' | 'offline' | 'changed'
           const points = []
-          points.push({ ...chrono[0], isInitial: true })
+          const initialValue = chrono[0].value
+          points.push({ ...chrono[0], changeType: 'initial' })
           for (let i = 1; i < chrono.length; i++) {
             if (String(chrono[i].value) !== String(chrono[i - 1].value)) {
-              points.push({ ...chrono[i], isInitial: false })
+              let changeType
+              if (chrono[i].value === null) {
+                changeType = 'offline'   // 中斷：值消失
+              } else if (String(chrono[i].value) === String(initialValue)) {
+                changeType = 'recovered' // 恢復：回到初始值
+              } else {
+                changeType = 'changed'   // 變更：變成不同值
+              }
+              points.push({ ...chrono[i], changeType, isInitial: false })
             }
           }
 

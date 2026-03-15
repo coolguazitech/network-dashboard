@@ -177,7 +177,7 @@ class CollectionBatch(Base):
     collection_type: Mapped[str] = mapped_column(String(100), index=True)
     switch_hostname: Mapped[str] = mapped_column(String(255), index=True)
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
-    raw_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_data: Mapped[str | None] = mapped_column(Text(16_777_215), nullable=True)  # MEDIUMTEXT
     item_count: Mapped[int] = mapped_column(Integer, default=0)
     collected_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), index=True,
@@ -513,7 +513,7 @@ class UplinkExpectation(Base):
     __tablename__ = "uplink_expectations"
     __table_args__ = (
         UniqueConstraint(
-            "maintenance_id", "hostname", "local_interface",
+            "maintenance_id", "hostname", "expected_neighbor",
             name="uk_uplink_expectation",
         ),
     )
@@ -779,6 +779,9 @@ class ClientRecord(Base):
     """客戶記錄。"""
 
     __tablename__ = "client_records"
+    __table_args__ = (
+        Index("ix_cr_mid_mac_ts", "maintenance_id", "mac_address", "collected_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str | None] = mapped_column(
@@ -904,6 +907,9 @@ class MaintenanceMacList(Base):
     """歲修 MAC 清單。"""
 
     __tablename__ = "maintenance_mac_list"
+    __table_args__ = (
+        Index("ix_mml_mid_mac", "maintenance_id", "mac_address"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(String(50), index=True)
@@ -931,6 +937,7 @@ class Case(Base):
             "maintenance_id", "mac_address",
             name="uk_case_maintenance_mac",
         ),
+        Index("ix_cases_mid_status_ping", "maintenance_id", "status", "last_ping_reachable"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

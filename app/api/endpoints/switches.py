@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.endpoints.auth import get_current_user, require_root, require_write
+from app.core.interfaces import get_supported_interface_types
 from app.db.base import get_async_session
 from app.db.models import Switch
 from app.services.system_log import write_log
@@ -264,4 +265,32 @@ async def delete_switch(
     return {
         "success": True,
         "message": "交換機已刪除",
+    }
+
+
+# ── 介面類型參考 ──────────────────────────────────────────
+
+
+@router.get("/interface-types")
+async def list_interface_types(
+    _user=Depends(get_current_user),
+) -> dict:
+    """
+    回傳系統支援的介面類型清單。
+
+    供前端顯示「介面名稱填寫指引」，讓使用者知道：
+    - 系統認識哪些介面格式
+    - 每種介面的正規化縮寫
+    - 可以填入的格式範例
+    """
+    types = get_supported_interface_types()
+
+    # 按 category 分組
+    by_category: dict[str, list] = {}
+    for t in types:
+        by_category.setdefault(t["category"], []).append(t)
+
+    return {
+        "interface_types": types,
+        "by_category": by_category,
     }

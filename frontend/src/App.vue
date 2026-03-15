@@ -52,6 +52,13 @@
                 設備
               </router-link>
               <router-link
+                to="/topology"
+                class="nav-link"
+                :class="{ active: route.path === '/topology' }"
+              >
+                拓樸
+              </router-link>
+              <router-link
                 to="/contacts"
                 class="nav-link"
                 :class="{ active: route.path === '/contacts' }"
@@ -176,6 +183,7 @@
 
     <!-- 右側固定餐點狀態欄 -->
     <MealStatus v-if="isAuthenticated && selectedMaintenanceId && route.name !== 'Login'" />
+    <InterfaceRefPanel v-if="isAuthenticated && route.name !== 'Login'" />
 
     <!-- 歲修管理 Modal -->
     <Transition name="modal">
@@ -358,6 +366,7 @@ import { useRouter, useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import MealStatus from '@/components/MealStatus.vue'
+import InterfaceRefPanel from '@/components/InterfaceRefPanel.vue'
 import MeteorShower from '@/components/MeteorShower.vue'
 import ToastContainer from '@/components/ToastContainer.vue'
 import { isAuthenticated, currentUser, isRoot, logout as authLogout } from '@/utils/auth'

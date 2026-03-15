@@ -792,7 +792,7 @@ class SchedulerService:
         return job_id
 
     async def _run_retention(self) -> None:
-        """Run retention cleanup."""
+        """Run retention cleanup (deactivated maintenances + old batches)."""
         from app.services.retention import RetentionService
 
         try:
@@ -800,6 +800,14 @@ class SchedulerService:
             stats = await svc.cleanup_deactivated()
             if stats["maintenances_cleaned"] > 0:
                 logger.info("Retention cleanup: %s", stats)
+
+            # 清理超過 max_collection_days 的舊 batch（保留 latest）
+            from app.core.config import settings
+            old_stats = await svc.cleanup_old_batches(
+                retention_days=settings.max_collection_days,
+            )
+            if old_stats["batches_deleted"] > 0:
+                logger.info("Old batch cleanup: %s", old_stats)
         except Exception as e:
             logger.error("Retention cleanup failed: %s", e)
 

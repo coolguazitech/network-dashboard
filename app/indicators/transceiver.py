@@ -22,6 +22,7 @@ from app.indicators.base import (
     RawDataRow,
     TimeSeriesPoint,
 )
+from app.core.interfaces import is_management_interface as _is_management_interface
 from app.repositories.typed_records import TransceiverRecordRepo
 from app.services.threshold_service import get_threshold
 
@@ -91,9 +92,13 @@ class TransceiverIndicator(BaseIndicator):
         repo = TransceiverRecordRepo(session)
         all_records = await repo.get_latest_per_device(maintenance_id)
 
-        # 只保留設備清單中的設備紀錄，按設備分組
+        # 只保留設備清單中的設備紀錄，並排除管理介面（無 GBIC）
         active_set = set(device_hostnames)
-        records = [r for r in all_records if r.switch_hostname in active_set]
+        records = [
+            r for r in all_records
+            if r.switch_hostname in active_set
+            and not _is_management_interface(r.interface_name)
+        ]
 
         device_records: dict[str, list[TransceiverRecord]] = defaultdict(list)
         for r in records:
@@ -382,6 +387,8 @@ class TransceiverIndicator(BaseIndicator):
 
         grouped: dict[datetime, list[TransceiverRecord]] = defaultdict(list)
         for record in records:
+            if _is_management_interface(record.interface_name):
+                continue
             grouped[record.collected_at].append(record)
 
         time_series: list[TimeSeriesPoint] = []
@@ -457,4 +464,5 @@ class TransceiverIndicator(BaseIndicator):
                 collected_at=record.collected_at,
             )
             for record in records
+            if not _is_management_interface(record.interface_name)
         ]

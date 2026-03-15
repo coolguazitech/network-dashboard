@@ -318,42 +318,77 @@ async def get_stats(
     _user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
-    """獲取設備對應統計（可達性從 PingRecord 取得，按舊/新設備分類）。"""
-    from app.repositories.typed_records import PingRecordRepo
+    """獲取設備對應統計（可達性從 PingRecord 取得，按舊/新設備分類，SQL 聚合）。"""
+    from app.db.models import PingRecord
 
-    # 取得所有設備對應
-    device_stmt = (
-        select(MaintenanceDeviceList)
-        .where(MaintenanceDeviceList.maintenance_id == maintenance_id)
+    # 1) 用 SQL 計數 old/new hostname（不載入整表）
+    count_old = func.count(func.distinct(MaintenanceDeviceList.old_hostname))
+    count_new = func.count(func.distinct(MaintenanceDeviceList.new_hostname))
+    cnt_result = await session.execute(
+        select(count_old, count_new).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id
+        )
     )
-    result = await session.execute(device_stmt)
-    devices = result.scalars().all()
-
-    # 建立 hostname → role 映射（old / new）
-    old_hostnames: set[str] = set()
-    new_hostnames: set[str] = set()
-    for d in devices:
-        if d.old_hostname:
-            old_hostnames.add(d.old_hostname)
-        if d.new_hostname:
-            new_hostnames.add(d.new_hostname)
-
-    old_count = len(old_hostnames)
-    new_count = len(new_hostnames)
+    old_count, new_count = cnt_result.one()
     total = old_count + new_count
 
-    # 從 PingRecord 取得可達性統計
-    repo = PingRecordRepo(session)
-    records = await repo.get_latest_per_device(maintenance_id)
+    if total == 0:
+        return {
+            "success": True, "total": 0,
+            "old_count": 0, "new_count": 0,
+            "reachable": 0, "unreachable": 0, "unchecked": 0,
+            "reachable_rate": 0,
+            "old_reachable": 0, "old_unreachable": 0, "old_unchecked": 0,
+            "new_reachable": 0, "new_unreachable": 0, "new_unchecked": 0,
+        }
 
-    # 每台設備取最佳結果（與 PingIndicator 邏輯一致）
-    per_device: dict[str, bool] = {}
-    for r in records:
-        existing = per_device.get(r.switch_hostname)
-        if existing is None or (r.is_reachable and not existing):
-            per_device[r.switch_hostname] = r.is_reachable
+    # 2) 用 SQL 取得每台設備的最佳可達性 (MAX → True 優先)
+    latest_batches = (
+        select(LatestCollectionBatch.batch_id)
+        .where(
+            LatestCollectionBatch.collection_type == "ping_batch",
+            LatestCollectionBatch.maintenance_id == maintenance_id,
+        )
+        .subquery()
+    )
+    ping_best = (
+        select(
+            PingRecord.switch_hostname,
+            func.max(PingRecord.is_reachable).label("best_reachable"),
+        )
+        .where(
+            PingRecord.batch_id.in_(select(latest_batches.c.batch_id)),
+            PingRecord.maintenance_id == maintenance_id,
+        )
+        .group_by(PingRecord.switch_hostname)
+        .subquery()
+    )
 
-    # 按舊/新設備分類可達性
+    # 3) 取 old/new hostname 集合（輕量，只取 hostname 欄位）
+    old_stmt = (
+        select(MaintenanceDeviceList.old_hostname)
+        .where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id,
+            MaintenanceDeviceList.old_hostname.isnot(None),
+        )
+    )
+    new_stmt = (
+        select(MaintenanceDeviceList.new_hostname)
+        .where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id,
+            MaintenanceDeviceList.new_hostname.isnot(None),
+        )
+    )
+    old_result = await session.execute(old_stmt)
+    new_result = await session.execute(new_stmt)
+    old_hostnames = {r[0] for r in old_result.fetchall()}
+    new_hostnames = {r[0] for r in new_result.fetchall()}
+
+    # 4) 取得 ping 聚合結果
+    ping_result = await session.execute(select(ping_best))
+    per_device = {r[0]: bool(r[1]) for r in ping_result.fetchall()}
+
+    # 5) 按舊/新設備分類可達性
     old_reachable = sum(1 for h in old_hostnames if per_device.get(h) is True)
     old_unreachable = sum(1 for h in old_hostnames if per_device.get(h) is False)
     old_unchecked = old_count - old_reachable - old_unreachable
@@ -1119,25 +1154,40 @@ async def reachability_status(
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     """
-    取得各設備最新 Ping 可達性狀態（從 PingRecord 讀取）。
+    取得各設備最新 Ping 可達性狀態（從 PingRecord 讀取，SQL 聚合）。
 
     回傳格式：{ hostname: { is_reachable, last_check_at } }
     """
-    from app.repositories.typed_records import PingRecordRepo
+    from app.db.models import PingRecord
 
-    repo = PingRecordRepo(session)
-    records = await repo.get_latest_per_device(maintenance_id)
-
-    # 每台設備取最佳結果（與 PingIndicator 邏輯一致）
-    status: dict[str, dict] = {}
-    for r in records:
-        hostname = r.switch_hostname
-        existing = status.get(hostname)
-        if existing is None or (r.is_reachable and not existing["is_reachable"]):
-            status[hostname] = {
-                "is_reachable": r.is_reachable,
-                "last_check_at": r.collected_at.isoformat() if r.collected_at else None,
-            }
+    # 用 SQL 聚合：每台設備取 MAX(is_reachable) 和 MAX(collected_at)
+    latest_batches = (
+        select(LatestCollectionBatch.batch_id)
+        .where(
+            LatestCollectionBatch.collection_type == "ping_batch",
+            LatestCollectionBatch.maintenance_id == maintenance_id,
+        )
+        .subquery()
+    )
+    stmt = (
+        select(
+            PingRecord.switch_hostname,
+            func.max(PingRecord.is_reachable).label("best_reachable"),
+            func.max(PingRecord.collected_at).label("last_check"),
+        )
+        .where(
+            PingRecord.batch_id.in_(select(latest_batches.c.batch_id)),
+            PingRecord.maintenance_id == maintenance_id,
+        )
+        .group_by(PingRecord.switch_hostname)
+    )
+    result = await session.execute(stmt)
+    status = {}
+    for hostname, best_reachable, last_check in result.fetchall():
+        status[hostname] = {
+            "is_reachable": bool(best_reachable),
+            "last_check_at": last_check.isoformat() if last_check else None,
+        }
 
     return {
         "success": True,

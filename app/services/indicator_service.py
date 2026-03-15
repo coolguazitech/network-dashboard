@@ -74,7 +74,9 @@ class IndicatorService:
         }
 
         results = {}
+        timings = {}
         for name, indicator in indicators.items():
+            t1 = _time.monotonic()
             try:
                 results[name] = await indicator.evaluate(
                     maintenance_id=maintenance_id,
@@ -82,17 +84,20 @@ class IndicatorService:
                 )
             except Exception as e:
                 logger.error("Error evaluating %s: %s", name, e)
+            timings[name] = _time.monotonic() - t1
 
         elapsed = _time.monotonic() - t0
         parts = [
             f"{n}: {r.pass_count}/{r.total_count}"
             for n, r in results.items()
         ]
+        timing_parts = [f"{n}={t:.3f}s" for n, t in timings.items()]
         logger.info(
-            "Indicators for %s: %s (%.2fs)",
+            "Indicators for %s: %s (%.2fs) [%s]",
             maintenance_id,
             " | ".join(parts),
             elapsed,
+            " ".join(timing_parts),
         )
 
         return results

@@ -23,6 +23,17 @@
       </button>
     </div>
 
+    <!-- 內容區載入遮罩 -->
+    <div v-if="loading" class="fixed top-14 left-0 right-0 bottom-0 bg-slate-950/60 backdrop-blur-[2px] flex items-center justify-center z-40">
+      <div class="flex flex-col items-center gap-4 px-8 py-6 rounded-2xl bg-slate-800/80 border border-slate-700/50 shadow-2xl">
+        <div class="relative h-10 w-10">
+          <div class="absolute inset-0 rounded-full border-2 border-slate-700"></div>
+          <div class="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-400 animate-spin"></div>
+        </div>
+        <span class="text-slate-300 text-sm tracking-wide">載入中...</span>
+      </div>
+    </div>
+
     <!-- Tab 內容 -->
     <div class="bg-slate-800/60 backdrop-blur-sm rounded-xl border border-slate-600/40 p-4">
       <!-- Uplink 期望 Tab (歲修特定) -->
@@ -120,7 +131,7 @@
                     <button @click="deleteUplink(uplink)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
                 </tr>
-                <tr v-if="uplinkExpectations.length === 0">
+                <tr v-if="uplinkExpectations.length === 0 && !loading">
                   <td colspan="7" class="px-4 py-8 text-center text-slate-500">尚無 Uplink 期望</td>
                 </tr>
               </tbody>
@@ -226,7 +237,7 @@
                     <button @click="deleteVersion(ver)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
                 </tr>
-                <tr v-if="versionExpectations.length === 0">
+                <tr v-if="versionExpectations.length === 0 && !loading">
                   <td colspan="5" class="px-4 py-8 text-center text-slate-500">尚無 Version 期望</td>
                 </tr>
               </tbody>
@@ -334,7 +345,7 @@
                     <button @click="deletePortChannel(pc)" class="text-red-400 hover:text-red-300">刪除</button>
                   </td>
                 </tr>
-                <tr v-if="portChannelExpectations.length === 0">
+                <tr v-if="portChannelExpectations.length === 0 && !loading">
                   <td colspan="6" class="px-4 py-8 text-center text-slate-500">尚無 Port Channel 期望</td>
                 </tr>
               </tbody>
@@ -449,15 +460,6 @@
     </div>
     </Transition>
 
-    <!-- Loading -->
-    <Transition name="modal">
-    <div v-if="loading" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 modal-content">
-        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-400 mx-auto mb-2"></div>
-        <p class="text-slate-300">載入中...</p>
-      </div>
-    </div>
-    </Transition>
   </div>
 </template>
 
@@ -535,6 +537,7 @@ export default {
       newPortChannel: { hostname: '', port_channel: '', member_interfaces: '', description: '' },
       editingPortChannel: null,
 
+
       // 搜尋防抖計時器
       uplinkSearchTimeout: null,
       versionSearchTimeout: null,
@@ -574,11 +577,14 @@ export default {
     }
   },
   beforeUnmount() {
+    this._unmounted = true;
+    if (this._abortController) this._abortController.abort();
     clearTimeout(this.uplinkSearchTimeout);
     clearTimeout(this.versionSearchTimeout);
     clearTimeout(this.portChannelSearchTimeout);
   },
   methods: {
+
     // CSV 檔案驗證
     validateCsvFile(file) {
       if (!file) return { valid: false, error: '請選擇檔案' };
@@ -727,18 +733,23 @@ export default {
     async loadMaintenanceData() {
       if (!this.selectedMaintenanceId) return;
 
+      // 取消上一次未完成的請求
+      if (this._abortController) {
+        this._abortController.abort();
+      }
+      this._abortController = new AbortController();
+
       this.loading = true;
       try {
-        // 載入 Uplink 期望
-        await this.loadUplinkList();
-
-        // 載入 Version 期望
-        await this.loadVersionList();
-
-        // 載入 Port Channel 期望
-        await this.loadPortChannelList();
+        await Promise.all([
+          this.loadUplinkList(),
+          this.loadVersionList(),
+          this.loadPortChannelList(),
+        ]);
       } catch (e) {
-        console.error('載入歲修數據失敗:', e);
+        if (e?.name !== 'CanceledError') {
+          console.error('載入歲修數據失敗:', e);
+        }
       } finally {
         this.loading = false;
       }
@@ -751,6 +762,7 @@ export default {
       // 保存捲動位置
       const scrollTop = this.$refs.uplinkScrollContainer?.scrollTop || 0;
 
+      this.uplinkLoading = true;
       try {
         const params = new URLSearchParams();
         if (this.uplinkSearch) params.append('search', this.uplinkSearch);
@@ -767,7 +779,8 @@ export default {
         });
       } catch (e) {
         console.error('載入 Uplink 期望失敗:', e);
-        this.showMessage('載入失敗，請稍後再試', 'error');
+      } finally {
+        this.uplinkLoading = false;
       }
     },
     
@@ -947,6 +960,7 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
       // 保存捲動位置
       const scrollTop = this.$refs.versionScrollContainer?.scrollTop || 0;
 
+      this.versionLoading = true;
       try {
         const params = new URLSearchParams();
         if (this.versionSearch) params.append('search', this.versionSearch);
@@ -963,7 +977,8 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
         });
       } catch (e) {
         console.error('載入 Version 期望失敗:', e);
-        this.showMessage('載入失敗，請稍後再試', 'error');
+      } finally {
+        this.versionLoading = false;
       }
     },
     
@@ -1132,6 +1147,7 @@ CORE-SW-01,9.4(1),NX-OS版本`;
       // 保存捲動位置
       const scrollTop = this.$refs.portChannelScrollContainer?.scrollTop || 0;
 
+      this.portChannelLoading = true;
       try {
         const params = new URLSearchParams();
         if (this.portChannelSearch) params.append('search', this.portChannelSearch);
@@ -1148,7 +1164,8 @@ CORE-SW-01,9.4(1),NX-OS版本`;
         });
       } catch (e) {
         console.error('載入 Port Channel 期望失敗:', e);
-        this.showMessage('載入失敗，請稍後再試', 'error');
+      } finally {
+        this.portChannelLoading = false;
       }
     },
     

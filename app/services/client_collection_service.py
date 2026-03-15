@@ -26,14 +26,7 @@ logger = logging.getLogger(__name__)
 
 # ── MAC 匹配 helpers ────────────────────────────────────────────
 
-_PORT_CHANNEL_PREFIXES = ("BAGG", "Po", "BE", "AE", "BOND")
-
-
-def _is_port_channel(interface_name: str | None) -> bool:
-    """正規化後的 interface 是否為 port-channel 類型。"""
-    if not interface_name:
-        return False
-    return interface_name.startswith(_PORT_CHANNEL_PREFIXES)
+from app.core.interfaces import is_port_channel as _is_port_channel
 
 
 def _parse_speed_mbps(speed: str | None) -> int | None:

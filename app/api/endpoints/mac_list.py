@@ -330,17 +330,21 @@ async def get_stats(
     maintenance_id: str,
     _user: Annotated[dict[str, Any], Depends(get_current_user)],
 ) -> dict[str, int]:
-    """獲取 Client 清單統計。"""
+    """獲取 Client 清單統計（SQL 聚合，不載入全部資料）。"""
     async with get_session_context() as session:
-        # 獲取已導入的 Client 清單
-        client_stmt = select(MaintenanceMacList).where(
-            MaintenanceMacList.maintenance_id == maintenance_id
+        # 一次 SQL 取得 total 和各 detection_status 計數
+        status_stmt = (
+            select(
+                MaintenanceMacList.detection_status,
+                func.count().label("cnt"),
+            )
+            .where(MaintenanceMacList.maintenance_id == maintenance_id)
+            .group_by(MaintenanceMacList.detection_status)
         )
-        client_result = await session.execute(client_stmt)
-        clients = client_result.scalars().all()
+        status_result = await session.execute(status_stmt)
+        status_counts = {row[0]: row[1] for row in status_result.fetchall()}
 
-        total = len(clients)
-
+        total = sum(status_counts.values())
         if total == 0:
             return {
                 "total": 0,
@@ -352,49 +356,34 @@ async def get_stats(
                 "not_checked": 0,
             }
 
-        imported_macs = {c.mac_address for c in clients}
+        detected = status_counts.get(ClientDetectionStatus.DETECTED, 0)
+        mismatch = status_counts.get(ClientDetectionStatus.MISMATCH, 0)
+        not_detected = status_counts.get(ClientDetectionStatus.NOT_DETECTED, 0)
+        not_checked = status_counts.get(ClientDetectionStatus.NOT_CHECKED, 0)
 
-        # 統計偵測狀態
-        detected = sum(
-            1 for c in clients
-            if c.detection_status == ClientDetectionStatus.DETECTED
-        )
-        mismatch = sum(
-            1 for c in clients
-            if c.detection_status == ClientDetectionStatus.MISMATCH
-        )
-        not_detected = sum(
-            1 for c in clients
-            if c.detection_status == ClientDetectionStatus.NOT_DETECTED
-        )
-        not_checked = sum(
-            1 for c in clients
-            if c.detection_status == ClientDetectionStatus.NOT_CHECKED
-        )
-
-        # 獲取該歲修的活躍分類 ID
-        cat_stmt = select(ClientCategory.id).where(
-            ClientCategory.maintenance_id == maintenance_id,
-            ClientCategory.is_active == True,  # noqa: E712
-        )
-        cat_result = await session.execute(cat_stmt)
-        cat_ids = [r[0] for r in cat_result.fetchall()]
-
-        # 已分類數量
-        categorized = 0
-        if cat_ids and imported_macs:
-            count_distinct = func.count(func.distinct(
-                ClientCategoryMember.mac_address
-            ))
-            member_stmt = (
-                select(count_distinct)
-                .where(
-                    ClientCategoryMember.category_id.in_(cat_ids),
-                    ClientCategoryMember.mac_address.in_(imported_macs),
-                )
+        # 已分類數量：用子查詢避免載入所有 MAC
+        active_cats = (
+            select(ClientCategory.id)
+            .where(
+                ClientCategory.maintenance_id == maintenance_id,
+                ClientCategory.is_active == True,  # noqa: E712
             )
-            member_result = await session.execute(member_stmt)
-            categorized = member_result.scalar() or 0
+            .subquery()
+        )
+        mac_subq = (
+            select(MaintenanceMacList.mac_address)
+            .where(MaintenanceMacList.maintenance_id == maintenance_id)
+            .subquery()
+        )
+        cat_count_stmt = (
+            select(func.count(func.distinct(ClientCategoryMember.mac_address)))
+            .where(
+                ClientCategoryMember.category_id.in_(select(active_cats.c.id)),
+                ClientCategoryMember.mac_address.in_(select(mac_subq.c.mac_address)),
+            )
+        )
+        cat_result = await session.execute(cat_count_stmt)
+        categorized = cat_result.scalar() or 0
 
         return {
             "total": total,
