@@ -492,6 +492,7 @@ const chartOption = computed(() => {
         itemStyle: { opacity: 0.08 },
         lineStyle: { opacity: 0.02 },
         label: { show: false },
+        edgeLabel: { show: false },
       },
       categories: [
         { name: '設備清單', itemStyle: { color: NODE_COLORS.device_list } },
@@ -552,7 +553,7 @@ const chartOption = computed(() => {
                   backgroundColor: 'rgba(15, 23, 42, 0.75)',
                   padding: [2, 6],
                   borderRadius: 3,
-                  formatter: () => labelText,
+                  formatter: '{c}',
                 },
                 lineStyle: {
                   color: LINK_COLORS[status] || LINK_COLORS.discovered,
