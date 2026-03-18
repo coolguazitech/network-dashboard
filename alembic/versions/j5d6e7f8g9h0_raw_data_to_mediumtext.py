@@ -10,6 +10,7 @@ Changes:
 from typing import Sequence, Union
 
 from alembic import op
+from sqlalchemy import inspect
 import sqlalchemy as sa
 
 
@@ -19,7 +20,24 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _get_column_type_length(conn, table_name: str, column_name: str) -> int | None:
+    """Return the column type length, or None if not found."""
+    insp = inspect(conn)
+    for col in insp.get_columns(table_name):
+        if col['name'] == column_name:
+            col_type = col['type']
+            return getattr(col_type, 'length', None)
+    return None
+
+
 def upgrade() -> None:
+    conn = op.get_bind()
+    length = _get_column_type_length(conn, 'collection_batches', 'raw_data')
+
+    # Already MEDIUMTEXT (e.g. fresh create_all DB)
+    if length is not None and length >= 16_777_215:
+        return
+
     op.alter_column(
         'collection_batches',
         'raw_data',
