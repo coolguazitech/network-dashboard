@@ -1,7 +1,11 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.15.2 (2026-03-16)
+> **版本**: v2.15.3 (2026-03-18)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.15.3 變更摘要**:
+> - **[Production Bug] Client Ping 修復**：修復 5000+ IP ping 結果導致 `Data too long for column 'raw_data'` 錯誤（TEXT 64KB → MEDIUMTEXT 16MB）
+> - **Alembic Migration 自動適配**：Entrypoint 自動偵測 `create_all` 建的 DB（無 `alembic_version` 表），stamp 後執行 pending migrations，解決舊部署 migration 永遠不跑的問題
 >
 > **v2.15.2 變更摘要**:
 > - **拓樸 Edge Label 修正**：修復選取節點後不相干連線顯示錯誤介面資訊（ECharts closure formatter 替換為靜態格式 + blur 狀態隱藏 edgeLabel）
@@ -124,16 +128,16 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.15.2` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.15.3` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.15.2` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.15.3` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
 掃描通過後會拿到公司內部的 image URL，例如：
 
 ```
-registry.company.com/netora/network-dashboard-base:v2.15.2
+registry.company.com/netora/network-dashboard-base:v2.15.3
 registry.company.com/netora/netora-mariadb:10.11
 ...
 ```
@@ -162,17 +166,17 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.2
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.3
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.15.2
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.15.3
 ```
 
 拉取 image：
 
 ```bash
-docker pull registry.company.com/netora/network-dashboard-base:v2.15.2
+docker pull registry.company.com/netora/network-dashboard-base:v2.15.3
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.15.2
+docker pull registry.company.com/netora/netora-mock-server:v2.15.3
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 
@@ -206,7 +210,7 @@ DB_ROOT_PASSWORD=<強密碼>
 JWT_SECRET=<隨機字串>
 
 # ===== Image URL（必改）=====
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.2
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.3
 
 # ===== 真實 API 來源（必改）=====
 # FNA: Bearer token 認證; DNA: 不需認證; 皆無 SSL
@@ -752,19 +756,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.15.2 \
+    -t coolguazi/network-dashboard-base:v2.15.3 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.15.2
+    coolguazi/network-dashboard-base:v2.15.3
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.15.2
+docker push coolguazi/network-dashboard-base:v2.15.3
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.15.2 | gzip > netora-app-v2.9.0.tar.gz
+docker save coolguazi/network-dashboard-base:v2.15.3 | gzip > netora-app-v2.9.0.tar.gz
 ```
 
 #### 在公司環境（無外網）
@@ -773,7 +777,7 @@ docker save coolguazi/network-dashboard-base:v2.15.2 | gzip > netora-app-v2.9.0.
 
 ```bash
 docker build \
-    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.2 \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.3 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.9.0-fix1 \
     .
@@ -1157,7 +1161,7 @@ cd netora
 
 # BASE_IMAGE = 公司 registry 掃描通過後的 URL
 docker build \
-    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.2 \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.3 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.9.0 \
     .
@@ -1732,7 +1736,7 @@ app/snmp/
      ↓
 5. 在公司重建 image（見 SOP 1b.8）：
    docker build \
-     --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.15.2 \
+     --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.15.3 \
      -f docker/production/Dockerfile \
      -t netora-production:v2.9.0-fix1 .
      ↓
@@ -1766,9 +1770,9 @@ app/snmp/
 ```
 # ===== Phase 1: 起服務（SNMP Mock，推薦首次驗證）=====
 unzip netora-main.zip && cd netora-main
-docker pull <公司registry>/network-dashboard-base:v2.15.2
+docker pull <公司registry>/network-dashboard-base:v2.15.3
 cp .env.mock .env
-# 編輯 .env：APP_IMAGE=<公司registry>/network-dashboard-base:v2.15.2
+# 編輯 .env：APP_IMAGE=<公司registry>/network-dashboard-base:v2.15.3
 docker compose -f docker-compose.production.yml --profile mock up -d
 # alembic 自動執行，等 30 秒
 curl http://localhost:8000/health
@@ -1803,7 +1807,7 @@ make parse-debug                            # 產生 AI bundle
 
 # ===== Phase 3: 最終部署 =====
 docker build \
-    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.15.2 \
+    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.15.3 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.9.0 .
 # 編輯 .env: APP_IMAGE=netora-production:v2.9.0
