@@ -61,6 +61,8 @@ from app.db.models import (
     CaseNote,
     # Meals (餐點)
     MealZone,
+    # Severity Override
+    SeverityOverride,
 )
 
 
@@ -475,7 +477,15 @@ async def delete_maintenance(
     )
     deleted_counts["client_categories"] = result.rowcount
 
-    # === 5. 刪除 Maintenance 資料清單 ===
+    # === 5a. 刪除 SeverityOverride（FK → maintenance_mac_list）===
+    result = await session.execute(
+        delete(SeverityOverride).where(
+            SeverityOverride.maintenance_id == maintenance_id
+        )
+    )
+    deleted_counts["severity_overrides"] = result.rowcount
+
+    # === 5b. 刪除 Maintenance 資料清單 ===
     result = await session.execute(
         delete(MaintenanceMacList).where(
             MaintenanceMacList.maintenance_id == maintenance_id
@@ -530,12 +540,19 @@ async def delete_maintenance(
     else:
         deleted_counts["contacts"] = 0
 
-    result = await session.execute(
+    # 先刪子分類（parent_id 不為空），再刪父分類，避免自引用 FK 衝突
+    result_child = await session.execute(
+        delete(ContactCategory).where(
+            ContactCategory.maintenance_id == maintenance_id,
+            ContactCategory.parent_id.isnot(None),
+        )
+    )
+    result_parent = await session.execute(
         delete(ContactCategory).where(
             ContactCategory.maintenance_id == maintenance_id
         )
     )
-    deleted_counts["contact_categories"] = result.rowcount
+    deleted_counts["contact_categories"] = result_child.rowcount + result_parent.rowcount
 
     # === 8. 刪除餐點狀態 (Meals) ===
     result = await session.execute(

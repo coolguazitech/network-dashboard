@@ -88,3 +88,4 @@ scripts/fix_*.mjs
 .env.production
 
 reports/
+.env.compose-test

@@ -37,6 +37,7 @@ class IndicatorObjectType(str, Enum):
 
     INTERFACE = "interface"
     SWITCH = "switch"
+    DEVICE = "device"
     ACL = "acl"
     UPLINK = "uplink"
 

@@ -1,7 +1,7 @@
 # NETORA 部署與開發 SOP
 
-> **最新版本**: `v2.16.0` (2026-03-20)
-> **重大更新**: 通訊錄階層分類、client_id 主鍵、拓樸視覺化強化
+> **最新版本**: `v2.17.0` (2026-03-20)
+> **重大更新**: Alembic migration 完整化、Indicators enum/schema 修復、歲修刪除級聯修復
 
 ## 目錄
 
@@ -13,50 +13,31 @@
 
 ---
 
-## 🚀 公司端快速更新 (v2.16.0)
+## 🚀 公司端快速更新 (v2.17.0)
 
 ### 更新內容摘要
 
-**版本**: `coolguazi/network-dashboard-base:v2.16.0`
+**版本**: `coolguazi/network-dashboard-base:v2.17.0`
 
-**新功能**:
+**新功能 (v2.16.0 → v2.17.0)**:
 - ✅ **通訊錄階層分類**: 支援父分類→子分類一層架構，側欄樹狀展示
 - ✅ **通訊錄 CSV 匯入/匯出**: 支援 `category_name` + `sub_category_name` 欄位，自動建立分類層級
-- ✅ **client_id 主鍵**: Cases、ClientRecord、SeverityOverride 等表改用 client_id 作為關聯鍵
+- ✅ **通訊錄新欄位**: 新增部門、分機、備註欄位
+- ✅ **client_id 主鍵**: Cases、ClientRecord、SeverityOverride 等 7 張表改用 client_id 作為關聯鍵
 - ✅ **拓樸視覺化強化**: 連線標籤顯示節點名稱、狀態持久化 (localStorage)、30 秒動態輪詢
 - ✅ **介面格式參考面板**: 側邊標籤常駐顯示，點擊展開完整參考表
 
-**修復**:
-- ✅ 通訊錄 Email 欄位移除（不再需要）
-- ✅ 通訊錄角色欄位長度擴充至 115 字元
+**修復 (v2.17.0)**:
+- ✅ **Alembic migration 完整化**: 新增 `l7f8g9h0i1j2` migration，涵蓋 client_id (7 表)、parent_id、contacts 新欄位、title 擴充、email 移除
+- ✅ **歲修刪除級聯修復**: contact_categories 自引用 FK 先刪子分類再刪父分類；新增 SeverityOverride 刪除
+- ✅ **Indicators API 修復**: IndicatorObjectType 新增 DEVICE 列舉值；DisplayConfigSchema/ObservedFieldSchema 欄位允許 None
 - ✅ MAC 刪除級聯清理 (Case、ClientRecord、ClientComparison)
 - ✅ Case API 回傳 client_id 欄位
 - ✅ CVE 掃描通過（0 個 CRITICAL）
 
-**影響範圍**: 通訊錄模組、案件模組、MAC 清單模組、拓樸視覺化
+**影響範圍**: DB Migration、通訊錄、案件、MAC 清單、拓樸、Indicators
 
-**DB Migration 注意**: 此版本新增多個欄位（`client_id`、`parent_id`），容器啟動時 `create_all` 會自動建立新表，但**既有表需手動 ALTER TABLE**（詳見下方）。
-
-#### 既有環境升級步驟
-
-```bash
-# 連入 DB 執行 ALTER TABLE（僅首次升級需要）
-docker exec netora_db mariadb -u admin -p$DB_PASSWORD netora -e "
--- contact_categories 新增 parent_id
-ALTER TABLE contact_categories ADD COLUMN IF NOT EXISTS parent_id INT NULL AFTER maintenance_id;
--- contacts 移除 email、擴充 title
-ALTER TABLE contacts DROP COLUMN IF EXISTS email;
-ALTER TABLE contacts MODIFY COLUMN title VARCHAR(115) NULL;
--- 多表新增 client_id
-ALTER TABLE client_records ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER collected_at;
-ALTER TABLE client_comparisons ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER collected_at;
-ALTER TABLE cases ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER maintenance_id;
-ALTER TABLE client_severity_overrides ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER maintenance_id;
-ALTER TABLE reference_clients ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER maintenance_id;
-ALTER TABLE latest_client_records ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER maintenance_id;
-ALTER TABLE client_category_members ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER category_id;
-"
-```
+**DB Migration**: 此版本的 Alembic migration (`l7f8g9h0i1j2`) 會自動處理所有 schema 變更，**不再需要手動 ALTER TABLE**。容器啟動時 entrypoint.sh 會自動執行 `alembic upgrade head`。
 
 ### 在公司機器上執行（5 分鐘）
 
@@ -95,10 +76,12 @@ curl http://localhost:8000/health
 ### 回滾方案（如遇問題）
 
 ```bash
-# 回到上一版本 v2.15.3
-sed -i 's/network-dashboard-base:v2.16.0/network-dashboard-base:v2.15.3/' docker-compose.production.yml
+# 回到上一版本 v2.16.0
+sed -i 's/network-dashboard-base:v2.17.0/network-dashboard-base:v2.16.0/' docker-compose.production.yml
 docker compose -f docker-compose.production.yml pull
 docker compose -f docker-compose.production.yml up -d
+# 回滾 DB migration
+docker exec netora_app alembic downgrade k6e7f8g9h0i1
 ```
 
 ---

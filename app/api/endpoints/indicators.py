@@ -25,21 +25,21 @@ class ObservedFieldSchema(BaseModel):
     name: str = Field(..., description="欄位名稱")
     display_name: str = Field(..., description="顯示名稱")
     metric_name: str = Field(..., description="使用的 Metric 名稱")
-    unit: str = Field(default="", description="單位")
+    unit: str | None = Field(default="", description="單位")
 
 
 class DisplayConfigSchema(BaseModel):
     """前端顯示設定 schema。"""
-    chart_type: str = Field(default="line", description="圖表類型")
-    x_axis_label: str = Field(default="時間")
-    y_axis_label: str = Field(default="Pass Rate (%)")
-    y_axis_min: float = Field(default=0.0)
-    y_axis_max: float = Field(default=100.0)
-    line_colors: list[str] = Field(
+    chart_type: str | None = Field(default="line", description="圖表類型")
+    x_axis_label: str | None = Field(default="時間")
+    y_axis_label: str | None = Field(default="Pass Rate (%)")
+    y_axis_min: float | None = Field(default=0.0)
+    y_axis_max: float | None = Field(default=100.0)
+    line_colors: list[str] | None = Field(
         default_factory=lambda: ["#5470c6", "#91cc75"]
     )
-    show_raw_data_table: bool = Field(default=True)
-    refresh_interval_seconds: int = Field(default=60)
+    show_raw_data_table: bool | None = Field(default=True)
+    refresh_interval_seconds: int | None = Field(default=60)
 
 
 class IndicatorMetadataResponse(BaseModel):
