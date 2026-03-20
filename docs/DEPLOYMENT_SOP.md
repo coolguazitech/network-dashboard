@@ -1,6 +1,6 @@
 # NETORA 部署與開發 SOP
 
-> **最新版本**: `v2.17.0` (2026-03-20)
+> **最新版本**: `v2.17.1` (2026-03-20)
 > **重大更新**: Alembic migration 完整化、Indicators enum/schema 修復、歲修刪除級聯修復
 
 ## 目錄
@@ -13,13 +13,13 @@
 
 ---
 
-## 🚀 公司端快速更新 (v2.17.0)
+## 🚀 公司端快速更新 (v2.17.1)
 
 ### 更新內容摘要
 
-**版本**: `coolguazi/network-dashboard-base:v2.17.0`
+**版本**: `coolguazi/network-dashboard-base:v2.17.1`
 
-**新功能 (v2.16.0 → v2.17.0)**:
+**新功能 (v2.16.0 → v2.17.1)**:
 - ✅ **通訊錄階層分類**: 支援父分類→子分類一層架構，側欄樹狀展示
 - ✅ **通訊錄 CSV 匯入/匯出**: 支援 `category_name` + `sub_category_name` 欄位，自動建立分類層級
 - ✅ **通訊錄新欄位**: 新增部門、分機、備註欄位
@@ -27,7 +27,8 @@
 - ✅ **拓樸視覺化強化**: 連線標籤顯示節點名稱、狀態持久化 (localStorage)、30 秒動態輪詢
 - ✅ **介面格式參考面板**: 側邊標籤常駐顯示，點擊展開完整參考表
 
-**修復 (v2.17.0)**:
+**修復 (v2.17.1)**:
+- ✅ **entrypoint.sh K8s 相容**: 新增 DB 等待迴圈（最多 60 秒），fresh DB 主動 create_all + stamp head
 - ✅ **Alembic migration 完整化**: 新增 `l7f8g9h0i1j2` migration，涵蓋 client_id (7 表)、parent_id、contacts 新欄位、title 擴充、email 移除
 - ✅ **歲修刪除級聯修復**: contact_categories 自引用 FK 先刪子分類再刪父分類；新增 SeverityOverride 刪除
 - ✅ **Indicators API 修復**: IndicatorObjectType 新增 DEVICE 列舉值；DisplayConfigSchema/ObservedFieldSchema 欄位允許 None
@@ -35,9 +36,12 @@
 - ✅ Case API 回傳 client_id 欄位
 - ✅ CVE 掃描通過（0 個 CRITICAL）
 
-**影響範圍**: DB Migration、通訊錄、案件、MAC 清單、拓樸、Indicators
+**影響範圍**: entrypoint 啟動流程、DB Migration、通訊錄、案件、MAC 清單、拓樸、Indicators
 
-**DB Migration**: 此版本的 Alembic migration (`l7f8g9h0i1j2`) 會自動處理所有 schema 變更，**不再需要手動 ALTER TABLE**。容器啟動時 entrypoint.sh 會自動執行 `alembic upgrade head`。
+**DB Migration**: 此版本的 entrypoint.sh 已完全自動化：
+- **全新 DB**: 等待 DB 就緒 → create_all 建表 → alembic stamp head（K8s/docker-compose 皆適用）
+- **既有 DB**: 自動偵測版本 → alembic upgrade head
+- **不再需要手動 ALTER TABLE**
 
 ### 在公司機器上執行（5 分鐘）
 
@@ -77,7 +81,7 @@ curl http://localhost:8000/health
 
 ```bash
 # 回到上一版本 v2.16.0
-sed -i 's/network-dashboard-base:v2.17.0/network-dashboard-base:v2.16.0/' docker-compose.production.yml
+sed -i 's/network-dashboard-base:v2.17.1/network-dashboard-base:v2.16.0/' docker-compose.production.yml
 docker compose -f docker-compose.production.yml pull
 docker compose -f docker-compose.production.yml up -d
 # 回滾 DB migration
