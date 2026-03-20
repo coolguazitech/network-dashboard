@@ -29,6 +29,7 @@ class ContactCategoryCreate(BaseModel):
 
     maintenance_id: str
     name: str
+    parent_id: int | None = None
     description: str | None = None
     color: str | None = "#3B82F6"
     icon: str | None = None
@@ -38,6 +39,7 @@ class ContactCategoryUpdate(BaseModel):
     """更新通訊錄分類。"""
 
     name: str | None = None
+    parent_id: int | None = None
     description: str | None = None
     color: str | None = None
     icon: str | None = None
@@ -48,12 +50,14 @@ class ContactCategoryResponse(BaseModel):
     """分類回應。"""
 
     id: int
+    parent_id: int | None = None
     name: str
     description: str | None
     color: str | None
     icon: str | None
     sort_order: int
     contact_count: int
+    children: list["ContactCategoryResponse"] = []
 
 
 class ContactCreate(BaseModel):
@@ -66,7 +70,6 @@ class ContactCreate(BaseModel):
     company: str | None = None
     phone: str | None = None
     mobile: str | None = None
-    email: str | None = None
     extension: str | None = None
     notes: str | None = None
 
@@ -81,7 +84,6 @@ class ContactUpdate(BaseModel):
     company: str | None = None
     phone: str | None = None
     mobile: str | None = None
-    email: str | None = None
     extension: str | None = None
     notes: str | None = None
     sort_order: int | None = None
@@ -99,7 +101,6 @@ class ContactResponse(BaseModel):
     company: str | None
     phone: str | None
     mobile: str | None
-    email: str | None
     extension: str | None
     notes: str | None
 
@@ -112,7 +113,7 @@ async def list_contact_categories(
     maintenance_id: str,
     _user: Annotated[dict[str, Any], Depends(get_current_user)],
 ) -> list[dict[str, Any]]:
-    """獲取該歲修的所有通訊錄分類。"""
+    """獲取該歲修的所有通訊錄分類（階層式：parent -> children）。"""
     async with get_session_context() as session:
         stmt = (
             select(
@@ -130,18 +131,31 @@ async def list_contact_categories(
         result = await session.execute(stmt)
         rows = result.all()
 
-        return [
-            {
+        # 建立 flat list 和 parent-children 結構
+        flat: dict[int, dict] = {}
+        for cat, count in rows:
+            flat[cat.id] = {
                 "id": cat.id,
+                "parent_id": cat.parent_id,
                 "name": cat.name,
                 "description": cat.description,
                 "color": cat.color,
                 "icon": cat.icon,
                 "sort_order": cat.sort_order,
                 "contact_count": count,
+                "children": [],
             }
-            for cat, count in rows
-        ]
+
+        # 組裝階層：子分類掛到 parent.children
+        roots: list[dict] = []
+        for item in flat.values():
+            pid = item["parent_id"]
+            if pid and pid in flat:
+                flat[pid]["children"].append(item)
+            else:
+                roots.append(item)
+
+        return roots
 
 
 @router.post("/categories", response_model=ContactCategoryResponse)
@@ -175,6 +189,7 @@ async def create_contact_category(
 
         category = ContactCategory(
             maintenance_id=data.maintenance_id,
+            parent_id=data.parent_id,
             name=data.name,
             description=data.description,
             color=data.color,
@@ -193,12 +208,14 @@ async def create_contact_category(
 
         return {
             "id": category.id,
+            "parent_id": category.parent_id,
             "name": category.name,
             "description": category.description,
             "color": category.color,
             "icon": category.icon,
             "sort_order": category.sort_order,
             "contact_count": 0,
+            "children": [],
         }
 
 
@@ -220,6 +237,8 @@ async def update_contact_category(
         # 更新欄位
         if data.name is not None:
             category.name = data.name
+        if data.parent_id is not None:
+            category.parent_id = data.parent_id
         if data.description is not None:
             category.description = data.description
         if data.color is not None:
@@ -252,12 +271,14 @@ async def update_contact_category(
 
         return {
             "id": category.id,
+            "parent_id": category.parent_id,
             "name": category.name,
             "description": category.description,
             "color": category.color,
             "icon": category.icon,
             "sort_order": category.sort_order,
             "contact_count": contact_count,
+            "children": [],
         }
 
 
@@ -285,6 +306,14 @@ async def delete_contact_category(
             .values(category_id=None)
         )
         await session.execute(update_stmt)
+
+        # 子分類提升為根分類
+        child_stmt = (
+            update(ContactCategory)
+            .where(ContactCategory.parent_id == category_id)
+            .values(parent_id=None)
+        )
+        await session.execute(child_stmt)
 
         # 硬刪除分類（從資料庫中完全移除）
         await session.delete(category)
@@ -321,7 +350,15 @@ async def list_contacts(
         )
 
         if category_id:
-            stmt = stmt.where(Contact.category_id == category_id)
+            # 也包含子分類的聯絡人
+            child_stmt = select(ContactCategory.id).where(
+                ContactCategory.parent_id == category_id,
+                ContactCategory.is_active == True,
+            )
+            child_result = await session.execute(child_stmt)
+            child_ids = [r[0] for r in child_result.all()]
+            all_cat_ids = [category_id] + child_ids
+            stmt = stmt.where(Contact.category_id.in_(all_cat_ids))
 
         if search:
             search_pattern = f"%{search}%"
@@ -329,7 +366,6 @@ async def list_contacts(
                 (Contact.name.ilike(search_pattern))
                 | (Contact.phone.ilike(search_pattern))
                 | (Contact.mobile.ilike(search_pattern))
-                | (Contact.email.ilike(search_pattern))
                 | (Contact.department.ilike(search_pattern))
                 | (Contact.company.ilike(search_pattern))
             )
@@ -352,7 +388,6 @@ async def list_contacts(
                 "company": contact.company,
                 "phone": contact.phone,
                 "mobile": contact.mobile,
-                "email": contact.email,
                 "extension": contact.extension,
                 "notes": contact.notes,
             }
@@ -392,7 +427,6 @@ async def create_contact(
             company=data.company,
             phone=data.phone,
             mobile=data.mobile,
-            email=data.email,
             extension=data.extension,
             notes=data.notes,
         )
@@ -416,7 +450,6 @@ async def create_contact(
             "company": contact.company,
             "phone": contact.phone,
             "mobile": contact.mobile,
-            "email": contact.email,
             "extension": contact.extension,
             "notes": contact.notes,
         }
@@ -450,7 +483,6 @@ async def update_contact(
             "company",
             "phone",
             "mobile",
-            "email",
             "extension",
             "notes",
             "sort_order",
@@ -486,7 +518,6 @@ async def update_contact(
             "company": contact.company,
             "phone": contact.phone,
             "mobile": contact.mobile,
-            "email": contact.email,
             "extension": contact.extension,
             "notes": contact.notes,
         }
@@ -533,9 +564,10 @@ async def import_contacts_csv(
     批量匯入聯絡人。
 
     CSV 格式:
-    category_name,name,title,department,company,phone,mobile,email,extension,notes
+    category_name,sub_category_name,name,title,department,company,phone,mobile,extension,notes
 
-    會自動建立不存在的分類。
+    會自動建立不存在的分類和子分類。
+    若 sub_category_name 有值，聯絡人歸入子分類；否則歸入主分類。
     """
     DEFAULT_COLORS = [
         "#3B82F6",
@@ -555,52 +587,87 @@ async def import_contacts_csv(
 
         reader = csv.DictReader(io.StringIO(text))
 
-        # 獲取現有分類
+        # 獲取現有分類（含子分類）
         cat_stmt = select(ContactCategory).where(
             ContactCategory.maintenance_id == maintenance_id,
             ContactCategory.is_active == True,
         )
         cat_result = await session.execute(cat_stmt)
-        existing_categories = {c.name: c for c in cat_result.scalars().all()}
+        all_cats = cat_result.scalars().all()
+
+        # 建立 lookup: 根分類 name -> obj, (parent_id, name) -> obj
+        root_categories: dict[str, ContactCategory] = {}
+        sub_categories: dict[tuple[int, str], ContactCategory] = {}
+        for c in all_cats:
+            if c.parent_id is None:
+                root_categories[c.name] = c
+            else:
+                sub_categories[(c.parent_id, c.name)] = c
 
         categories_created = 0
         contacts_imported = 0
         errors = []
-        color_idx = len(existing_categories)
+        color_idx = len(all_cats)
 
         for row_num, row in enumerate(reader, start=2):
-            cat_name = row.get("category_name", "").strip() or "未分類"
+            cat_name = row.get("category_name", "").strip()
+            sub_cat_name = row.get("sub_category_name", "").strip()
             name = row.get("name", "").strip()
 
             if not name:
                 errors.append(f"Row {row_num}: 姓名為空")
                 continue
 
-            # 建立或獲取分類
-            if cat_name not in existing_categories:
-                category = ContactCategory(
-                    maintenance_id=maintenance_id,
-                    name=cat_name,
-                    color=DEFAULT_COLORS[color_idx % len(DEFAULT_COLORS)],
-                    sort_order=color_idx,
-                )
-                session.add(category)
-                await session.flush()
-                existing_categories[cat_name] = category
-                categories_created += 1
-                color_idx += 1
+            # 無分類名稱 → 未分類
+            if not cat_name:
+                target_cat_id = None
+            else:
+                # 建立或獲取主分類
+                if cat_name not in root_categories:
+                    parent_cat = ContactCategory(
+                        maintenance_id=maintenance_id,
+                        name=cat_name,
+                        color=DEFAULT_COLORS[color_idx % len(DEFAULT_COLORS)],
+                        sort_order=color_idx,
+                    )
+                    session.add(parent_cat)
+                    await session.flush()
+                    root_categories[cat_name] = parent_cat
+                    categories_created += 1
+                    color_idx += 1
+
+                parent_obj = root_categories[cat_name]
+
+                if sub_cat_name:
+                    # 建立或獲取子分類
+                    sub_key = (parent_obj.id, sub_cat_name)
+                    if sub_key not in sub_categories:
+                        sub_cat = ContactCategory(
+                            maintenance_id=maintenance_id,
+                            parent_id=parent_obj.id,
+                            name=sub_cat_name,
+                            color=parent_obj.color,
+                            sort_order=color_idx,
+                        )
+                        session.add(sub_cat)
+                        await session.flush()
+                        sub_categories[sub_key] = sub_cat
+                        categories_created += 1
+                        color_idx += 1
+                    target_cat_id = sub_categories[sub_key].id
+                else:
+                    target_cat_id = parent_obj.id
 
             # 新增聯絡人
             contact = Contact(
                 maintenance_id=maintenance_id,
-                category_id=existing_categories[cat_name].id,
+                category_id=target_cat_id,
                 name=name,
                 title=row.get("title", "").strip() or None,
                 department=row.get("department", "").strip() or None,
                 company=row.get("company", "").strip() or None,
                 phone=row.get("phone", "").strip() or None,
                 mobile=row.get("mobile", "").strip() or None,
-                email=row.get("email", "").strip() or None,
                 extension=row.get("extension", "").strip() or None,
                 notes=row.get("notes", "").strip() or None,
             )

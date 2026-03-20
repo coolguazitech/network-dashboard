@@ -378,3 +378,10 @@ def get_snmp_collection_service() -> SnmpCollectionService:
     if _service is None:
         _service = SnmpCollectionService()
     return _service
+
+
+def reset_snmp_collection_service() -> None:
+    """Discard singleton so next call creates a fresh engine."""
+    global _service
+    _service = None
+    logger.info("SNMP collection service singleton reset")

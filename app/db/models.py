@@ -722,6 +722,10 @@ class ClientCategoryMember(Base):
     category_id: Mapped[int] = mapped_column(
         ForeignKey("client_categories.id"), index=True,
     )
+    client_id: Mapped[int | None] = mapped_column(
+        ForeignKey("maintenance_mac_list.id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
     mac_address: Mapped[str] = mapped_column(String(17), index=True)
     description: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(
@@ -740,6 +744,10 @@ class ClientComparison(Base):
     )
     collected_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, index=True, server_default=func.now(),
+    )
+    client_id: Mapped[int | None] = mapped_column(
+        ForeignKey("maintenance_mac_list.id", ondelete="SET NULL"),
+        nullable=True, index=True,
     )
     mac_address: Mapped[str | None] = mapped_column(String(17), nullable=True, index=True)
 
@@ -781,6 +789,7 @@ class ClientRecord(Base):
     __tablename__ = "client_records"
     __table_args__ = (
         Index("ix_cr_mid_mac_ts", "maintenance_id", "mac_address", "collected_at"),
+        Index("ix_cr_mid_cid_ts", "maintenance_id", "client_id", "collected_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -789,6 +798,10 @@ class ClientRecord(Base):
     )
     collected_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, server_default=func.now(),
+    )
+    client_id: Mapped[int | None] = mapped_column(
+        ForeignKey("maintenance_mac_list.id", ondelete="SET NULL"),
+        nullable=True, index=True,
     )
     mac_address: Mapped[str | None] = mapped_column(String(17), nullable=True, index=True)
     ip_address: Mapped[str | None] = mapped_column(String(15), nullable=True, index=True)
@@ -811,9 +824,9 @@ class ClientRecord(Base):
 
 class LatestClientRecord(Base):
     """
-    Per-MAC 變化偵測指標（基準 + 變化點策略）。
+    Per-client 變化偵測指標（基準 + 變化點策略）。
 
-    與 LatestCollectionBatch 相同模式，但以 (maintenance_id, mac_address) 為 key。
+    與 LatestCollectionBatch 相同模式，但以 (maintenance_id, client_id) 為 key。
     每次 ClientCollectionService 組裝 ClientRecord 時，比對 data_hash：
     - hash 相同 → 只更新 last_checked_at，不寫新 ClientRecord
     - hash 不同 → 寫新 ClientRecord，更新 data_hash
@@ -822,20 +835,24 @@ class LatestClientRecord(Base):
     __tablename__ = "latest_client_records"
     __table_args__ = (
         UniqueConstraint(
-            "maintenance_id", "mac_address",
+            "maintenance_id", "client_id",
             name="uk_latest_client_record",
         ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    client_id: Mapped[int] = mapped_column(
+        ForeignKey("maintenance_mac_list.id", ondelete="CASCADE"),
+        index=True,
+    )
     mac_address: Mapped[str] = mapped_column(String(17))
     data_hash: Mapped[str] = mapped_column(String(16))
     collected_at: Mapped[datetime] = mapped_column(DateTime)
     last_checked_at: Mapped[datetime] = mapped_column(DateTime)
 
     def __repr__(self) -> str:
-        return f"<LatestClientRecord {self.maintenance_id}:{self.mac_address}>"
+        return f"<LatestClientRecord {self.maintenance_id}:{self.client_id}>"
 
 
 class SeverityOverride(Base):
@@ -845,6 +862,10 @@ class SeverityOverride(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(String(50), index=True)
+    client_id: Mapped[int | None] = mapped_column(
+        ForeignKey("maintenance_mac_list.id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
     mac_address: Mapped[str] = mapped_column(String(20), index=True)
     override_severity: Mapped[str] = mapped_column(String(20))
     original_severity: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -864,6 +885,9 @@ class ContactCategory(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contact_categories.id"), nullable=True, index=True,
+    )
     name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     color: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -887,12 +911,11 @@ class Contact(Base):
         ForeignKey("contact_categories.id"), nullable=True, index=True,
     )
     name: Mapped[str] = mapped_column(String(100))
-    title: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(115), nullable=True)
     department: Mapped[str | None] = mapped_column(String(100), nullable=True)
     company: Mapped[str | None] = mapped_column(String(100), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     mobile: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     extension: Mapped[str | None] = mapped_column(String(20), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
@@ -929,19 +952,23 @@ class MaintenanceMacList(Base):
 
 
 class Case(Base):
-    """案件（每個 MAC 一個案件）。"""
+    """案件（每個 Client 一個案件）。"""
 
     __tablename__ = "cases"
     __table_args__ = (
         UniqueConstraint(
-            "maintenance_id", "mac_address",
-            name="uk_case_maintenance_mac",
+            "maintenance_id", "client_id",
+            name="uk_case_maintenance_client",
         ),
         Index("ix_cases_mid_status_ping", "maintenance_id", "status", "last_ping_reachable"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    client_id: Mapped[int] = mapped_column(
+        ForeignKey("maintenance_mac_list.id", ondelete="CASCADE"),
+        index=True,
+    )
     mac_address: Mapped[str] = mapped_column(String(17), index=True)
 
     # 狀態與指派
@@ -1020,6 +1047,10 @@ class ReferenceClient(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
+    client_id: Mapped[int | None] = mapped_column(
+        ForeignKey("maintenance_mac_list.id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
     mac_address: Mapped[str] = mapped_column(String(17), index=True)
     description: Mapped[str | None] = mapped_column(String(200), nullable=True)
     location: Mapped[str | None] = mapped_column(String(200), nullable=True)

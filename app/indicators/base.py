@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import MaintenanceDeviceList
+from app.db.models import LatestCollectionBatch, MaintenanceDeviceList
 
 
 
@@ -111,6 +111,20 @@ class BaseIndicator(ABC):
         )
         result = await session.execute(stmt)
         return [row[0] for row in result.all()]
+
+    @staticmethod
+    async def _get_collected_devices(
+        session: AsyncSession,
+        maintenance_id: str,
+        collection_type: str,
+    ) -> set[str]:
+        """查詢已有採集 batch 的設備集合（用於區分「無資料」vs「未採集」）。"""
+        stmt = select(LatestCollectionBatch.switch_hostname).where(
+            LatestCollectionBatch.maintenance_id == maintenance_id,
+            LatestCollectionBatch.collection_type == collection_type,
+        )
+        result = await session.execute(stmt)
+        return {row[0] for row in result.all()}
 
     @abstractmethod
     async def evaluate(

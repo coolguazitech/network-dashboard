@@ -68,42 +68,85 @@
               <span class="text-xs text-slate-500">{{ totalContactCount }}</span>
             </div>
 
-            <!-- 分類項目 -->
-            <div
-              v-for="category in categories"
-              :key="category.id"
-              @click="selectedCategoryId = category.id"
-              :class="[
-                'flex items-center px-3 py-2 cursor-pointer text-sm transition group',
-                selectedCategoryId === category.id
-                  ? 'bg-cyan-500/10 text-cyan-300 border-l-2 border-cyan-400'
-                  : 'text-slate-300 hover:bg-slate-700/50 border-l-2 border-transparent'
-              ]"
-            >
-              <span
-                class="w-2 h-2 rounded-full mr-2 flex-shrink-0"
-                :style="{ backgroundColor: category.color || '#22d3ee' }"
-              ></span>
-              <span class="flex-1 truncate">{{ category.name }}</span>
-              <span class="text-xs text-slate-500 mr-1">{{ getCategoryCount(category.id) }}</span>
-              <!-- Hover 操作 -->
-              <div v-if="userCanWrite" class="hidden group-hover:flex gap-2">
-                <button
-                  @click.stop="openCategoryModal(category)"
-                  class="text-slate-400 hover:text-cyan-400 text-base leading-none"
-                  title="編輯"
-                >
-                  ✎
-                </button>
-                <button
-                  @click.stop="deleteCategory(category)"
-                  class="text-slate-400 hover:text-red-400 text-base leading-none"
-                  title="刪除"
-                >
-                  ×
-                </button>
+            <!-- 分類項目（階層式） -->
+            <template v-for="category in categories" :key="category.id">
+              <!-- 父分類 -->
+              <div
+                @click="selectedCategoryId = category.id"
+                :class="[
+                  'flex items-center px-3 py-2 cursor-pointer text-sm transition group',
+                  selectedCategoryId === category.id
+                    ? 'bg-cyan-500/10 text-cyan-300 border-l-2 border-cyan-400'
+                    : 'text-slate-300 hover:bg-slate-700/50 border-l-2 border-transparent'
+                ]"
+              >
+                <span
+                  class="w-2 h-2 rounded-full mr-2 flex-shrink-0"
+                  :style="{ backgroundColor: category.color || '#22d3ee' }"
+                ></span>
+                <span class="flex-1 truncate">{{ category.name }}</span>
+                <span class="text-xs text-slate-500 mr-1">{{ getCategoryCount(category.id) }}</span>
+                <!-- Hover 操作 -->
+                <div v-if="userCanWrite" class="hidden group-hover:flex gap-2">
+                  <button
+                    @click.stop="openCategoryModal(category)"
+                    class="text-slate-400 hover:text-cyan-400 text-base leading-none"
+                    title="編輯"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    @click.stop="openSubCategoryModal(category)"
+                    class="text-slate-400 hover:text-cyan-400 text-base leading-none"
+                    title="新增子分類"
+                  >
+                    +
+                  </button>
+                  <button
+                    @click.stop="deleteCategory(category)"
+                    class="text-slate-400 hover:text-red-400 text-base leading-none"
+                    title="刪除"
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
-            </div>
+              <!-- 子分類 -->
+              <div
+                v-for="child in (category.children || [])"
+                :key="child.id"
+                @click="selectedCategoryId = child.id"
+                :class="[
+                  'flex items-center pl-7 pr-3 py-1.5 cursor-pointer text-xs transition group',
+                  selectedCategoryId === child.id
+                    ? 'bg-cyan-500/10 text-cyan-300 border-l-2 border-cyan-400'
+                    : 'text-slate-400 hover:bg-slate-700/50 border-l-2 border-transparent'
+                ]"
+              >
+                <span
+                  class="w-1.5 h-1.5 rounded-full mr-2 flex-shrink-0"
+                  :style="{ backgroundColor: child.color || category.color || '#22d3ee' }"
+                ></span>
+                <span class="flex-1 truncate">{{ child.name }}</span>
+                <span class="text-xs text-slate-500 mr-1">{{ getCategoryCount(child.id) }}</span>
+                <div v-if="userCanWrite" class="hidden group-hover:flex gap-2">
+                  <button
+                    @click.stop="openCategoryModal(child)"
+                    class="text-slate-400 hover:text-cyan-400 text-base leading-none"
+                    title="編輯"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    @click.stop="deleteCategory(child)"
+                    class="text-slate-400 hover:text-red-400 text-base leading-none"
+                    title="刪除"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            </template>
 
             <!-- 未分類（永遠顯示） -->
             <div
@@ -129,7 +172,7 @@
           <input
             v-model="searchQuery"
             type="text"
-            placeholder="搜尋姓名、角色、電話、Email..."
+            placeholder="搜尋姓名、角色、電話、手機..."
             class="w-full px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
           />
         </div>
@@ -146,9 +189,12 @@
               class="px-2 py-1 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
             >
               <option :value="null">未分類</option>
-              <option v-for="cat in categories" :key="cat.id" :value="cat.id">
-                {{ cat.name }}
-              </option>
+              <template v-for="cat in categories" :key="cat.id">
+                <option :value="cat.id">{{ cat.name }}</option>
+                <option v-for="child in (cat.children || [])" :key="child.id" :value="child.id">
+                  &nbsp;&nbsp;└ {{ child.name }}
+                </option>
+              </template>
             </select>
             <button
               @click="bulkChangeCategory"
@@ -193,13 +239,12 @@
                 class="w-4 h-4 rounded border-slate-500 bg-slate-700 text-cyan-500 focus:ring-cyan-500"
               />
             </div>
-            <div :class="userCanWrite ? 'col-span-1' : 'col-span-2'">姓名</div>
-            <div class="col-span-1">分類</div>
-            <div class="col-span-1">角色</div>
+            <div :class="userCanWrite ? 'col-span-2' : 'col-span-2'">姓名</div>
+            <div class="col-span-2">分類</div>
+            <div class="col-span-2">角色</div>
             <div class="col-span-1">公司</div>
             <div class="col-span-1">電話</div>
-            <div class="col-span-2">手機</div>
-            <div :class="userCanWrite ? 'col-span-3' : 'col-span-4'">Email</div>
+            <div :class="userCanWrite ? 'col-span-2' : 'col-span-3'">手機</div>
             <div v-if="userCanWrite" class="col-span-1"></div>
           </div>
 
@@ -219,13 +264,12 @@
                   class="w-4 h-4 rounded border-slate-500 bg-slate-700 text-cyan-500 focus:ring-cyan-500"
                 />
               </div>
-              <div :class="userCanWrite ? 'col-span-1' : 'col-span-2'" class="text-white font-medium truncate">{{ contact.name }}</div>
-              <div class="col-span-1 text-slate-500 text-xs truncate">{{ contact.category_name || '-' }}</div>
-              <div class="col-span-1 text-slate-400 truncate">{{ contact.title || '-' }}</div>
+              <div :class="userCanWrite ? 'col-span-2' : 'col-span-2'" class="text-white font-medium truncate">{{ contact.name }}</div>
+              <div class="col-span-2 text-slate-500 text-xs truncate" :title="getCategoryPath(contact.category_id)">{{ getCategoryPath(contact.category_id) || '-' }}</div>
+              <div class="col-span-2 text-slate-400 truncate">{{ contact.title || '-' }}</div>
               <div class="col-span-1 text-slate-400 truncate">{{ contact.company || '-' }}</div>
               <div class="col-span-1 text-cyan-400 truncate">{{ contact.phone || '-' }}</div>
-              <div class="col-span-2 text-cyan-400">{{ contact.mobile || '-' }}</div>
-              <div :class="userCanWrite ? 'col-span-3' : 'col-span-4'" class="text-cyan-400 truncate" :title="contact.email">{{ contact.email || '-' }}</div>
+              <div :class="userCanWrite ? 'col-span-2' : 'col-span-3'" class="text-cyan-400">{{ contact.mobile || '-' }}</div>
               <div v-if="userCanWrite" class="col-span-1 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition">
                 <button
                   @click="openContactModal(contact)"
@@ -293,9 +337,12 @@
                 class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
               >
                 <option :value="null">未分類</option>
-                <option v-for="cat in categories" :key="cat.id" :value="cat.id">
-                  {{ cat.name }}
-                </option>
+                <template v-for="cat in categories" :key="cat.id">
+                  <option :value="cat.id">{{ cat.name }}</option>
+                  <option v-for="child in (cat.children || [])" :key="child.id" :value="child.id">
+                    &nbsp;&nbsp;└ {{ child.name }}
+                  </option>
+                </template>
               </select>
             </div>
           </div>
@@ -313,19 +360,31 @@
 
           <div class="grid grid-cols-2 gap-3">
             <div>
+              <label class="block text-xs text-slate-400 mb-1">部門</label>
+              <input v-model="contactForm.department" type="text" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+            </div>
+            <div>
               <label class="block text-xs text-slate-400 mb-1">電話</label>
               <input v-model="contactForm.phone" type="tel" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
             </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs text-slate-400 mb-1">手機</label>
               <input v-model="contactForm.mobile" type="tel" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
             </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">分機</label>
+              <input v-model="contactForm.extension" type="text" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+            </div>
           </div>
 
           <div>
-            <label class="block text-xs text-slate-400 mb-1">Email</label>
-            <input v-model="contactForm.email" type="email" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+            <label class="block text-xs text-slate-400 mb-1">備註</label>
+            <textarea v-model="contactForm.notes" rows="2" class="w-full px-3 py-2 bg-slate-700 border border-slate-600/40 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400 resize-none"></textarea>
           </div>
+
         </div>
 
         <div class="flex justify-end gap-2 mt-4">
@@ -350,14 +409,17 @@
       <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-5 w-96 max-w-full modal-content">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-bold text-white">
-            {{ editingCategory ? '編輯分類' : '新增分類' }}
+            {{ editingCategory ? '編輯分類' : (categoryForm.parent_id ? '新增子分類' : '新增分類') }}
           </h3>
           <button @click="showCategoryModal = false" class="text-slate-400 hover:text-white text-xl">&times;</button>
         </div>
 
         <div class="space-y-3">
+          <div v-if="categoryForm.parent_id && !editingCategory" class="text-xs text-slate-400">
+            父分類：<span class="text-cyan-400">{{ categories.find(c => c.id === categoryForm.parent_id)?.name }}</span>
+          </div>
           <div>
-            <label class="block text-xs text-slate-400 mb-1">分類名稱 *</label>
+            <label class="block text-xs text-slate-400 mb-1">{{ categoryForm.parent_id ? '子分類名稱' : '分類名稱' }} *</label>
             <input
               v-model="categoryForm.name"
               type="text"
@@ -452,9 +514,10 @@
         <div class="bg-slate-700/50 rounded-lg p-3 mb-4 text-sm">
           <p class="text-slate-300 mb-2">CSV 格式說明：</p>
           <code class="block bg-slate-900 p-2 rounded-lg text-xs text-cyan-300 overflow-x-auto">
-            category_name,name,title,department,company,phone,mobile,email,extension,notes
+            category_name,sub_category_name,name,title,department,company,phone,mobile,extension,notes
           </code>
-          <p class="text-slate-400 text-xs mt-2">* category_name 欄位會自動建立對應分類</p>
+          <p class="text-slate-400 text-xs mt-2">* category_name / sub_category_name 欄位會自動建立對應分類與子分類</p>
+          <p class="text-slate-400 text-xs">* sub_category_name 可留空，聯絡人將歸入主分類</p>
         </div>
 
         <div class="mb-4">
@@ -528,13 +591,13 @@ const contactForm = ref({
   company: '',
   phone: '',
   mobile: '',
-  email: '',
   category_id: null,
 })
 
 const categoryForm = ref({
   name: '',
   color: '#22d3ee',
+  parent_id: null,
 })
 
 const colorOptions = ['#22d3ee', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6']
@@ -546,7 +609,24 @@ const uncategorizedCount = computed(() => {
   return contacts.value.filter(c => !c.category_id).length
 })
 
+const getCategoryPath = (categoryId) => {
+  if (!categoryId) return ''
+  for (const cat of categories.value) {
+    if (cat.id === categoryId) return cat.name
+    for (const child of (cat.children || [])) {
+      if (child.id === categoryId) return `${cat.name} > ${child.name}`
+    }
+  }
+  return ''
+}
+
 const getCategoryCount = (categoryId) => {
+  // 對父分類：計算本身 + 所有子分類的聯絡人數
+  const cat = categories.value.find(c => c.id === categoryId)
+  if (cat && cat.children && cat.children.length > 0) {
+    const childIds = cat.children.map(c => c.id)
+    return contacts.value.filter(c => c.category_id === categoryId || childIds.includes(c.category_id)).length
+  }
   return contacts.value.filter(c => c.category_id === categoryId).length
 }
 
@@ -557,7 +637,14 @@ const filteredContacts = computed(() => {
   if (selectedCategoryId.value === 'uncategorized') {
     result = result.filter(c => !c.category_id)
   } else if (selectedCategoryId.value) {
-    result = result.filter(c => c.category_id === selectedCategoryId.value)
+    // 如果選的是父分類，也包含其子分類的聯絡人
+    const cat = categories.value.find(c => c.id === selectedCategoryId.value)
+    if (cat && cat.children && cat.children.length > 0) {
+      const allIds = [selectedCategoryId.value, ...cat.children.map(c => c.id)]
+      result = result.filter(c => allIds.includes(c.category_id))
+    } else {
+      result = result.filter(c => c.category_id === selectedCategoryId.value)
+    }
   }
 
   // Filter by search query
@@ -568,7 +655,6 @@ const filteredContacts = computed(() => {
       c.title?.toLowerCase().includes(query) ||
       c.phone?.toLowerCase().includes(query) ||
       c.mobile?.toLowerCase().includes(query) ||
-      c.email?.toLowerCase().includes(query) ||
       c.company?.toLowerCase().includes(query)
     )
   }
@@ -640,9 +726,16 @@ const bulkDelete = async () => {
 const bulkChangeCategory = async () => {
   if (!selectedContacts.value.length || bulkTargetCategory.value === undefined) return
 
-  const targetName = bulkTargetCategory.value === null
-    ? '未分類'
-    : categories.value.find(c => c.id === bulkTargetCategory.value)?.name || '未分類'
+  const findCatName = (id) => {
+    for (const cat of categories.value) {
+      if (cat.id === id) return cat.name
+      for (const child of (cat.children || [])) {
+        if (child.id === id) return `${cat.name} > ${child.name}`
+      }
+    }
+    return '未分類'
+  }
+  const targetName = bulkTargetCategory.value === null ? '未分類' : findCatName(bulkTargetCategory.value)
 
   if (!confirm(`確定要將選中的 ${selectedContacts.value.length} 筆聯絡人移至「${targetName}」嗎？`)) {
     return
@@ -705,9 +798,9 @@ const fetchContacts = async () => {
 const openCategoryModal = (category) => {
   editingCategory.value = category
   if (category) {
-    categoryForm.value = { ...category }
+    categoryForm.value = { name: category.name, color: category.color || '#22d3ee', parent_id: category.parent_id || null }
   } else {
-    categoryForm.value = { name: '', color: '#22d3ee' }
+    categoryForm.value = { name: '', color: '#22d3ee', parent_id: null }
   }
   showCategoryModal.value = true
 }
@@ -717,11 +810,16 @@ const saveCategory = async () => {
 
   saving.value = true
   try {
+    const payload = {
+      name: categoryForm.value.name,
+      color: categoryForm.value.color,
+    }
     if (editingCategory.value) {
-      await api.put(`/contacts/categories/${editingCategory.value.id}`, categoryForm.value)
+      await api.put(`/contacts/categories/${editingCategory.value.id}`, payload)
     } else {
       await api.post('/contacts/categories', {
-        ...categoryForm.value,
+        ...payload,
+        parent_id: categoryForm.value.parent_id || null,
         maintenance_id: maintenanceId.value,
       })
     }
@@ -746,6 +844,13 @@ const deleteCategory = (category) => {
   showDeleteModal.value = true
 }
 
+// 新增子分類
+const openSubCategoryModal = (parentCategory) => {
+  editingCategory.value = null
+  categoryForm.value = { name: '', color: parentCategory.color || '#22d3ee', parent_id: parentCategory.id }
+  showCategoryModal.value = true
+}
+
 // Contact operations
 const openContactModal = (contact) => {
   editingContact.value = contact
@@ -755,10 +860,12 @@ const openContactModal = (contact) => {
     contactForm.value = {
       name: '',
       title: '',
+      department: '',
       company: '',
       phone: '',
       mobile: '',
-      email: '',
+      extension: '',
+      notes: '',
       category_id: selectedCategoryId.value === 'uncategorized' ? null : selectedCategoryId.value,
     }
   }
@@ -775,7 +882,7 @@ const saveContact = async () => {
     return
   }
 
-  const editableFields = ['name', 'title', 'department', 'company', 'phone', 'mobile', 'email', 'extension', 'notes', 'category_id']
+  const editableFields = ['name', 'title', 'department', 'company', 'phone', 'mobile', 'extension', 'notes', 'category_id']
   const payload = {}
   for (const key of editableFields) {
     if (key in contactForm.value) payload[key] = contactForm.value[key]
@@ -860,7 +967,7 @@ const importCSV = async () => {
 }
 
 const downloadTemplate = () => {
-  const csv = 'category_name,name,title,department,company,phone,mobile,email,extension,notes\n技術團隊,張三,PM,IT部門,A公司,02-12345678,0912345678,zhangsan@example.com,1234,備註'
+  const csv = 'category_name,sub_category_name,name,title,department,company,phone,mobile,extension,notes\n技術團隊,,張三,PM,IT部門,A公司,02-12345678,0912345678,1234,備註\n技術團隊,網路組,李四,工程師,A公司,02-12345679,0923456789,5678,備註'
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)
@@ -878,7 +985,7 @@ const exportCSV = () => {
   }
 
   // CSV 標題列
-  const headers = ['分類', '姓名', '角色', '公司', '電話', '手機', 'Email']
+  const headers = ['分類', '子分類', '姓名', '角色', '部門', '公司', '電話', '手機', '分機', '備註']
 
   // 轉換資料為 CSV 格式
   const escapeCSV = (val) => {
@@ -890,15 +997,30 @@ const exportCSV = () => {
     return str
   }
 
-  const rows = data.map(c => [
-    escapeCSV(c.category_name || '未分類'),
-    escapeCSV(c.name),
-    escapeCSV(c.title),
-    escapeCSV(c.company),
-    escapeCSV(c.phone),
-    escapeCSV(c.mobile),
-    escapeCSV(c.email)
-  ].join(','))
+  // 建立 category_id -> { parentName, childName } 的映射
+  const catPathMap = {}
+  for (const cat of categories.value) {
+    catPathMap[cat.id] = { parent: cat.name, child: '' }
+    for (const child of (cat.children || [])) {
+      catPathMap[child.id] = { parent: cat.name, child: child.name }
+    }
+  }
+
+  const rows = data.map(c => {
+    const path = catPathMap[c.category_id] || { parent: '未分類', child: '' }
+    return [
+      escapeCSV(path.parent),
+      escapeCSV(path.child),
+      escapeCSV(c.name),
+      escapeCSV(c.title),
+      escapeCSV(c.department),
+      escapeCSV(c.company),
+      escapeCSV(c.phone),
+      escapeCSV(c.mobile),
+      escapeCSV(c.extension),
+      escapeCSV(c.notes)
+    ].join(',')
+  })
 
   const csv = [headers.join(','), ...rows].join('\n')
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })

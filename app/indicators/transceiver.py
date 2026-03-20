@@ -92,6 +92,11 @@ class TransceiverIndicator(BaseIndicator):
         repo = TransceiverRecordRepo(session)
         all_records = await repo.get_latest_per_device(maintenance_id)
 
+        # 查詢哪些設備已有採集 batch（區分「無資料」vs「未採集」）
+        collected_devices = await self._get_collected_devices(
+            session, maintenance_id, "get_transceiver",
+        )
+
         # 只保留設備清單中的設備紀錄，並排除管理介面（無 GBIC）
         active_set = set(device_hostnames)
         records = [
@@ -114,7 +119,15 @@ class TransceiverIndicator(BaseIndicator):
             dev_records = device_records.get(hostname, [])
 
             if not dev_records:
-                # 無光模塊記錄 → 設備正常（無光口或 collector 無資料）
+                if hostname not in collected_devices:
+                    # 從未採集到資料 → 失敗
+                    failures.append({
+                        "device": hostname,
+                        "reason": "未採集到資料",
+                        "data": {},
+                    })
+                    continue
+                # 有 batch 但無光模塊記錄 → 設備正常（無光口）
                 pass_count += 1
                 if len(passes) < 10:
                     passes.append({
@@ -133,25 +146,24 @@ class TransceiverIndicator(BaseIndicator):
 
             if failing_ifaces:
                 # 設備有異常介面 → 失敗
-                if len(failures) < 10:
-                    iface_detail = "; ".join(
-                        f"{f['interface']}: {f['reason']}"
-                        for f in failing_ifaces[:5]
-                    )
-                    if len(failing_ifaces) > 5:
-                        iface_detail += f" ...等{len(failing_ifaces)}介面"
-                    show_limit = 5
-                    iface_names = ", ".join(
-                        f["interface"] for f in failing_ifaces[:show_limit]
-                    )
-                    if len(failing_ifaces) > show_limit:
-                        iface_names += f" ...等{len(failing_ifaces)}介面"
-                    failures.append({
-                        "device": hostname,
-                        "interface": iface_names,
-                        "reason": iface_detail,
-                        "data": {
-                            "failing_interfaces": failing_ifaces,
+                iface_detail = "; ".join(
+                    f"{f['interface']}: {f['reason']}"
+                    for f in failing_ifaces[:5]
+                )
+                if len(failing_ifaces) > 5:
+                    iface_detail += f" ...等{len(failing_ifaces)}介面"
+                show_limit = 5
+                iface_names = ", ".join(
+                    f["interface"] for f in failing_ifaces[:show_limit]
+                )
+                if len(failing_ifaces) > show_limit:
+                    iface_names += f" ...等{len(failing_ifaces)}介面"
+                failures.append({
+                    "device": hostname,
+                    "interface": iface_names,
+                    "reason": iface_detail,
+                    "data": {
+                        "failing_interfaces": failing_ifaces,
                         },
                     })
             else:

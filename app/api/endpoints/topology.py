@@ -23,6 +23,7 @@ from app.db.models import (
 )
 from app.core.interfaces import is_topology_management_link
 from app.repositories.typed_records import get_typed_repo
+from app.services.indicator_service import IndicatorService
 
 router = APIRouter(tags=["topology"])
 
@@ -37,6 +38,7 @@ class TopologyNode(BaseModel):
     vendor: str | None = None
     in_device_list: bool
     level: int          # BFS 階層 (0=Core, 1=Agg, 2=Edge, ...)
+    indicator_failures: list[str] | None = None  # 驗收失敗的指標名稱列表
 
 
 class TopologyLink(BaseModel):
@@ -277,7 +279,33 @@ async def get_topology(
                 ))
                 stats["expected_fail"] += 1
 
-    # ── 7. 建構節點列表 + BFS 階層 ──
+    # ── 7. 載入指標驗收失敗資料 ──
+    device_failures: dict[str, list[str]] = defaultdict(list)
+    try:
+        indicator_svc = IndicatorService()
+        results = await indicator_svc.evaluate_all(maintenance_id, session)
+        _INDICATOR_LABELS = {
+            "transceiver": "光模塊",
+            "version": "版本",
+            "uplink": "Uplink",
+            "port_channel": "Port Channel",
+            "power": "電源",
+            "fan": "風扇",
+            "error_count": "錯誤計數",
+            "ping": "Ping",
+        }
+        for ind_name, result in results.items():
+            for f in (result.failures or []):
+                device = f.get("device", "")
+                if device:
+                    label = _INDICATOR_LABELS.get(ind_name, ind_name)
+                    reason = f.get("reason", "")
+                    short = f"{label}: {reason}" if reason else label
+                    device_failures[device].append(short)
+    except Exception:
+        pass  # topology 不因 indicator 失敗而中斷
+
+    # ── 8. 建構節點列表 + BFS 階層 ──
     all_hostnames: set[str] = set(device_map.keys())
     for lnk in links:
         all_hostnames.add(lnk.source)
@@ -302,6 +330,7 @@ async def get_topology(
     for hostname in sorted(all_hostnames):
         in_list = hostname in device_map
         dev = device_map.get(hostname)
+        failures = device_failures.get(hostname)
         nodes.append(TopologyNode(
             name=hostname,
             category=0 if in_list else 1,
@@ -310,6 +339,7 @@ async def get_topology(
             vendor=dev.new_vendor if dev else None,
             in_device_list=in_list,
             level=hierarchy.get(hostname, 0),
+            indicator_failures=failures if failures else None,
         ))
 
     categories = [

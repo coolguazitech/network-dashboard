@@ -202,7 +202,7 @@ class Settings(BaseSettings):
     )
     snmp_port: int = Field(default=161, description="SNMP target port")
     snmp_timeout: float = Field(
-        default=5.0, description="SNMP PDU timeout in seconds",
+        default=10.0, description="SNMP PDU timeout in seconds",
     )
     snmp_retries: int = Field(
         default=2, description="SNMP PDU retry count (pysnmp transport layer)",

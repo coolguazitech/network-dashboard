@@ -14,6 +14,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, File, Q
 from pydantic import BaseModel
 
 from app.api.endpoints.auth import get_current_user, require_write
+import sqlalchemy as sa
 from sqlalchemy import case, select, func, delete
 
 from app.core.enums import ClientDetectionStatus, TenantGroup
@@ -21,7 +22,7 @@ from app.db.base import get_session_context
 from app.core.enums import UserRole
 from app.db.models import (
     MaintenanceMacList, ClientCategoryMember, ClientCategory, User,
-    PingRecord, LatestCollectionBatch, Case,
+    PingRecord, LatestCollectionBatch, Case, ClientRecord, ClientComparison,
     SeverityOverride, ReferenceClient, LatestClientRecord,
 )
 from app.services.client_comparison_service import ClientComparisonService
@@ -361,7 +362,7 @@ async def get_stats(
         not_detected = status_counts.get(ClientDetectionStatus.NOT_DETECTED, 0)
         not_checked = status_counts.get(ClientDetectionStatus.NOT_CHECKED, 0)
 
-        # 已分類數量：用子查詢避免載入所有 MAC
+        # 已分類數量：用子查詢避免載入所有 Client
         active_cats = (
             select(ClientCategory.id)
             .where(
@@ -370,16 +371,16 @@ async def get_stats(
             )
             .subquery()
         )
-        mac_subq = (
-            select(MaintenanceMacList.mac_address)
+        client_subq = (
+            select(MaintenanceMacList.id)
             .where(MaintenanceMacList.maintenance_id == maintenance_id)
             .subquery()
         )
         cat_count_stmt = (
-            select(func.count(func.distinct(ClientCategoryMember.mac_address)))
+            select(func.count(func.distinct(ClientCategoryMember.client_id)))
             .where(
                 ClientCategoryMember.category_id.in_(select(active_cats.c.id)),
-                ClientCategoryMember.mac_address.in_(select(mac_subq.c.mac_address)),
+                ClientCategoryMember.client_id.in_(select(client_subq.c.id)),
             )
         )
         cat_result = await session.execute(cat_count_stmt)
@@ -432,10 +433,14 @@ async def get_or_create_category(
 
 
 async def add_mac_to_category(
-    session, mac_address: str, category_id: int
+    session, mac_address: str, category_id: int,
+    client_id: int | None = None,
 ) -> None:
-    """將 MAC 加入分類（如果不存在的話）。"""
+    """將 Client 加入分類（如果不存在的話）。"""
     existing_stmt = select(ClientCategoryMember).where(
+        ClientCategoryMember.category_id == category_id,
+        ClientCategoryMember.client_id == client_id,
+    ) if client_id else select(ClientCategoryMember).where(
         ClientCategoryMember.category_id == category_id,
         ClientCategoryMember.mac_address == mac_address,
     )
@@ -444,6 +449,7 @@ async def add_mac_to_category(
         member = ClientCategoryMember(
             category_id=category_id,
             mac_address=mac_address,
+            client_id=client_id,
         )
         session.add(member)
 
@@ -459,18 +465,6 @@ async def add_client(
     ip = validate_ip(data.ip_address)
 
     async with get_session_context() as session:
-        # 檢查 MAC 是否已存在
-        existing_stmt = select(MaintenanceMacList).where(
-            MaintenanceMacList.maintenance_id == maintenance_id,
-            MaintenanceMacList.mac_address == mac,
-        )
-        existing = await session.execute(existing_stmt)
-        if existing.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400,
-                detail=f"MAC {mac} 已存在於此歲修清單中"
-            )
-
         # 解析 default_assignee
         assignee = await resolve_default_assignee(
             session, data.default_assignee,
@@ -509,10 +503,11 @@ async def add_client(
                     detail=f"分類 ID {list(invalid_ids)} 不存在或不屬於此歲修"
                 )
 
-            # 將 MAC 加入所有指定的分類
+            # 將 Client 加入所有指定的分類
+            await session.flush()  # 確保 entry.id 已生成
             for cat_id in data.category_ids:
                 cat = valid_categories[cat_id]
-                await add_mac_to_category(session, mac, cat_id)
+                await add_mac_to_category(session, mac, cat_id, client_id=entry.id)
                 category_ids.append(cat_id)
                 category_names.append(cat.name)
 
@@ -577,21 +572,7 @@ async def update_client(
         # 驗證並更新 MAC（若提供）
         if data.mac_address is not None:
             new_mac = validate_mac(data.mac_address)
-
-            # 檢查 MAC 唯一性（若變更了 MAC）
-            if new_mac != entry.mac_address:
-                existing_stmt = select(MaintenanceMacList).where(
-                    MaintenanceMacList.maintenance_id == maintenance_id,
-                    MaintenanceMacList.mac_address == new_mac,
-                    MaintenanceMacList.id != client_id,  # 排除自己
-                )
-                existing = await session.execute(existing_stmt)
-                if existing.scalar_one_or_none():
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"MAC {new_mac} 已存在於此歲修清單中"
-                    )
-                entry.mac_address = new_mac
+            entry.mac_address = new_mac
 
         # 驗證並更新 IP（若提供）
         if data.ip_address is not None:
@@ -641,45 +622,40 @@ async def update_client(
         }
 
 
-@router.delete("/{maintenance_id}/{mac_address}")
-async def remove_mac(
+@router.delete("/{maintenance_id}/by-id/{client_id}")
+async def remove_client(
     maintenance_id: str,
-    mac_address: str,
+    client_id: int,
     _user: Annotated[dict[str, Any], Depends(require_write())],
 ) -> dict[str, str]:
-    """移除單一 MAC（同時從所有分類中移除）。"""
-    mac = normalize_mac(mac_address)
-
+    """移除單一 Client（同時從所有分類中移除）。"""
     async with get_session_context() as session:
         stmt = select(MaintenanceMacList).where(
             MaintenanceMacList.maintenance_id == maintenance_id,
-            MaintenanceMacList.mac_address == mac,
+            MaintenanceMacList.id == client_id,
         )
         result = await session.execute(stmt)
         entry = result.scalar_one_or_none()
 
         if not entry:
-            raise HTTPException(status_code=404, detail="MAC 不存在")
+            raise HTTPException(status_code=404, detail="Client 不存在")
 
-        # 先從所有分類中移除此 MAC
-        cat_stmt = select(ClientCategory.id).where(
-            ClientCategory.maintenance_id == maintenance_id,
-            ClientCategory.is_active == True,  # noqa: E712
+        mac = entry.mac_address
+
+        # 刪除分類成員（by client_id）
+        del_member_stmt = delete(ClientCategoryMember).where(
+            ClientCategoryMember.client_id == client_id,
         )
-        cat_result = await session.execute(cat_stmt)
-        cat_ids = [r[0] for r in cat_result.fetchall()]
-
-        if cat_ids:
-            del_member_stmt = delete(ClientCategoryMember).where(
-                ClientCategoryMember.category_id.in_(cat_ids),
-                ClientCategoryMember.mac_address == mac,
-            )
-            await session.execute(del_member_stmt)
+        await session.execute(del_member_stmt)
 
         # 刪除對應的 Case（CaseNote 有 CASCADE 自動刪除）
+        # 同時用 client_id 和 mac_address 確保覆蓋新舊資料
         del_case_stmt = delete(Case).where(
             Case.maintenance_id == maintenance_id,
-            Case.mac_address == mac,
+            sa.or_(
+                Case.client_id == client_id,
+                Case.mac_address == mac,
+            ),
         )
         await session.execute(del_case_stmt)
 
@@ -688,25 +664,51 @@ async def remove_mac(
             await session.execute(
                 delete(model).where(
                     model.maintenance_id == maintenance_id,
-                    model.mac_address == mac,
+                    sa.or_(
+                        model.client_id == client_id,
+                        model.mac_address == mac,
+                    ),
                 )
             )
+
+        # 刪除 ClientRecord（SET NULL FK，手動清除避免孤兒）
+        await session.execute(
+            delete(ClientRecord).where(
+                ClientRecord.maintenance_id == maintenance_id,
+                sa.or_(
+                    ClientRecord.client_id == client_id,
+                    ClientRecord.mac_address == mac,
+                ),
+            )
+        )
+
+        # 刪除 ClientComparison
+        await session.execute(
+            delete(ClientComparison).where(
+                ClientComparison.maintenance_id == maintenance_id,
+                sa.or_(
+                    ClientComparison.client_id == client_id,
+                    ClientComparison.mac_address == mac,
+                ),
+            )
+        )
 
         await session.delete(entry)
         await session.commit()
 
-        await write_log(
-            level="WARNING",
-            source="api",
-            summary=f"刪除 Client: {mac}",
-            module="client_list",
-            maintenance_id=maintenance_id,
-        )
+    await write_log(
+        level="WARNING",
+        source="api",
+        summary=f"刪除 Client: {mac} (ID={client_id})",
+        module="client_list",
+        maintenance_id=maintenance_id,
+    )
 
-        # 自動重新生成比較結果
-        await regenerate_comparisons(maintenance_id, session)
+    # 自動重新生成比較結果（new session context）
+    async with get_session_context() as session2:
+        await regenerate_comparisons(maintenance_id, session2)
 
-        return {"message": f"已移除 {mac}"}
+    return {"message": f"已移除 {mac}"}
 
 
 @router.post("/{maintenance_id}/batch-delete")
@@ -724,46 +726,27 @@ async def batch_delete_macs(
         }
 
     async with get_session_context() as session:
-        # 先查詢要刪除的 MAC 地址
-        mac_stmt = select(MaintenanceMacList.mac_address).where(
-            MaintenanceMacList.maintenance_id == maintenance_id,
-            MaintenanceMacList.id.in_(mac_ids),
+        # 從分類中移除這些 client
+        del_member_stmt = delete(ClientCategoryMember).where(
+            ClientCategoryMember.client_id.in_(mac_ids),
         )
-        mac_result = await session.execute(mac_stmt)
-        macs_to_delete = [r[0] for r in mac_result.fetchall()]
-
-        # 從分類中移除這些 MAC
-        if macs_to_delete:
-            cat_stmt = select(ClientCategory.id).where(
-                ClientCategory.maintenance_id == maintenance_id,
-                ClientCategory.is_active == True,  # noqa: E712
-            )
-            cat_result = await session.execute(cat_stmt)
-            cat_ids = [r[0] for r in cat_result.fetchall()]
-
-            if cat_ids:
-                del_member_stmt = delete(ClientCategoryMember).where(
-                    ClientCategoryMember.category_id.in_(cat_ids),
-                    ClientCategoryMember.mac_address.in_(macs_to_delete),
-                )
-                await session.execute(del_member_stmt)
+        await session.execute(del_member_stmt)
 
         # 刪除對應的 Case（CaseNote 有 CASCADE 自動刪除）
-        if macs_to_delete:
-            del_case_stmt = delete(Case).where(
-                Case.maintenance_id == maintenance_id,
-                Case.mac_address.in_(macs_to_delete),
-            )
-            await session.execute(del_case_stmt)
+        del_case_stmt = delete(Case).where(
+            Case.maintenance_id == maintenance_id,
+            Case.client_id.in_(mac_ids),
+        )
+        await session.execute(del_case_stmt)
 
-            # 刪除關聯的 SeverityOverride / ReferenceClient / LatestClientRecord
-            for model in (SeverityOverride, ReferenceClient, LatestClientRecord):
-                await session.execute(
-                    delete(model).where(
-                        model.maintenance_id == maintenance_id,
-                        model.mac_address.in_(macs_to_delete),
-                    )
+        # 刪除關聯的 SeverityOverride / ReferenceClient / LatestClientRecord
+        for model in (SeverityOverride, ReferenceClient, LatestClientRecord):
+            await session.execute(
+                delete(model).where(
+                    model.maintenance_id == maintenance_id,
+                    model.client_id.in_(mac_ids),
                 )
+            )
 
         # 刪除 MAC 記錄
         stmt = delete(MaintenanceMacList).where(
@@ -909,16 +892,6 @@ async def import_csv(
                 continue
             tenant_group = TenantGroup(raw_tg) if raw_tg else TenantGroup.F18
 
-            # 檢查重複
-            existing_stmt = select(MaintenanceMacList).where(
-                MaintenanceMacList.maintenance_id == maintenance_id,
-                MaintenanceMacList.mac_address == mac,
-            )
-            existing = await session.execute(existing_stmt)
-            if existing.scalar_one_or_none():
-                skipped += 1
-                continue
-
             # 驗證 default_assignee
             try:
                 assignee = await resolve_default_assignee(
@@ -1040,28 +1013,28 @@ async def list_clients_detailed(
         cat_ids = list(categories.keys())
 
         if filter_category == "uncategorized" and cat_ids:
-            # 找出所有有分類的 MAC，然後排除
-            categorized_macs = (
-                select(ClientCategoryMember.mac_address)
+            # 找出所有有分類的 client，然後排除
+            categorized_clients = (
+                select(ClientCategoryMember.client_id)
                 .where(ClientCategoryMember.category_id.in_(cat_ids))
                 .distinct()
                 .subquery()
             )
             stmt = stmt.where(
-                MaintenanceMacList.mac_address.notin_(
-                    select(categorized_macs.c.mac_address)
+                MaintenanceMacList.id.notin_(
+                    select(categorized_clients.c.client_id)
                 )
             )
         elif filter_category and filter_category.isdigit():
             cat_id = int(filter_category)
-            target_macs = (
-                select(ClientCategoryMember.mac_address)
+            target_clients = (
+                select(ClientCategoryMember.client_id)
                 .where(ClientCategoryMember.category_id == cat_id)
                 .subquery()
             )
             stmt = stmt.where(
-                MaintenanceMacList.mac_address.in_(
-                    select(target_macs.c.mac_address)
+                MaintenanceMacList.id.in_(
+                    select(target_clients.c.client_id)
                 )
             )
 
@@ -1097,22 +1070,22 @@ async def list_clients_detailed(
         result = await session.execute(stmt)
         clients = result.scalars().all()
 
-        mac_addresses = [c.mac_address for c in clients]
+        client_ids = [c.id for c in clients]
 
-        # 獲取 MAC 的分類歸屬（只查本頁的 MAC）
-        mac_categories: dict[str, list[dict]] = {}
-        if cat_ids and mac_addresses:
+        # 獲取 Client 的分類歸屬（只查本頁的 Client）
+        client_categories: dict[int, list[dict]] = {}
+        if cat_ids and client_ids:
             member_stmt = select(ClientCategoryMember).where(
                 ClientCategoryMember.category_id.in_(cat_ids),
-                ClientCategoryMember.mac_address.in_(mac_addresses),
+                ClientCategoryMember.client_id.in_(client_ids),
             )
             member_result = await session.execute(member_stmt)
             for member in member_result.scalars().all():
                 cat = categories.get(member.category_id)
-                if cat:
-                    if member.mac_address not in mac_categories:
-                        mac_categories[member.mac_address] = []
-                    mac_categories[member.mac_address].append({
+                if cat and member.client_id:
+                    if member.client_id not in client_categories:
+                        client_categories[member.client_id] = []
+                    client_categories[member.client_id].append({
                         "id": cat.id,
                         "name": cat.name,
                     })
@@ -1146,9 +1119,9 @@ async def list_clients_detailed(
         # 組合結果
         results = []
         for c in clients:
-            cat_list = mac_categories.get(c.mac_address, [])
+            cat_list = client_categories.get(c.id, [])
             category_names = ";".join([ct["name"] for ct in cat_list])
-            category_ids = [ct["id"] for ct in cat_list]
+            cat_id_list = [ct["id"] for ct in cat_list]
 
             results.append({
                 "id": c.id,
@@ -1162,7 +1135,7 @@ async def list_clients_detailed(
                 "last_ping_reachable": ping_status.get(c.mac_address),
                 "category_id": cat_list[0]["id"] if cat_list else None,
                 "category_name": category_names if category_names else None,
-                "category_ids": category_ids,
+                "category_ids": cat_id_list,
             })
 
         return results
@@ -1241,26 +1214,26 @@ async def export_csv(
             all_cat_ids = [c.id for c in cat_result_q.scalars().all()]
 
             if filter_category == "uncategorized" and all_cat_ids:
-                categorized_macs = (
-                    select(ClientCategoryMember.mac_address)
+                categorized_clients = (
+                    select(ClientCategoryMember.client_id)
                     .where(ClientCategoryMember.category_id.in_(all_cat_ids))
                     .distinct()
                     .subquery()
                 )
                 stmt = stmt.where(
-                    MaintenanceMacList.mac_address.notin_(
-                        select(categorized_macs.c.mac_address)
+                    MaintenanceMacList.id.notin_(
+                        select(categorized_clients.c.client_id)
                     )
                 )
             elif filter_category.isdigit():
-                target_macs = (
-                    select(ClientCategoryMember.mac_address)
+                target_clients = (
+                    select(ClientCategoryMember.client_id)
                     .where(ClientCategoryMember.category_id == int(filter_category))
                     .subquery()
                 )
                 stmt = stmt.where(
-                    MaintenanceMacList.mac_address.in_(
-                        select(target_macs.c.mac_address)
+                    MaintenanceMacList.id.in_(
+                        select(target_clients.c.client_id)
                     )
                 )
 

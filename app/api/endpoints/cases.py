@@ -319,7 +319,7 @@ async def get_change_timeline(
     if attribute not in TRACKED_ATTRIBUTES:
         raise HTTPException(status_code=400, detail=f"不支援的屬性: {attribute}")
 
-    # 取得 Case 的 MAC
+    # 取得 Case
     case_stmt = select(Case).where(
         Case.id == case_id,
         Case.maintenance_id == maintenance_id,
@@ -330,7 +330,7 @@ async def get_change_timeline(
 
     timeline = await _svc.get_change_timeline(
         maintenance_id=maintenance_id,
-        mac_address=case.mac_address,
+        client_id=case.client_id,
         attribute=attribute,
         session=session,
     )
@@ -338,7 +338,7 @@ async def get_change_timeline(
     # 查詢最後確認時間
     lcr_stmt = select(LatestClientRecord).where(
         LatestClientRecord.maintenance_id == maintenance_id,
-        LatestClientRecord.mac_address == case.mac_address.upper(),
+        LatestClientRecord.client_id == case.client_id,
     )
     lcr = (await session.execute(lcr_stmt)).scalar_one_or_none()
 

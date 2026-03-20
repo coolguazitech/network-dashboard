@@ -104,9 +104,11 @@ class ClientCollectionService:
                 )
                 return results
 
-            mac_to_client = {
-                c.mac_address.upper(): c for c in client_list
-            }
+            # MAC → list of clients（同一 MAC 可能對應多個 client，如 VM）
+            from collections import defaultdict as _defaultdict
+            mac_to_clients: dict[str, list[MaintenanceMacList]] = _defaultdict(list)
+            for c in client_list:
+                mac_to_clients[c.mac_address.upper()].append(c)
 
             # 2. 從 DB 讀取最新 mac_table_records
             from app.repositories.typed_records import get_typed_repo
@@ -188,6 +190,7 @@ class ClientCollectionService:
                 mac_count_per_port[key] = mac_count_per_port.get(key, 0) + 1
 
             # 7. 組裝 ClientRecord 候選人（同一 MAC 可能出現在多台 switch）
+            #    per-MAC 先選出最佳位置，再為該 MAC 的每個 client 建立記錄
             candidates_per_mac: dict[str, list[ClientRecord]] = {}
             found_macs: set[str] = set()
 
@@ -195,133 +198,78 @@ class ClientCollectionService:
 
             for mac_rec in mac_records:
                 mac_upper = mac_rec.mac_address.upper()
-                if mac_upper not in mac_to_client:
+                if mac_upper not in mac_to_clients:
                     continue
 
                 found_macs.add(mac_upper)
-                client = mac_to_client[mac_upper]
 
                 # 查找 interface status
                 intf_key = (mac_rec.switch_hostname, mac_rec.interface_name)
                 if_rec = if_map.get(intf_key)
 
-                # 查找 ping 狀態
-                ping_ok = None
-                if client.ip_address:
-                    ping_ok = ping_map.get(client.ip_address)
-
                 # 查找 ACL
                 acl_number = acl_map.get(intf_key)
 
+                # 建立不含 client 特定資訊的基礎記錄（用於位置選擇）
                 record = ClientRecord(
                     maintenance_id=maintenance_id,
                     collected_at=now,
                     mac_address=mac_rec.mac_address,
-                    ip_address=client.ip_address,
+                    ip_address=None,  # 稍後填入
                     switch_hostname=mac_rec.switch_hostname,
                     interface_name=mac_rec.interface_name,
                     vlan_id=mac_rec.vlan_id,
                     speed=if_rec.speed if if_rec else None,
                     duplex=if_rec.duplex if if_rec else None,
                     link_status=if_rec.link_status if if_rec else None,
-                    ping_reachable=ping_ok,
+                    ping_reachable=None,  # 稍後填入
                     acl_rules_applied=acl_number,
                 )
 
                 candidates_per_mac.setdefault(mac_upper, []).append(record)
 
-            # 7b. 從候選人中選出最佳記錄（四條規則逐步篩選）
-            best_per_mac: dict[str, ClientRecord] = {}
+            # 7b. 從候選人中選出最佳位置記錄（五條規則逐步篩選）
+            best_location_per_mac: dict[str, ClientRecord] = {}
             for mac_upper, candidates in candidates_per_mac.items():
-                if len(candidates) == 1:
-                    best_per_mac[mac_upper] = candidates[0]
-                    continue
-
-                remaining = candidates
-
-                # Rule 1: 有 ACL 資料的優先
-                with_acl = [r for r in remaining
-                            if r.acl_rules_applied is not None]
-                if with_acl:
-                    remaining = with_acl
-                if len(remaining) == 1:
-                    best_per_mac[mac_upper] = remaining[0]
-                    continue
-
-                # Rule 2: 非 port-channel 優先
-                non_pc = [r for r in remaining
-                          if not _is_port_channel(r.interface_name)]
-                if non_pc:
-                    remaining = non_pc
-                if len(remaining) == 1:
-                    best_per_mac[mac_upper] = remaining[0]
-                    continue
-
-                # Rule 3: 沒有鄰居的 interface 優先（access port）
-                no_nbr = [
-                    r for r in remaining
-                    if (r.switch_hostname, r.interface_name)
-                    not in neighbor_ports
-                ]
-                if no_nbr:
-                    remaining = no_nbr
-                if len(remaining) == 1:
-                    best_per_mac[mac_upper] = remaining[0]
-                    continue
-
-                # Rule 4: 有 Speed 且 Speed 最小的
-                with_speed = [
-                    (r, _parse_speed_mbps(r.speed))
-                    for r in remaining
-                    if _parse_speed_mbps(r.speed) is not None
-                ]
-                if with_speed:
-                    min_spd = min(s for _, s in with_speed)
-                    min_records = [r for r, s in with_speed if s == min_spd]
-                    if len(min_records) == 1:
-                        best_per_mac[mac_upper] = min_records[0]
-                        continue
-                    # Speed 篩選後仍有多筆 → 更新 remaining
-                    remaining = min_records
-
-                # Rule 5: MAC 數量最少的 port 優先（access port 學到的 MAC 少）
-                counted = [
-                    (r, mac_count_per_port.get(
-                        (r.switch_hostname, r.interface_name), 0))
-                    for r in remaining
-                ]
-                min_cnt = min(c for _, c in counted)
-                fewest = [r for r, c in counted if c == min_cnt]
-                if len(fewest) == 1:
-                    best_per_mac[mac_upper] = fewest[0]
-                    continue
-
-                # 五條規則都無法分出唯一 → 各項數值設為空
-                base = remaining[0]
-                best_per_mac[mac_upper] = ClientRecord(
-                    maintenance_id=base.maintenance_id,
-                    collected_at=base.collected_at,
-                    mac_address=base.mac_address,
-                    ip_address=base.ip_address,
-                    switch_hostname=None,
-                    interface_name=None,
-                    vlan_id=None,
-                    speed=None,
-                    duplex=None,
-                    link_status=None,
-                    ping_reachable=base.ping_reachable,
-                    acl_rules_applied=None,
+                best_location_per_mac[mac_upper] = self._select_best_candidate(
+                    candidates, neighbor_ports, mac_count_per_port,
                 )
 
-            all_records: list[ClientRecord] = list(best_per_mac.values())
+            # 7c. 為每個 client 建立獨立的 ClientRecord（同 MAC 不同 client）
+            all_records: list[ClientRecord] = []
+            found_client_ids: set[int] = set()
+
+            for mac_upper, best in best_location_per_mac.items():
+                for client in mac_to_clients[mac_upper]:
+                    found_client_ids.add(client.id)
+                    ping_ok = None
+                    if client.ip_address:
+                        ping_ok = ping_map.get(client.ip_address)
+
+                    all_records.append(ClientRecord(
+                        maintenance_id=maintenance_id,
+                        collected_at=now,
+                        client_id=client.id,
+                        mac_address=best.mac_address,
+                        ip_address=client.ip_address,
+                        switch_hostname=best.switch_hostname,
+                        interface_name=best.interface_name,
+                        vlan_id=best.vlan_id,
+                        speed=best.speed,
+                        duplex=best.duplex,
+                        link_status=best.link_status,
+                        ping_reachable=ping_ok,
+                        acl_rules_applied=best.acl_rules_applied,
+                    ))
+
             results["success"] = 1 if mac_records else 0
             results["client_records_count"] = len(all_records)
 
-            # 8. 為未找到的 MAC 建立 None 記錄（保留 ping 結果）
-            missing_macs = set(mac_to_client.keys()) - found_macs
-            for mac_upper in missing_macs:
-                client = mac_to_client[mac_upper]
-
+            # 8. 為未找到 MAC 的 client 建立 None 記錄（保留 ping 結果）
+            missing_clients = [
+                c for c in client_list if c.id not in found_client_ids
+            ]
+            for client in missing_clients:
                 ping_ok = None
                 if client.ip_address:
                     ping_ok = ping_map.get(client.ip_address)
@@ -329,6 +277,7 @@ class ClientCollectionService:
                 all_records.append(ClientRecord(
                     maintenance_id=maintenance_id,
                     collected_at=now,
+                    client_id=client.id,
                     mac_address=client.mac_address,
                     ip_address=client.ip_address,
                     switch_hostname=None,
@@ -341,10 +290,10 @@ class ClientCollectionService:
                     acl_rules_applied=None,
                 ))
 
-            if missing_macs:
+            if missing_clients:
                 logger.info(
-                    "Added %d None records for MACs not found in %s",
-                    len(missing_macs), maintenance_id,
+                    "Added %d None records for clients not found in %s",
+                    len(missing_clients), maintenance_id,
                 )
 
             # 9. Per-MAC 變更偵測 + 選擇性寫入
@@ -392,7 +341,86 @@ class ClientCollectionService:
         )
         return results
 
-    # ── Per-MAC change detection ────────────────────────────────
+    # ── Best candidate selection ─────────────────────────────────
+
+    @staticmethod
+    def _select_best_candidate(
+        candidates: list[ClientRecord],
+        neighbor_ports: set[tuple[str, str]],
+        mac_count_per_port: dict[tuple[str, str], int],
+    ) -> ClientRecord:
+        """從多個候選位置中選出最佳記錄（五條規則逐步篩選）。"""
+        if len(candidates) == 1:
+            return candidates[0]
+
+        remaining = candidates
+
+        # Rule 1: 有 ACL 資料的優先
+        with_acl = [r for r in remaining if r.acl_rules_applied is not None]
+        if with_acl:
+            remaining = with_acl
+        if len(remaining) == 1:
+            return remaining[0]
+
+        # Rule 2: 非 port-channel 優先
+        non_pc = [r for r in remaining if not _is_port_channel(r.interface_name)]
+        if non_pc:
+            remaining = non_pc
+        if len(remaining) == 1:
+            return remaining[0]
+
+        # Rule 3: 沒有鄰居的 interface 優先（access port）
+        no_nbr = [
+            r for r in remaining
+            if (r.switch_hostname, r.interface_name) not in neighbor_ports
+        ]
+        if no_nbr:
+            remaining = no_nbr
+        if len(remaining) == 1:
+            return remaining[0]
+
+        # Rule 4: 有 Speed 且 Speed 最小的
+        with_speed = [
+            (r, _parse_speed_mbps(r.speed))
+            for r in remaining
+            if _parse_speed_mbps(r.speed) is not None
+        ]
+        if with_speed:
+            min_spd = min(s for _, s in with_speed)
+            min_records = [r for r, s in with_speed if s == min_spd]
+            if len(min_records) == 1:
+                return min_records[0]
+            remaining = min_records
+
+        # Rule 5: MAC 數量最少的 port 優先
+        counted = [
+            (r, mac_count_per_port.get(
+                (r.switch_hostname, r.interface_name), 0))
+            for r in remaining
+        ]
+        min_cnt = min(c for _, c in counted)
+        fewest = [r for r, c in counted if c == min_cnt]
+        if len(fewest) == 1:
+            return fewest[0]
+
+        # 五條規則都無法分出唯一 → 各項數值設為空
+        base = remaining[0]
+        return ClientRecord(
+            maintenance_id=base.maintenance_id,
+            collected_at=base.collected_at,
+            mac_address=base.mac_address,
+            ip_address=None,
+            switch_hostname=None,
+            interface_name=None,
+            vlan_id=None,
+            speed=None,
+            duplex=None,
+            link_status=None,
+            ping_reachable=None,
+            acl_rules_applied=None,
+        )
+
+    # ── Per-client change detection ──────────────────────────────
 
     @staticmethod
     def _compute_client_record_hash(record: ClientRecord) -> str:
@@ -417,27 +445,29 @@ class ClientCollectionService:
         all_records: list[ClientRecord],
         now: datetime,
     ) -> int:
-        """Per-MAC hash 比對，只寫入有變化的 ClientRecord。
+        """Per-client hash 比對，只寫入有變化的 ClientRecord。
 
         Returns:
             寫入的記錄數量。
         """
-        # 一次載入此歲修所有 LatestClientRecord
+        # 一次載入此歲修所有 LatestClientRecord（以 client_id 為 key）
         latest_stmt = select(LatestClientRecord).where(
             LatestClientRecord.maintenance_id == maintenance_id,
         )
         latest_result = await session.execute(latest_stmt)
-        latest_map: dict[str, LatestClientRecord] = {
-            row.mac_address.upper(): row
+        latest_map: dict[int, LatestClientRecord] = {
+            row.client_id: row
             for row in latest_result.scalars().all()
         }
 
         records_to_write: list[ClientRecord] = []
 
         for record in all_records:
-            mac_upper = (record.mac_address or "").upper()
+            client_id = record.client_id
+            if not client_id:
+                continue
             new_hash = self._compute_client_record_hash(record)
-            existing = latest_map.get(mac_upper)
+            existing = latest_map.get(client_id)
 
             if existing and existing.data_hash == new_hash:
                 # 資料未變化 → 只更新 last_checked_at
@@ -453,7 +483,8 @@ class ClientCollectionService:
                 else:
                     session.add(LatestClientRecord(
                         maintenance_id=maintenance_id,
-                        mac_address=mac_upper,
+                        client_id=client_id,
+                        mac_address=(record.mac_address or "").upper(),
                         data_hash=new_hash,
                         collected_at=now,
                         last_checked_at=now,

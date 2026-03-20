@@ -121,7 +121,7 @@
 
       <!-- 迷你地圖提示 -->
       <div v-if="chartOption" class="absolute bottom-3 right-3 text-[10px] text-slate-600 select-none pointer-events-none">
-        滾輪縮放 · 拖曳平移 · 點擊節點探索鄰居 · 再點取消選取
+        滾輪縮放 · 拖曳平移 · 懸停高亮鄰居 · 點擊選取節點 · 「僅選取」顯示介面詳情
       </div>
     </div>
 
@@ -166,7 +166,7 @@
 </template>
 
 <script setup>
-import { ref, computed, inject, watch, onMounted } from 'vue'
+import { ref, computed, inject, watch, onMounted, onBeforeUnmount } from 'vue'
 import api from '@/utils/api'
 
 const selectedMaintenanceId = inject('maintenanceId')
@@ -179,6 +179,60 @@ const showManagement = ref(false)
 const showExternal = ref(false)
 const pinnedNodes = ref(new Set())  // 已鎖定的節點集合（累加探索）
 const pinnedOnly = ref(false)       // 僅顯示選取節點之間的連線
+
+// ── 狀態持久化 ──
+const STORAGE_PREFIX = 'topo_state_'
+
+function saveUiState() {
+  const mid = selectedMaintenanceId.value
+  if (!mid) return
+  try {
+    localStorage.setItem(`${STORAGE_PREFIX}${mid}`, JSON.stringify({
+      pinnedNodes: [...pinnedNodes.value],
+      pinnedOnly: pinnedOnly.value,
+      showManagement: showManagement.value,
+      showExternal: showExternal.value,
+    }))
+  } catch (_) { /* localStorage full */ }
+}
+
+function loadUiState() {
+  const mid = selectedMaintenanceId.value
+  if (!mid) return
+  try {
+    const raw = localStorage.getItem(`${STORAGE_PREFIX}${mid}`)
+    if (!raw) return
+    const s = JSON.parse(raw)
+    if (Array.isArray(s.pinnedNodes)) pinnedNodes.value = new Set(s.pinnedNodes)
+    if (s.pinnedOnly !== undefined) pinnedOnly.value = s.pinnedOnly
+    if (s.showManagement !== undefined) showManagement.value = s.showManagement
+    if (s.showExternal !== undefined) showExternal.value = s.showExternal
+  } catch (_) { /* corrupt data */ }
+}
+
+// ── 動態輪詢（30s 更新節點驗收狀態） ──
+let _pollTimer = null
+
+function startPolling() {
+  stopPolling()
+  _pollTimer = setInterval(() => {
+    if (selectedMaintenanceId.value && !loading.value) {
+      refreshTopologyQuiet()
+    }
+  }, 30000)
+}
+
+function stopPolling() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null }
+}
+
+async function refreshTopologyQuiet() {
+  if (!selectedMaintenanceId.value) return
+  try {
+    const { data } = await api.get(`/topology/${selectedMaintenanceId.value}`)
+    topology.value = data   // watcher 會保留 pinnedNodes
+  } catch (_) { /* silent */ }
+}
 
 const LINK_COLORS = {
   expected_pass: '#22c55e',
@@ -339,41 +393,51 @@ const chartOption = computed(() => {
 
   const pinned = pinnedNodes.value
 
-  // ── 鄰居數 + 失敗節點（基於完整資料，保持 symbolSize 一致） ──
+  // ── 鄰居數 + 失敗節點 ──
   const neighborCount = {}
-  const failNodes = new Set()
   allLinks.forEach(l => {
     neighborCount[l.source] = (neighborCount[l.source] || 0) + 1
     neighborCount[l.target] = (neighborCount[l.target] || 0) + 1
-    if (l.status === 'expected_fail') {
-      failNodes.add(l.source)
-      failNodes.add(l.target)
+  })
+
+  // 驗收失敗節點：有 indicator_failures 的設備才標紅
+  const failNodes = new Set()
+  allNodes.forEach(n => {
+    if (n.indicator_failures && n.indicator_failures.length > 0) {
+      failNodes.add(n.name)
     }
   })
 
-  // ── 依鎖定狀態過濾顯示子集 ──
+  // uplink 驗收失敗的 link
+  const failLinks = new Set()
+  allLinks.forEach(l => {
+    if (l.status === 'expected_fail') {
+      failLinks.add(`${l.source}|${l.target}`)
+    }
+  })
+
+  // ── 依鎖定狀態決定顯示 ──
+  // Bug 4 修復：點選 node 不改變顯示集合，只調整視覺樣式（opacity）
+  // 只有「僅選取」模式才過濾節點
   let displayNodes, displayLinks
   const onlyMode = pinnedOnly.value
-  if (pinned.size > 0) {
-    if (onlyMode) {
-      // 僅選取模式：只顯示 pinned 節點 + 它們之間的連線
-      displayNodes = allNodes.filter(n => pinned.has(n.name))
-      displayLinks = allLinks.filter(l => pinned.has(l.source) && pinned.has(l.target))
-    } else {
-      // 探索模式：pinned 節點 + 鄰居
-      const visible = new Set(pinned)
-      allLinks.forEach(l => {
-        if (pinned.has(l.source) || pinned.has(l.target)) {
-          visible.add(l.source)
-          visible.add(l.target)
-        }
-      })
-      displayNodes = allNodes.filter(n => visible.has(n.name))
-      displayLinks = allLinks.filter(l => pinned.has(l.source) || pinned.has(l.target))
-    }
+  if (pinned.size > 0 && onlyMode) {
+    displayNodes = allNodes.filter(n => pinned.has(n.name))
+    displayLinks = allLinks.filter(l => pinned.has(l.source) && pinned.has(l.target))
   } else {
     displayNodes = allNodes
     displayLinks = allLinks
+  }
+
+  // 計算 pinned 相關節點（用於視覺高亮）
+  const highlightNodes = new Set(pinned)
+  if (pinned.size > 0 && !onlyMode) {
+    allLinks.forEach(l => {
+      if (pinned.has(l.source) || pinned.has(l.target)) {
+        highlightNodes.add(l.source)
+        highlightNodes.add(l.target)
+      }
+    })
   }
 
   const isLarge = displayNodes.length > 150
@@ -391,27 +455,12 @@ const chartOption = computed(() => {
   // ── 階層佈局：預計算座標 ──
   const hierPositions = computeHierarchyPositions(displayNodes, displayLinks)
 
-  // ── 鎖定模式：將子集座標置中 ──
-  if (pinned.size > 0 && Object.keys(hierPositions).length > 0) {
-    const xs = Object.values(hierPositions).map(p => p[0])
-    const ys = Object.values(hierPositions).map(p => p[1])
-    const minX = Math.min(...xs), maxX = Math.max(...xs)
-    const minY = Math.min(...ys), maxY = Math.max(...ys)
-    const cx = (minX + maxX) / 2
-    const cy = (minY + maxY) / 2
-    const targetCx = 1000, targetCy = 400
-    const dx = targetCx - cx, dy = targetCy - cy
-    for (const name of Object.keys(hierPositions)) {
-      hierPositions[name] = [hierPositions[name][0] + dx, hierPositions[name][1] + dy]
-    }
-  }
-
   // ── 連線樣式：大圖降低線寬和透明度 ──
   const linkWidth = isVeryLarge ? 0.5 : isLarge ? 0.8 : 1.2
   const linkOpacity = isVeryLarge ? 0.35 : isLarge ? 0.5 : 0.8
   const failWidth = isVeryLarge ? 1.2 : 2
 
-  // ── 鎖定模式的 label 策略 ──
+  // ── label 策略 ──
   const isPinMode = pinned.size > 0
 
   return {
@@ -432,7 +481,14 @@ const chartOption = computed(() => {
           if (d.ip_address) html += `<div style="color:#94a3b8;">IP: <span style="color:#e2e8f0;">${d.ip_address}</span></div>`
           if (d.vendor) html += `<div style="color:#94a3b8;">廠商: <span style="color:#e2e8f0;">${d.vendor}</span></div>`
           html += `<div style="color:#94a3b8;">鄰居: <span style="color:#e2e8f0;">${neighborCount[d.name] || 0}</span></div>`
-          if (d.hasFail) html += `<div style="color:#ef4444;margin-top:2px;font-weight:600;">有驗收失敗連線</div>`
+          if (d.indicator_failures && d.indicator_failures.length > 0) {
+            html += `<div style="border-top:1px solid rgba(100,116,139,0.3);margin-top:4px;padding-top:4px;">`
+            html += `<div style="color:#ef4444;font-weight:600;margin-bottom:2px;">驗收失敗項目:</div>`
+            d.indicator_failures.forEach(f => {
+              html += `<div style="color:#fca5a5;font-size:11px;padding-left:6px;">• ${f}</div>`
+            })
+            html += `</div>`
+          }
           return html
         }
         if (params.dataType === 'edge') {
@@ -470,29 +526,21 @@ const chartOption = computed(() => {
       progressive: isVeryLarge ? 400 : isLarge ? 200 : 0,
       progressiveThreshold: 200,
       label: {
-        show: isPinMode || !isLarge,
+        show: onlyMode || !isLarge,
         position: 'bottom',
-        fontSize: isPinMode ? 11 : 9,
+        fontSize: onlyMode ? 12 : 10,
         color: '#94a3b8',
         formatter: '{b}',
-        overflow: 'truncate',
-        width: 70,
       },
       edgeLabel: {
         show: false,
       },
       emphasis: {
         focus: 'adjacency',
-        label: { show: true, fontSize: 12, fontWeight: 'bold', color: '#fff' },
+        label: { show: true, fontSize: 13, fontWeight: 'bold', color: '#fff' },
         lineStyle: { width: 3, opacity: 1 },
         itemStyle: { borderWidth: 2, borderColor: '#fff' },
-        scale: 1.6,
-      },
-      blur: {
-        itemStyle: { opacity: 0.08 },
-        lineStyle: { opacity: 0.02 },
-        label: { show: false },
-        edgeLabel: { show: false },
+        scale: 1.4,
       },
       categories: [
         { name: '設備清單', itemStyle: { color: NODE_COLORS.device_list } },
@@ -502,6 +550,9 @@ const chartOption = computed(() => {
         const pos = hierPositions[n.name]
         const isFail = failNodes.has(n.name)
         const isPinnedNode = pinned.has(n.name)
+        const isHighlighted = highlightNodes.has(n.name)
+        const isDimmed = pinned.size > 0 && !isHighlighted
+        // Bug 3: 只有驗收失敗的節點才標紅（依據 indicator_failures）
         const color = isFail ? '#ef4444' : n.in_device_list ? getLevelColor(n.level ?? 0) : NODE_COLORS.external
         return {
           name: n.name,
@@ -511,44 +562,55 @@ const chartOption = computed(() => {
           ip_address: n.ip_address,
           vendor: n.vendor,
           level: n.level,
+          indicator_failures: n.indicator_failures,
           hasFail: isFail,
           ...(pos ? { x: pos[0], y: pos[1], fixed: true } : {}),
           itemStyle: {
             color,
+            opacity: isDimmed ? 0.15 : 1,
             borderColor: isPinnedNode ? '#fff' : isFail ? '#991b1b' : 'rgba(0,0,0,0.3)',
             borderWidth: isPinnedNode ? 2 : isFail ? 1.5 : 0.5,
           },
-          label: isPinMode ? {
-            show: true,
-            fontSize: isPinnedNode ? 13 : 10,
-            fontWeight: isPinnedNode ? 'bold' : 'normal',
-            color: isPinnedNode ? '#fff' : '#94a3b8',
-          } : undefined,
+          label: {
+            show: isDimmed ? false : (onlyMode || !isLarge),
+            fontSize: onlyMode ? 13 : (isPinnedNode ? 12 : 10),
+            fontWeight: (onlyMode || isPinnedNode) ? 'bold' : 'normal',
+            color: (onlyMode || isPinnedNode) ? '#fff' : '#94a3b8',
+          },
         }
       }),
-      links: isPinMode
+      links: onlyMode
         ? (() => {
-            // 合併同對節點的平行線（ECharts multigraph bug workaround）
+            // 僅選取模式：合併同對節點的平行線，顯示完整介面資訊
             const pairMap = {}
             displayLinks.forEach(l => {
-              const key = [l.source, l.target].sort().join('|')
-              if (!pairMap[key]) pairMap[key] = { source: l.source, target: l.target, interfaces: [], statuses: [], is_management: false }
+              const sorted = [l.source, l.target].sort()
+              const key = sorted.join('|')
+              if (!pairMap[key]) pairMap[key] = { source: sorted[0], target: sorted[1], interfaces: [], src_interfaces: [], tgt_interfaces: [], statuses: [], is_management: false }
+              if (l.source === sorted[0]) {
+                pairMap[key].src_interfaces.push(l.local_interface)
+                pairMap[key].tgt_interfaces.push(l.remote_interface)
+              } else {
+                pairMap[key].src_interfaces.push(l.remote_interface)
+                pairMap[key].tgt_interfaces.push(l.local_interface)
+              }
               pairMap[key].interfaces.push(`${l.local_interface} ↔ ${l.remote_interface}`)
               pairMap[key].statuses.push(l.status)
               if (l.is_management) pairMap[key].is_management = true
             })
             return Object.values(pairMap).map(p => {
-              // 優先取最嚴重的狀態
               const status = p.statuses.includes('expected_fail') ? 'expected_fail'
                 : p.statuses.includes('expected_pass') ? 'expected_pass' : 'discovered'
-              const labelText = p.interfaces.join('\n')
+              const labelText = p.src_interfaces.map((s, i) =>
+                `[${p.source}] ${s} ↔ [${p.target}] ${p.tgt_interfaces[i] || '?'}`
+              ).join('\n')
               return {
                 source: p.source, target: p.target,
                 value: labelText,
                 status, is_management: p.is_management,
                 label: {
                   show: true,
-                  fontSize: 11,
+                  fontSize: 10,
                   color: '#cbd5e1',
                   backgroundColor: 'rgba(15, 23, 42, 0.75)',
                   padding: [2, 6],
@@ -564,19 +626,24 @@ const chartOption = computed(() => {
               }
             })
           })()
-        : displayLinks.map(l => ({
-            source: l.source, target: l.target,
-            local_interface: l.local_interface, remote_interface: l.remote_interface,
-            status: l.status, is_management: l.is_management,
-            silent: isLarge,
-            lineStyle: {
-              color: LINK_COLORS[l.status] || LINK_COLORS.discovered,
-              width: l.status === 'expected_fail' ? failWidth : linkWidth,
-              type: l.status === 'expected_fail' ? 'dashed' : 'solid',
-              opacity: l.is_management ? linkOpacity * 0.5 : linkOpacity,
-              curveness: 0,
-            },
-          })),
+        : displayLinks.map(l => {
+            const isLinkHighlighted = pinned.size === 0 || pinned.has(l.source) || pinned.has(l.target)
+            return {
+              source: l.source, target: l.target,
+              local_interface: l.local_interface, remote_interface: l.remote_interface,
+              status: l.status, is_management: l.is_management,
+              silent: isLarge,
+              lineStyle: {
+                color: LINK_COLORS[l.status] || LINK_COLORS.discovered,
+                width: l.status === 'expected_fail' ? failWidth : linkWidth,
+                type: l.status === 'expected_fail' ? 'dashed' : 'solid',
+                opacity: isLinkHighlighted
+                  ? (l.is_management ? linkOpacity * 0.5 : linkOpacity)
+                  : 0.05,
+                curveness: 0,
+              },
+            }
+          }),
     }],
   }
 })
@@ -599,17 +666,27 @@ const fetchTopology = async () => {
 }
 
 watch(selectedMaintenanceId, (newId) => {
+  stopPolling()
   if (newId) {
-    fetchTopology()
+    loadUiState()
+    fetchTopology().then(startPolling)
   } else {
     topology.value = null
+    pinnedNodes.value = new Set()
+    pinnedOnly.value = false
   }
 })
 
 onMounted(() => {
+  loadUiState()
   if (selectedMaintenanceId.value) {
-    fetchTopology()
+    fetchTopology().then(startPolling)
   }
+})
+
+onBeforeUnmount(() => {
+  saveUiState()
+  stopPolling()
 })
 
 // ── 累加式探索（reactive：pinnedNodes 變化觸發 chartOption 重算） ──
@@ -632,8 +709,23 @@ function resetPins() {
   pinnedNodes.value = new Set()
 }
 
-// 資料來源變化時清除鎖定
-watch(topology, () => { pinnedNodes.value = new Set(); pinnedOnly.value = false })
-watch(pinnedNodes, (v) => { if (v.size === 0) pinnedOnly.value = false })
+// 資料更新時保留選取狀態，只清理不存在的節點
+watch(topology, (newTopo) => {
+  if (!newTopo || newTopo.nodes.length === 0) {
+    pinnedNodes.value = new Set()
+    pinnedOnly.value = false
+    return
+  }
+  const nodeNames = new Set(newTopo.nodes.map(n => n.name))
+  const cleaned = new Set([...pinnedNodes.value].filter(n => nodeNames.has(n)))
+  if (cleaned.size !== pinnedNodes.value.size) {
+    pinnedNodes.value = cleaned
+  }
+  if (cleaned.size === 0) pinnedOnly.value = false
+})
+
+// 選取/toggle 變化時自動儲存
+watch(pinnedNodes, (v) => { if (v.size === 0) pinnedOnly.value = false; saveUiState() })
+watch([pinnedOnly, showManagement, showExternal], saveUiState)
 
 </script>

@@ -929,7 +929,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,,`;
       if (!confirmed) return;
 
       try {
-        await api.delete(`/mac-list/${this.selectedMaintenanceId}/${encodeURIComponent(mac.mac_address)}`);
+        await api.delete(`/mac-list/${this.selectedMaintenanceId}/by-id/${mac.id}`);
         await this.loadMacList();
         await this.loadMacStats();
       } catch (e) {

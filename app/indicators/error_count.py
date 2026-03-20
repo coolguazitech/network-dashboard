@@ -64,6 +64,11 @@ class ErrorCountIndicator(BaseIndicator):
         repo = InterfaceErrorRecordRepo(session)
         active_set = set(device_hostnames)
 
+        # 0. 查詢哪些設備已有採集 batch（區分「無資料」vs「未採集」）
+        collected_devices = await self._get_collected_devices(
+            session, maintenance_id, "get_error_count",
+        )
+
         # 1. 取最新採集（per device 最新 batch 的所有 rows）
         current_records = await repo.get_latest_per_device(maintenance_id)
 
@@ -91,7 +96,15 @@ class ErrorCountIndicator(BaseIndicator):
             current_rows = current_by_device.get(hostname, [])
 
             if not current_rows:
-                # 無錯誤記錄（collector 跳過零錯誤介面）→ 設備正常
+                if hostname not in collected_devices:
+                    # 從未採集到資料 → 失敗
+                    failures.append({
+                        "device": hostname,
+                        "reason": "未採集到資料",
+                        "data": {},
+                    })
+                    continue
+                # 有 batch 但無錯誤記錄（collector 跳過零錯誤介面）→ 設備正常
                 pass_count += 1
                 if len(passes) < 10:
                     passes.append({
@@ -131,26 +144,25 @@ class ErrorCountIndicator(BaseIndicator):
 
             if growing_interfaces:
                 # 設備有 CRC 增長 → 異常
-                if len(failures) < 10:
-                    show_limit = 5
-                    iface_detail = "; ".join(
-                        f"{gi['interface']}(+{gi['delta']})"
-                        for gi in growing_interfaces[:show_limit]
-                    )
-                    if len(growing_interfaces) > show_limit:
-                        iface_detail += f" ...等共{len(growing_interfaces)}介面"
-                    iface_names = ", ".join(
-                        gi["interface"]
-                        for gi in growing_interfaces[:show_limit]
-                    )
-                    if len(growing_interfaces) > show_limit:
-                        iface_names += f" ...等{len(growing_interfaces)}介面"
-                    failures.append({
-                        "device": hostname,
-                        "interface": iface_names,
-                        "reason": f"CRC 增長: {iface_detail}",
-                        "data": {"growing_interfaces": growing_interfaces},
-                    })
+                show_limit = 5
+                iface_detail = "; ".join(
+                    f"{gi['interface']}(+{gi['delta']})"
+                    for gi in growing_interfaces[:show_limit]
+                )
+                if len(growing_interfaces) > show_limit:
+                    iface_detail += f" ...等共{len(growing_interfaces)}介面"
+                iface_names = ", ".join(
+                    gi["interface"]
+                    for gi in growing_interfaces[:show_limit]
+                )
+                if len(growing_interfaces) > show_limit:
+                    iface_names += f" ...等{len(growing_interfaces)}介面"
+                failures.append({
+                    "device": hostname,
+                    "interface": iface_names,
+                    "reason": f"CRC 增長: {iface_detail}",
+                    "data": {"growing_interfaces": growing_interfaces},
+                })
             else:
                 # 所有介面未增長 → 通過
                 pass_count += 1

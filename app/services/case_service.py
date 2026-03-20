@@ -124,19 +124,19 @@ class CaseService:
         Returns:
             {"created": N, "total": M}
         """
-        # 取得所有 MAC
-        mac_stmt = select(MaintenanceMacList).where(
+        # 取得所有 Client
+        client_stmt = select(MaintenanceMacList).where(
             MaintenanceMacList.maintenance_id == maintenance_id,
         )
-        mac_result = await session.execute(mac_stmt)
-        mac_list = mac_result.scalars().all()
+        client_result = await session.execute(client_stmt)
+        client_list = client_result.scalars().all()
 
-        # 取得現有 Case 的 MAC 集合
-        case_stmt = select(Case.mac_address).where(
+        # 取得現有 Case 的 client_id 集合
+        case_stmt = select(Case.client_id).where(
             Case.maintenance_id == maintenance_id,
         )
         case_result = await session.execute(case_stmt)
-        existing_macs = {row[0].upper() for row in case_result.fetchall()}
+        existing_client_ids = {row[0] for row in case_result.fetchall()}
 
         # 取得預設 ROOT 使用者
         root_stmt = select(User.display_name).where(
@@ -147,17 +147,17 @@ class CaseService:
         default_root = root_result.scalar()
 
         created = 0
-        for mac_entry in mac_list:
-            mac_upper = mac_entry.mac_address.upper()
-            if mac_upper in existing_macs:
+        for client in client_list:
+            if client.id in existing_client_ids:
                 continue
 
-            assignee = mac_entry.default_assignee or default_root
+            assignee = client.default_assignee or default_root
             status = CaseStatus.ASSIGNED if assignee else CaseStatus.UNASSIGNED
 
             case = Case(
                 maintenance_id=maintenance_id,
-                mac_address=mac_upper,
+                client_id=client.id,
+                mac_address=client.mac_address.upper(),
                 status=status,
                 assignee=assignee,
                 change_flags={},
@@ -179,7 +179,7 @@ class CaseService:
                 maintenance_id=maintenance_id,
             )
 
-        return {"created": created, "total": len(mac_list)}
+        return {"created": created, "total": len(client_list)}
 
     async def get_cases(
         self,
@@ -210,10 +210,7 @@ class CaseService:
             )
             .outerjoin(
                 MaintenanceMacList,
-                and_(
-                    Case.maintenance_id == MaintenanceMacList.maintenance_id,
-                    Case.mac_address == MaintenanceMacList.mac_address,
-                ),
+                Case.client_id == MaintenanceMacList.id,
             )
             .where(Case.maintenance_id == maintenance_id)
         )
@@ -300,6 +297,7 @@ class CaseService:
 
             cases.append({
                 "id": case_obj.id,
+                "client_id": case_obj.client_id,
                 "maintenance_id": case_obj.maintenance_id,
                 "mac_address": case_obj.mac_address,
                 "ip_address": ip_address,
@@ -368,11 +366,11 @@ class CaseService:
     async def compute_change_tags(
         self,
         maintenance_id: str,
-        mac_address: str,
+        client_id: int,
         session: AsyncSession,
     ) -> list[dict[str, Any]]:
         """
-        計算 MAC 的屬性變化標籤。
+        計算 Client 的屬性變化標籤。
 
         查詢所有 ClientRecord，對每個追蹤屬性套用變化偵測演算法。
         """
@@ -380,7 +378,7 @@ class CaseService:
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.mac_address == mac_address.upper(),
+                ClientRecord.client_id == client_id,
             )
             .order_by(ClientRecord.collected_at)
         )
@@ -405,7 +403,7 @@ class CaseService:
     async def get_change_timeline(
         self,
         maintenance_id: str,
-        mac_address: str,
+        client_id: int,
         attribute: str,
         session: AsyncSession,
     ) -> list[dict[str, Any]]:
@@ -417,7 +415,7 @@ class CaseService:
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.mac_address == mac_address.upper(),
+                ClientRecord.client_id == client_id,
             )
             .order_by(ClientRecord.collected_at.desc())
         )
@@ -451,10 +449,7 @@ class CaseService:
             )
             .outerjoin(
                 MaintenanceMacList,
-                and_(
-                    Case.maintenance_id == MaintenanceMacList.maintenance_id,
-                    Case.mac_address == MaintenanceMacList.mac_address,
-                ),
+                Case.client_id == MaintenanceMacList.id,
             )
             .where(
                 Case.id == case_id,
@@ -471,7 +466,7 @@ class CaseService:
 
         # 變化標籤
         change_tags = await self.compute_change_tags(
-            maintenance_id, case_obj.mac_address, session,
+            maintenance_id, case_obj.client_id, session,
         )
 
         # 筆記
@@ -505,7 +500,7 @@ class CaseService:
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.mac_address == case_obj.mac_address,
+                ClientRecord.client_id == case_obj.client_id,
             )
             .order_by(ClientRecord.collected_at.desc())
             .limit(1)
@@ -514,6 +509,7 @@ class CaseService:
 
         return {
             "id": case_obj.id,
+            "client_id": case_obj.client_id,
             "maintenance_id": case_obj.maintenance_id,
             "mac_address": case_obj.mac_address,
             "ip_address": ip_address,
@@ -750,22 +746,25 @@ class CaseService:
         """
         now = datetime.now(timezone.utc)
 
-        # 取得每個 MAC 最新的 ClientRecord
+        # 取得每個 client_id 最新的 ClientRecord
         latest_subq = (
             select(
-                ClientRecord.mac_address,
+                ClientRecord.client_id,
                 ClientRecord.ping_reachable,
                 func.row_number().over(
-                    partition_by=ClientRecord.mac_address,
+                    partition_by=ClientRecord.client_id,
                     order_by=ClientRecord.collected_at.desc(),
                 ).label("rn"),
             )
-            .where(ClientRecord.maintenance_id == maintenance_id)
+            .where(
+                ClientRecord.maintenance_id == maintenance_id,
+                ClientRecord.client_id.isnot(None),
+            )
             .subquery()
         )
 
         latest_stmt = (
-            select(latest_subq.c.mac_address, latest_subq.c.ping_reachable)
+            select(latest_subq.c.client_id, latest_subq.c.ping_reachable)
             .where(latest_subq.c.rn == 1)
         )
         result = await session.execute(latest_stmt)
@@ -773,17 +772,16 @@ class CaseService:
 
         # 取得現有 Case 的 ping 狀態
         case_stmt = select(
-            Case.mac_address, Case.last_ping_reachable, Case.ping_reachable_since,
+            Case.client_id, Case.last_ping_reachable, Case.ping_reachable_since,
         ).where(Case.maintenance_id == maintenance_id)
         case_result = await session.execute(case_stmt)
         case_states = {
-            row[0].upper(): (row[1], row[2])
+            row[0]: (row[1], row[2])
             for row in case_result.fetchall()
         }
 
-        for mac_address, ping_reachable in latest_pings:
-            mac_upper = mac_address.upper() if mac_address else mac_address
-            old_reachable, old_since = case_states.get(mac_upper, (None, None))
+        for client_id, ping_reachable in latest_pings:
+            old_reachable, old_since = case_states.get(client_id, (None, None))
 
             # 計算 ping_reachable_since
             if ping_reachable is True:
@@ -801,7 +799,7 @@ class CaseService:
                 update(Case)
                 .where(
                     Case.maintenance_id == maintenance_id,
-                    Case.mac_address == mac_upper,
+                    Case.client_id == client_id,
                 )
                 .values(
                     last_ping_reachable=ping_reachable,
@@ -906,8 +904,8 @@ class CaseService:
         對每個 Case 的 MAC，查詢 ClientRecord 並偵測各屬性變化，
         結果存入 Case.change_flags JSON 欄位。
         """
-        # 取得所有 Case 的 MAC
-        case_stmt = select(Case.id, Case.mac_address).where(
+        # 取得所有 Case 的 client_id
+        case_stmt = select(Case.id, Case.client_id).where(
             Case.maintenance_id == maintenance_id,
         )
         case_result = await session.execute(case_stmt)
@@ -921,22 +919,23 @@ class CaseService:
             select(ClientRecord)
             .where(
                 ClientRecord.maintenance_id == maintenance_id,
-                ClientRecord.mac_address != "__MARKER__",
+                ClientRecord.client_id.isnot(None),
             )
-            .order_by(ClientRecord.mac_address, ClientRecord.collected_at)
+            .order_by(ClientRecord.client_id, ClientRecord.collected_at)
         )
         records_result = await session.execute(all_records_stmt)
         all_records = records_result.scalars().all()
 
-        # 按 MAC 分組
+        # 按 client_id 分組
         from collections import defaultdict
-        records_by_mac: dict[str, list] = defaultdict(list)
+        records_by_client: dict[int, list] = defaultdict(list)
         for r in all_records:
-            records_by_mac[r.mac_address.upper()].append(r)
+            if r.client_id:
+                records_by_client[r.client_id].append(r)
 
         updated = 0
-        for case_id, mac_address in case_rows:
-            records = records_by_mac.get(mac_address.upper(), [])
+        for case_id, client_id in case_rows:
+            records = records_by_client.get(client_id, [])
             flags = {}
             for attr in TRACKED_ATTRIBUTES:
                 values = [getattr(r, attr, None) for r in records]

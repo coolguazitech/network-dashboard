@@ -1,7 +1,7 @@
 # NETORA 部署與開發 SOP
 
-> **最新版本**: `v2.15.3` (2026-03-16)
-> **重大更新**: 拓樸視覺化、SQL 查詢優化、介面模組集中化
+> **最新版本**: `v2.16.0` (2026-03-20)
+> **重大更新**: 通訊錄階層分類、client_id 主鍵、拓樸視覺化強化
 
 ## 目錄
 
@@ -13,24 +13,50 @@
 
 ---
 
-## 🚀 公司端快速更新 (v2.15.3)
+## 🚀 公司端快速更新 (v2.16.0)
 
 ### 更新內容摘要
 
-**版本**: `coolguazi/network-dashboard-base:v2.15.3`
+**版本**: `coolguazi/network-dashboard-base:v2.16.0`
 
-**關鍵修復**:
-- ✅ **[Production Bug]** 修復 DNA endpoint 全部 422 失敗（httpx `params={}` 會清除 URL 中的 query string）
-- ✅ 修復 Mock server DNA 路由未帶 maintenance_id，導致 UPLINK 鄰居查詢跳過
-- ✅ 修復 Ping 採集失敗（移除 DB 中未使用的 `success_rate`/`avg_rtt_ms` 欄位）
-- ✅ 修正歲修配置 API 500 錯誤（`PydanticSerializationError`）
-- ✅ 修正 GNMS Ping endpoint 路徑不一致
-- ✅ Alembic migration 自動清理 `ping_records` 多餘欄位
+**新功能**:
+- ✅ **通訊錄階層分類**: 支援父分類→子分類一層架構，側欄樹狀展示
+- ✅ **通訊錄 CSV 匯入/匯出**: 支援 `category_name` + `sub_category_name` 欄位，自動建立分類層級
+- ✅ **client_id 主鍵**: Cases、ClientRecord、SeverityOverride 等表改用 client_id 作為關聯鍵
+- ✅ **拓樸視覺化強化**: 連線標籤顯示節點名稱、狀態持久化 (localStorage)、30 秒動態輪詢
+- ✅ **介面格式參考面板**: 側邊標籤常駐顯示，點擊展開完整參考表
+
+**修復**:
+- ✅ 通訊錄 Email 欄位移除（不再需要）
+- ✅ 通訊錄角色欄位長度擴充至 115 字元
+- ✅ MAC 刪除級聯清理 (Case、ClientRecord、ClientComparison)
+- ✅ Case API 回傳 client_id 欄位
 - ✅ CVE 掃描通過（0 個 CRITICAL）
 
-**影響範圍**: 所有 DNA 採集（get_mac_table, get_fan, get_power, get_version, get_interface_status, get_uplink_lldp, get_uplink_cdp）、Ping 採集、歲修配置 API
+**影響範圍**: 通訊錄模組、案件模組、MAC 清單模組、拓樸視覺化
 
-**DB Migration 注意**: 此版本包含 alembic migration `h3b4c5d6e7f8`，會自動移除 `ping_records` 表的 `success_rate` 和 `avg_rtt_ms` 欄位。Migration 在容器啟動時自動執行。
+**DB Migration 注意**: 此版本新增多個欄位（`client_id`、`parent_id`），容器啟動時 `create_all` 會自動建立新表，但**既有表需手動 ALTER TABLE**（詳見下方）。
+
+#### 既有環境升級步驟
+
+```bash
+# 連入 DB 執行 ALTER TABLE（僅首次升級需要）
+docker exec netora_db mariadb -u admin -p$DB_PASSWORD netora -e "
+-- contact_categories 新增 parent_id
+ALTER TABLE contact_categories ADD COLUMN IF NOT EXISTS parent_id INT NULL AFTER maintenance_id;
+-- contacts 移除 email、擴充 title
+ALTER TABLE contacts DROP COLUMN IF EXISTS email;
+ALTER TABLE contacts MODIFY COLUMN title VARCHAR(115) NULL;
+-- 多表新增 client_id
+ALTER TABLE client_records ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER collected_at;
+ALTER TABLE client_comparisons ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER collected_at;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER maintenance_id;
+ALTER TABLE client_severity_overrides ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER maintenance_id;
+ALTER TABLE reference_clients ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER maintenance_id;
+ALTER TABLE latest_client_records ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER maintenance_id;
+ALTER TABLE client_category_members ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER category_id;
+"
+```
 
 ### 在公司機器上執行（5 分鐘）
 
@@ -69,8 +95,8 @@ curl http://localhost:8000/health
 ### 回滾方案（如遇問題）
 
 ```bash
-# 回到上一版本 v2.2.1
-sed -i 's/network-dashboard-base:v2.15.3/network-dashboard-base:v2.2.1/' docker-compose.production.yml
+# 回到上一版本 v2.15.3
+sed -i 's/network-dashboard-base:v2.16.0/network-dashboard-base:v2.15.3/' docker-compose.production.yml
 docker compose -f docker-compose.production.yml pull
 docker compose -f docker-compose.production.yml up -d
 ```
@@ -172,7 +198,7 @@ docker compose -f docker-compose.production.yml up -d
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  Base Image (coolguazi/network-dashboard-base:v2.15.3) │
+│  Base Image (coolguazi/network-dashboard-base:v2.16.0) │
 │                                                       │
 │  包含完整系統：                                         │
 │  • Python 3.11 + 所有 pip 依賴                         │
@@ -373,17 +399,17 @@ Parser 的回傳類型必須是以下之一（不能改欄位名）：
 修改完 Parser/Fetcher 代碼後：
 
 ```bash
-# 使用遞增版本號（當前最新: v2.15.3）
-bash scripts/build-and-push.sh v2.15.3
+# 使用遞增版本號（當前最新: v2.16.0）
+bash scripts/build-and-push.sh v2.16.0
 ```
 
 此腳本會依序：
 
 1. **Build** — `docker buildx build` 產出 image
-2. **CVE Scan** — Trivy 掃描 HIGH/CRITICAL 漏洞（報告存為 `trivy-report-v2.15.3.txt`）
+2. **CVE Scan** — Trivy 掃描 HIGH/CRITICAL 漏洞（報告存為 `trivy-report-v2.16.0.txt`）
    - ✅ 0 個 CRITICAL 才允許推送
    - ⚠️ HIGH 漏洞記錄但不阻擋（通常為系統函式庫）
-3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v2.15.3` + `:latest`）
+3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v2.16.0` + `:latest`）
 
 ### 3.2 手動打包
 
@@ -391,16 +417,16 @@ bash scripts/build-and-push.sh v2.15.3
 # Build
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.15.3 \
+    -t coolguazi/network-dashboard-base:v2.16.0 \
     --load .
 
 # CVE Scan（可選）
-trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v2.15.3
+trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v2.16.0
 
 # Push
 docker login
-docker push coolguazi/network-dashboard-base:v2.15.3
-docker tag coolguazi/network-dashboard-base:v2.15.3 coolguazi/network-dashboard-base:latest
+docker push coolguazi/network-dashboard-base:v2.16.0
+docker tag coolguazi/network-dashboard-base:v2.16.0 coolguazi/network-dashboard-base:latest
 docker push coolguazi/network-dashboard-base:latest
 ```
 
@@ -501,7 +527,7 @@ docker-compose -f docker-compose.production.yml up -d
 # .env 中設定 FETCHER_SOURCE__*__BASE_URL 指向真實 API
 docker-compose -f docker-compose.production.yml restart app
 
-# ========== 公司端更新（當前版本 v2.15.3） ==========
+# ========== 公司端更新（當前版本 v2.16.0） ==========
 # 1. 從 GitHub 下載最新 ZIP 並解壓替換程式碼
 # 2. 確認 .env 中 APP_IMAGE 指向公司 registry 的新版 image
 # 3. 重啟服務
