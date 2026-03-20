@@ -214,7 +214,7 @@ class Settings(BaseSettings):
         default=50, description="Max concurrent SNMP device collections",
     )
     snmp_walk_timeout: float = Field(
-        default=120.0, description="Overall timeout for a single SNMP walk (seconds)",
+        default=30.0, description="Overall timeout for a single SNMP walk (seconds)",
     )
     snmp_collector_retries: int = Field(
         default=2, description="Collector-level retry count on timeout",

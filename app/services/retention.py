@@ -18,6 +18,7 @@ from app.db.models import (
     CollectionError,
     LatestCollectionBatch,
     MaintenanceConfig,
+    SystemLog,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,28 @@ class RetentionService:
             )
 
         return stats
+
+    async def cleanup_system_logs(self, retention_days: int = 3) -> int:
+        """
+        清理超過 retention_days 的 system_logs。
+
+        Returns:
+            int: 刪除的筆數
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+        async with get_session_context() as session:
+            result = await session.execute(
+                delete(SystemLog).where(SystemLog.created_at < cutoff)
+            )
+            deleted = result.rowcount
+            if deleted > 0:
+                await session.commit()
+                logger.info(
+                    "System log cleanup: deleted %d logs older than %d days",
+                    deleted, retention_days,
+                )
+            return deleted
 
     async def cleanup_old_batches(self, retention_days: int = 7) -> dict[str, int]:
         """

@@ -1,7 +1,7 @@
 # NETORA 部署與開發 SOP
 
-> **最新版本**: `v2.17.1` (2026-03-20)
-> **重大更新**: Alembic migration 完整化、Indicators enum/schema 修復、歲修刪除級聯修復
+> **最新版本**: `v2.17.2` (2026-03-20)
+> **重大更新**: SNMP 採集效能優化、DB 容量控制、K8s 初始化修復
 
 ## 目錄
 
@@ -13,13 +13,13 @@
 
 ---
 
-## 🚀 公司端快速更新 (v2.17.1)
+## 🚀 公司端快速更新 (v2.17.2)
 
 ### 更新內容摘要
 
-**版本**: `coolguazi/network-dashboard-base:v2.17.1`
+**版本**: `coolguazi/network-dashboard-base:v2.17.2`
 
-**新功能 (v2.16.0 → v2.17.1)**:
+**新功能 (v2.16.0 → v2.17.2)**:
 - ✅ **通訊錄階層分類**: 支援父分類→子分類一層架構，側欄樹狀展示
 - ✅ **通訊錄 CSV 匯入/匯出**: 支援 `category_name` + `sub_category_name` 欄位，自動建立分類層級
 - ✅ **通訊錄新欄位**: 新增部門、分機、備註欄位
@@ -27,16 +27,16 @@
 - ✅ **拓樸視覺化強化**: 連線標籤顯示節點名稱、狀態持久化 (localStorage)、30 秒動態輪詢
 - ✅ **介面格式參考面板**: 側邊標籤常駐顯示，點擊展開完整參考表
 
-**修復 (v2.17.1)**:
+**修復 (v2.17.2 — PROD 實測修復)**:
+- ✅ **SNMP 採集效能**: 跳過 ping 不到的設備不採集，walk timeout 120→30 秒，並行數 10→30
+- ✅ **DB 容量控制**: system_logs 3 天自動清理，活躍歲修舊 batch 7 天自動清理
 - ✅ **entrypoint.sh K8s 相容**: 新增 DB 等待迴圈（最多 60 秒），fresh DB 主動 create_all + stamp head
 - ✅ **Alembic migration 完整化**: 新增 `l7f8g9h0i1j2` migration，涵蓋 client_id (7 表)、parent_id、contacts 新欄位、title 擴充、email 移除
 - ✅ **歲修刪除級聯修復**: contact_categories 自引用 FK 先刪子分類再刪父分類；新增 SeverityOverride 刪除
 - ✅ **Indicators API 修復**: IndicatorObjectType 新增 DEVICE 列舉值；DisplayConfigSchema/ObservedFieldSchema 欄位允許 None
-- ✅ MAC 刪除級聯清理 (Case、ClientRecord、ClientComparison)
-- ✅ Case API 回傳 client_id 欄位
 - ✅ CVE 掃描通過（0 個 CRITICAL）
 
-**影響範圍**: entrypoint 啟動流程、DB Migration、通訊錄、案件、MAC 清單、拓樸、Indicators
+**影響範圍**: SNMP 採集效能、DB 空間管理、entrypoint 啟動流程、DB Migration、通訊錄、案件、拓樸、Indicators
 
 **DB Migration**: 此版本的 entrypoint.sh 已完全自動化：
 - **全新 DB**: 等待 DB 就緒 → create_all 建表 → alembic stamp head（K8s/docker-compose 皆適用）
@@ -80,8 +80,8 @@ curl http://localhost:8000/health
 ### 回滾方案（如遇問題）
 
 ```bash
-# 回到上一版本 v2.16.0
-sed -i 's/network-dashboard-base:v2.17.1/network-dashboard-base:v2.16.0/' docker-compose.production.yml
+# 回到上一版本 v2.17.1
+sed -i 's/network-dashboard-base:v2.17.2/network-dashboard-base:v2.17.1/' docker-compose.production.yml
 docker compose -f docker-compose.production.yml pull
 docker compose -f docker-compose.production.yml up -d
 # 回滾 DB migration
@@ -185,7 +185,7 @@ docker compose -f docker-compose.production.yml up -d
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  Base Image (coolguazi/network-dashboard-base:v2.16.0) │
+│  Base Image (coolguazi/network-dashboard-base:v2.17.2) │
 │                                                       │
 │  包含完整系統：                                         │
 │  • Python 3.11 + 所有 pip 依賴                         │
@@ -386,17 +386,17 @@ Parser 的回傳類型必須是以下之一（不能改欄位名）：
 修改完 Parser/Fetcher 代碼後：
 
 ```bash
-# 使用遞增版本號（當前最新: v2.16.0）
-bash scripts/build-and-push.sh v2.16.0
+# 使用遞增版本號（當前最新: v2.17.2）
+bash scripts/build-and-push.sh v2.17.2
 ```
 
 此腳本會依序：
 
 1. **Build** — `docker buildx build` 產出 image
-2. **CVE Scan** — Trivy 掃描 HIGH/CRITICAL 漏洞（報告存為 `trivy-report-v2.16.0.txt`）
+2. **CVE Scan** — Trivy 掃描 HIGH/CRITICAL 漏洞（報告存為 `trivy-report-v2.17.2.txt`）
    - ✅ 0 個 CRITICAL 才允許推送
    - ⚠️ HIGH 漏洞記錄但不阻擋（通常為系統函式庫）
-3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v2.16.0` + `:latest`）
+3. **Push** — 推送到 DockerHub（`coolguazi/network-dashboard-base:v2.17.2` + `:latest`）
 
 ### 3.2 手動打包
 
@@ -404,16 +404,16 @@ bash scripts/build-and-push.sh v2.16.0
 # Build
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.16.0 \
+    -t coolguazi/network-dashboard-base:v2.17.2 \
     --load .
 
 # CVE Scan（可選）
-trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v2.16.0
+trivy image --severity HIGH,CRITICAL coolguazi/network-dashboard-base:v2.17.2
 
 # Push
 docker login
-docker push coolguazi/network-dashboard-base:v2.16.0
-docker tag coolguazi/network-dashboard-base:v2.16.0 coolguazi/network-dashboard-base:latest
+docker push coolguazi/network-dashboard-base:v2.17.2
+docker tag coolguazi/network-dashboard-base:v2.17.2 coolguazi/network-dashboard-base:latest
 docker push coolguazi/network-dashboard-base:latest
 ```
 
@@ -514,7 +514,7 @@ docker-compose -f docker-compose.production.yml up -d
 # .env 中設定 FETCHER_SOURCE__*__BASE_URL 指向真實 API
 docker-compose -f docker-compose.production.yml restart app
 
-# ========== 公司端更新（當前版本 v2.16.0） ==========
+# ========== 公司端更新（當前版本 v2.17.2） ==========
 # 1. 從 GitHub 下載最新 ZIP 並解壓替換程式碼
 # 2. 確認 .env 中 APP_IMAGE 指向公司 registry 的新版 image
 # 3. 重啟服務

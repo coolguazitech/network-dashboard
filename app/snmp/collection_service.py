@@ -171,12 +171,13 @@ class SnmpCollectionService:
             retries=settings.snmp_retries,
         )
 
-        # 1. Load target devices
+        # 1. Load target devices (only reachable ones to avoid SNMP timeout waste)
         async with get_session_context() as session:
             stmt = select(MaintenanceDeviceList).where(
                 MaintenanceDeviceList.maintenance_id == maintenance_id,
                 MaintenanceDeviceList.new_hostname != None,  # noqa: E711
                 MaintenanceDeviceList.new_ip_address != None,  # noqa: E711
+                MaintenanceDeviceList.new_is_reachable == True,  # noqa: E712
             )
             result = await session.execute(stmt)
             devices = result.scalars().all()

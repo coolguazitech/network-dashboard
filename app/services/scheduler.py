@@ -808,6 +808,11 @@ class SchedulerService:
             )
             if old_stats["batches_deleted"] > 0:
                 logger.info("Old batch cleanup: %s", old_stats)
+
+            # 清理超過 3 天的 system_logs
+            log_deleted = await svc.cleanup_system_logs(retention_days=3)
+            if log_deleted > 0:
+                logger.info("System log cleanup: %d logs deleted", log_deleted)
         except Exception as e:
             logger.error("Retention cleanup failed: %s", e)
 
