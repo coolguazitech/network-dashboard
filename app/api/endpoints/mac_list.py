@@ -1265,22 +1265,32 @@ async def export_csv(
             ),
             MaintenanceMacList.mac_address,
         )
+        # Add is_reachable to selected columns
+        stmt = stmt.add_columns(ping_by_ip_c.c.is_reachable)
         result = await session.execute(stmt)
-        clients = result.scalars().all()
+        rows = result.all()
 
         # 生成 CSV
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow([
-            "mac_address", "ip_address", "tenant_group",
-            "description", "default_assignee",
+            "mac_address", "ip_address", "ping_reachable",
+            "tenant_group", "description", "default_assignee",
         ])
 
-        for c in clients:
+        def _reach(v):
+            if v is None:
+                return "未檢測"
+            return "可達" if v else "不可達"
+
+        for row in rows:
+            c = row[0]  # MaintenanceMacList entity
+            reachable = row[1]  # is_reachable from ping join
             tg = c.tenant_group.value if c.tenant_group else "F18"
             writer.writerow([
                 c.mac_address,
                 c.ip_address,
+                _reach(reachable),
                 tg,
                 c.description or "",
                 c.default_assignee or "",

@@ -92,9 +92,12 @@ class TransceiverIndicator(BaseIndicator):
         repo = TransceiverRecordRepo(session)
         all_records = await repo.get_latest_per_device(maintenance_id)
 
-        # 查詢哪些設備已有採集 batch（區分「無資料」vs「未採集」）
+        # 查詢採集狀態（區分「正常無光口」vs「採集失敗」vs「尚未採集」）
         collected_devices = await self._get_collected_devices(
-            session, maintenance_id, "get_transceiver",
+            session, maintenance_id, "get_gbic_details",
+        )
+        error_devices = await self._get_error_devices(
+            session, maintenance_id, "get_gbic_details",
         )
 
         # 只保留設備清單中的設備紀錄，並排除管理介面（無 GBIC）
@@ -119,20 +122,27 @@ class TransceiverIndicator(BaseIndicator):
             dev_records = device_records.get(hostname, [])
 
             if not dev_records:
-                if hostname not in collected_devices:
-                    # 從未採集到資料 → 失敗
+                if hostname in error_devices:
+                    # 採集失敗（有 CollectionError）→ 失敗
                     failures.append({
                         "device": hostname,
-                        "reason": "未採集到資料",
+                        "reason": "採集失敗",
                         "data": {},
                     })
-                    continue
-                # 有 batch 但無光模塊記錄 → 設備正常（無光口）
-                pass_count += 1
-                if len(passes) < 10:
-                    passes.append({
+                elif hostname in collected_devices:
+                    # 有 batch 但無光模塊記錄 → 設備無光口，正常
+                    pass_count += 1
+                    if len(passes) < 10:
+                        passes.append({
+                            "device": hostname,
+                            "reason": "無光模塊（設備無光口）",
+                            "data": {},
+                        })
+                else:
+                    # 從未採集 → 失敗
+                    failures.append({
                         "device": hostname,
-                        "reason": "無光模塊記錄",
+                        "reason": "尚未採集",
                         "data": {},
                     })
                 continue

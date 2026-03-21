@@ -9,7 +9,7 @@ Interface Error Count indicator evaluator (device-level).
     delta = 最新變化點 crc_errors - 上一個變化點 crc_errors
     若任一介面 delta > 0 → 該設備異常
 
-設備無錯誤記錄（所有介面零錯誤）→ 通過。
+設備無採集紀錄 → 失敗。
 只有一筆 batch（首次採集）時：無歷史可比，視為通過。
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ class ErrorCountIndicator(BaseIndicator):
     Error Count 指標評估器（設備層級）。
 
     分母 = 設備數，分子 = 任一介面有 CRC 增長的設備數。
-    設備無錯誤記錄時視為正常（collector 跳過零錯誤介面）。
+    設備無採集紀錄時視為失敗。
     """
 
     indicator_type = "error_count"
@@ -64,8 +64,11 @@ class ErrorCountIndicator(BaseIndicator):
         repo = InterfaceErrorRecordRepo(session)
         active_set = set(device_hostnames)
 
-        # 0. 查詢哪些設備已有採集 batch（區分「無資料」vs「未採集」）
+        # 0. 查詢採集狀態（區分「零錯誤」vs「採集失敗」vs「尚未採集」）
         collected_devices = await self._get_collected_devices(
+            session, maintenance_id, "get_error_count",
+        )
+        error_devices = await self._get_error_devices(
             session, maintenance_id, "get_error_count",
         )
 
@@ -96,20 +99,27 @@ class ErrorCountIndicator(BaseIndicator):
             current_rows = current_by_device.get(hostname, [])
 
             if not current_rows:
-                if hostname not in collected_devices:
-                    # 從未採集到資料 → 失敗
+                if hostname in error_devices:
+                    # 採集失敗（有 CollectionError）→ 失敗
                     failures.append({
                         "device": hostname,
-                        "reason": "未採集到資料",
+                        "reason": "採集失敗",
                         "data": {},
                     })
-                    continue
-                # 有 batch 但無錯誤記錄（collector 跳過零錯誤介面）→ 設備正常
-                pass_count += 1
-                if len(passes) < 10:
-                    passes.append({
+                elif hostname in collected_devices:
+                    # 有 batch 但無錯誤記錄（所有介面零錯誤）→ 正常
+                    pass_count += 1
+                    if len(passes) < 10:
+                        passes.append({
+                            "device": hostname,
+                            "reason": "所有介面零錯誤",
+                            "data": {},
+                        })
+                else:
+                    # 從未採集 → 失敗
+                    failures.append({
                         "device": hostname,
-                        "reason": "無錯誤記錄",
+                        "reason": "尚未採集",
                         "data": {},
                     })
                 continue

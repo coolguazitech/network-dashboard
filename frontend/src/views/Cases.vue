@@ -142,6 +142,14 @@
         >
           我的案件
         </button>
+
+        <button
+          @click="exportCsv"
+          :disabled="exporting"
+          class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs rounded-lg transition flex-shrink-0"
+        >
+          {{ exporting ? '匯出中...' : '📤 匯出 CSV' }}
+        </button>
       </div>
 
       <!-- 載入中 -->
@@ -681,6 +689,7 @@ export default {
     return {
       loading: false,
       syncing: false,
+      exporting: false,
       cases: [],
       stats: {},
       // 篩選
@@ -929,6 +938,31 @@ export default {
       if (this.debounceTimer) clearTimeout(this.debounceTimer)
       this.currentPage = 1
       this.debounceTimer = setTimeout(() => this.loadCases(), 300)
+    },
+
+    // ── 匯出 CSV ──────────────────────────────────────
+    async exportCsv() {
+      if (!this.selectedMaintenanceId) return
+      this.exporting = true
+      try {
+        const p = this._buildCaseParams()
+        delete p.page
+        delete p.page_size
+        const { data } = await api.get(
+          `/cases/${this.selectedMaintenanceId}/export-csv`,
+          { params: p, responseType: 'blob' }
+        )
+        const url = window.URL.createObjectURL(new Blob([data]))
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${this.selectedMaintenanceId}_cases.csv`
+        a.click()
+        window.URL.revokeObjectURL(url)
+      } catch (e) {
+        this.showMessage('匯出失敗', 'error')
+      } finally {
+        this.exporting = false
+      }
     },
 
     // ── 同步案件 ──────────────────────────────────────

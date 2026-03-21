@@ -1,19 +1,30 @@
 """
 Cases API endpoints.
 
-案件管理 API 端點：查詢、更新、筆記、變化時間線。
+案件管理 API 端點：查詢、更新、筆記、變化時間線、匯出 CSV。
 """
 from __future__ import annotations
 
+import csv
+import io
+import json
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import case as sql_case, select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_async_session
+from app.db.models import (
+    Case, ClientRecord, LatestClientRecord, MaintenanceMacList,
+)
 from app.api.endpoints.auth import get_current_user, require_write
-from app.services.case_service import CaseService
+from app.services.case_service import (
+    ATTRIBUTE_LABELS, CaseService, TRACKED_ATTRIBUTES,
+)
+from app.core.config import settings
 from app.services.system_log import write_log
 
 
@@ -100,6 +111,183 @@ async def sync_cases(
         )
 
     return {"success": True, **result}
+
+
+@router.get("/{maintenance_id}/export-csv")
+async def export_cases_csv(
+    maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+    status: str | None = Query(None, description="篩選狀態"),
+    assignee: str | None = Query(None, description="篩選負責人"),
+    search: str | None = Query(None, description="搜尋 MAC、IP 或備註"),
+    ping_reachable: bool | None = Query(None, description="篩選 Ping 狀態"),
+    include_resolved: bool = Query(False, description="是否包含已解決案件"),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """匯出案件為 CSV（含最新 client 屬性快照，套用當前篩選條件）。"""
+    from app.core.enums import CaseStatus
+
+    # ── 1. 查詢案件 + MAC 資訊（與 list_cases 相同篩選邏輯）──
+    stmt = (
+        select(
+            Case,
+            MaintenanceMacList.ip_address,
+            MaintenanceMacList.description.label("client_desc"),
+            MaintenanceMacList.tenant_group,
+        )
+        .outerjoin(MaintenanceMacList, Case.client_id == MaintenanceMacList.id)
+        .where(Case.maintenance_id == maintenance_id)
+    )
+
+    if status:
+        try:
+            stmt = stmt.where(Case.status == CaseStatus(status))
+        except ValueError:
+            pass
+    elif not include_resolved:
+        stmt = stmt.where(Case.status != CaseStatus.RESOLVED)
+
+    if assignee:
+        stmt = stmt.where(Case.assignee == assignee)
+
+    if ping_reachable is not None:
+        if ping_reachable:
+            stmt = stmt.where(Case.last_ping_reachable == True)  # noqa: E712
+        else:
+            stmt = stmt.where(
+                or_(
+                    Case.last_ping_reachable == False,  # noqa: E712
+                    Case.last_ping_reachable == None,  # noqa: E711
+                )
+            )
+
+    if search:
+        keywords = search.strip().split()
+        if keywords:
+            search_conditions = []
+            for field in [Case.mac_address, MaintenanceMacList.ip_address, MaintenanceMacList.description]:
+                field_match = and_(*[field.ilike(f"%{kw}%") for kw in keywords])
+                search_conditions.append(field_match)
+            stmt = stmt.where(or_(*search_conditions))
+
+    stmt = stmt.order_by(
+        sql_case(
+            (Case.last_ping_reachable == None, 0),   # noqa: E711
+            (Case.last_ping_reachable == False, 1),   # noqa: E712
+            else_=2,
+        ),
+        Case.mac_address,
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    if not rows:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(_csv_header())
+        output.seek(0)
+        content = "\ufeff" + output.getvalue()
+        return StreamingResponse(
+            iter([content.encode("utf-8")]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{maintenance_id}_cases.csv"'
+                ),
+            },
+        )
+
+    # ── 2. 批量取每個案件的最新 ClientRecord 快照 ──
+    client_ids = [case_obj.client_id for case_obj, *_ in rows if case_obj.client_id]
+
+    snapshot_map: dict[int, ClientRecord] = {}
+    if client_ids:
+        lcr_stmt = (
+            select(LatestClientRecord.client_id, LatestClientRecord.collected_at)
+            .where(
+                LatestClientRecord.maintenance_id == maintenance_id,
+                LatestClientRecord.client_id.in_(client_ids),
+            )
+        )
+        lcr_result = await session.execute(lcr_stmt)
+        lcr_map = {r.client_id: r.collected_at for r in lcr_result.all()}
+
+        if lcr_map:
+            cr_stmt = (
+                select(ClientRecord)
+                .where(
+                    ClientRecord.maintenance_id == maintenance_id,
+                    ClientRecord.client_id.in_(list(lcr_map.keys())),
+                )
+                .order_by(ClientRecord.collected_at.desc())
+            )
+            cr_result = await session.execute(cr_stmt)
+            for cr in cr_result.scalars().all():
+                if cr.client_id not in snapshot_map:
+                    snapshot_map[cr.client_id] = cr
+
+    # ── 3. 生成 CSV ──
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(_csv_header())
+
+    for case_obj, ip_address, description, tenant_group in rows:
+        snap = snapshot_map.get(case_obj.client_id)
+        flags = case_obj.change_flags or {}
+
+        acl_str = ""
+        if snap and snap.acl_rules_applied:
+            acl_raw = snap.acl_rules_applied
+            if isinstance(acl_raw, list):
+                acl_str = ", ".join(str(a) for a in acl_raw)
+            elif isinstance(acl_raw, dict):
+                acl_str = json.dumps(acl_raw, ensure_ascii=False)
+            else:
+                acl_str = str(acl_raw)
+
+        changed_attrs = [
+            ATTRIBUTE_LABELS.get(attr, attr)
+            for attr in TRACKED_ATTRIBUTES
+            if flags.get(attr)
+        ]
+
+        writer.writerow([
+            case_obj.id,
+            case_obj.mac_address,
+            ip_address or "",
+            description or "",
+            tenant_group.value if tenant_group else "",
+            case_obj.status.value if case_obj.status else "",
+            case_obj.assignee or "",
+            case_obj.summary or "",
+            "是" if case_obj.last_ping_reachable else (
+                "否" if case_obj.last_ping_reachable is False else "未知"
+            ),
+            (snap.switch_hostname if snap else ""),
+            (snap.interface_name if snap else ""),
+            (snap.speed if snap else ""),
+            (snap.duplex if snap else ""),
+            (snap.link_status if snap else ""),
+            (str(snap.vlan_id) if snap and snap.vlan_id is not None else ""),
+            acl_str,
+            ", ".join(changed_attrs) if changed_attrs else "",
+            _to_local(case_obj.created_at),
+            _to_local(case_obj.updated_at),
+        ])
+
+    output.seek(0)
+    content = "\ufeff" + output.getvalue()
+
+    return StreamingResponse(
+        iter([content.encode("utf-8")]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{maintenance_id}_cases.csv"'
+            ),
+        },
+    )
 
 
 @router.get("/{maintenance_id}/{case_id}")
@@ -351,3 +539,27 @@ async def get_change_timeline(
             lcr.last_checked_at.isoformat() if lcr and lcr.last_checked_at else None
         ),
     }
+
+
+# ── helpers ──────────────────────────────────────────────────
+
+
+def _to_local(dt) -> str:
+    """UTC datetime → 設定時區的字串。"""
+    if not dt:
+        return ""
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(settings.timezone)
+    utc_dt = dt.replace(tzinfo=timezone.utc)
+    return utc_dt.astimezone(tz).strftime("%Y-%m-%d %H:%M")
+
+
+def _csv_header() -> list[str]:
+    """案件 CSV 標題列。"""
+    return [
+        "案件編號", "MAC", "IP", "備註", "租戶群組",
+        "狀態", "負責人", "摘要", "Ping",
+        "交換機", "介面", "速率", "雙工", "連線狀態", "VLAN", "ACL",
+        "屬性變化", "建立時間", "更新時間",
+    ]

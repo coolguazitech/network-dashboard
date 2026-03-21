@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import LatestCollectionBatch, MaintenanceDeviceList
+from app.db.models import CollectionError, LatestCollectionBatch, MaintenanceDeviceList
 
 
 
@@ -122,6 +122,20 @@ class BaseIndicator(ABC):
         stmt = select(LatestCollectionBatch.switch_hostname).where(
             LatestCollectionBatch.maintenance_id == maintenance_id,
             LatestCollectionBatch.collection_type == collection_type,
+        )
+        result = await session.execute(stmt)
+        return {row[0] for row in result.all()}
+
+    @staticmethod
+    async def _get_error_devices(
+        session: AsyncSession,
+        maintenance_id: str,
+        collection_type: str,
+    ) -> set[str]:
+        """查詢有採集錯誤的設備集合（SNMP 失敗但寫了空 batch）。"""
+        stmt = select(CollectionError.switch_hostname).where(
+            CollectionError.maintenance_id == maintenance_id,
+            CollectionError.collection_type == collection_type,
         )
         result = await session.execute(stmt)
         return {row[0] for row in result.all()}

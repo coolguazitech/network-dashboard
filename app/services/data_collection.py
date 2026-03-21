@@ -269,7 +269,7 @@ class ApiCollectionService:
         # 5. Save to DB (hash 比對：未變化時回傳 None)
         batch = await typed_repo.save_batch(
             switch_hostname=hostname,
-            raw_data=result.raw_output,
+            raw_data=None,
             parsed_items=parsed_items,
             maintenance_id=maintenance_id,
         )

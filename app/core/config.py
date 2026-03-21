@@ -147,6 +147,14 @@ class Settings(BaseSettings):
     )
     db_user: str = Field(default="admin", description="DB user")
     db_password: str = Field(default="admin", description="DB password")
+    db_pool_size: int = Field(
+        default=10,
+        description="SQLAlchemy connection pool size (base connections kept open).",
+    )
+    db_max_overflow: int = Field(
+        default=20,
+        description="SQLAlchemy max overflow connections beyond pool_size.",
+    )
 
     # Fetcher Sources (per-source connection config)
     fetcher_source: FetcherSourceConfig = FetcherSourceConfig()
@@ -156,6 +164,12 @@ class Settings(BaseSettings):
 
     # GNMS Ping (per-tenant base_url + 統一 endpoint)
     gnmsping: GnmsPingConfig = GnmsPingConfig()
+
+    # Scheduler toggle (set to false for API-only replicas in K8s)
+    enable_scheduler: bool = Field(
+        default=True,
+        description="Enable background scheduler. Set false for API-only pods in K8s split deployment.",
+    )
 
     # Scheduling
     collection_interval_seconds: int = Field(
@@ -202,7 +216,7 @@ class Settings(BaseSettings):
     )
     snmp_port: int = Field(default=161, description="SNMP target port")
     snmp_timeout: float = Field(
-        default=5.0, description="SNMP PDU timeout in seconds",
+        default=8.0, description="SNMP PDU timeout in seconds",
     )
     snmp_retries: int = Field(
         default=2, description="SNMP PDU retry count (pysnmp transport layer)",

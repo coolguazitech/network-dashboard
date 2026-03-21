@@ -166,7 +166,7 @@
 </template>
 
 <script setup>
-import { ref, computed, inject, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, inject, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import api from '@/utils/api'
 
 const selectedMaintenanceId = inject('maintenanceId')
@@ -179,6 +179,7 @@ const showManagement = ref(false)
 const showExternal = ref(false)
 const pinnedNodes = ref(new Set())  // 已鎖定的節點集合（累加探索）
 const pinnedOnly = ref(false)       // 僅顯示選取節點之間的連線
+const userPositions = ref({})       // 使用者拖曳後的節點座標 { name: [x, y] }
 
 // ── 狀態持久化 ──
 const STORAGE_PREFIX = 'topo_state_'
@@ -226,8 +227,54 @@ function stopPolling() {
   if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null }
 }
 
+// 保存拖曳位置（polling 前呼叫，避免 node 回到原位）
+function captureNodePositions() {
+  const chart = chartRef.value?.chart
+  if (!chart) return
+  try {
+    const graph = chart.getModel().getSeries()[0]?.getGraph()
+    if (!graph) return
+    const newPos = {}
+    graph.eachNode(node => {
+      const layout = node.getLayout()
+      if (layout) newPos[node.name || node.id] = [layout[0], layout[1]]
+    })
+    if (Object.keys(newPos).length > 0) userPositions.value = newPos
+  } catch (_) { /* not ready */ }
+}
+
+// 介面名稱正規化：長格式 → 縮寫
+const _IF_PREFIX = [
+  [/^Twenty-FiveGigabitEthernet/i, 'WGE'], [/^Ten-GigabitEthernet/i, 'XGE'],
+  [/^HundredGigabitEthernet/i, 'Hu'], [/^FortyGigabitEthernet/i, 'Fo'],
+  [/^TenGigabitEthernet/i, 'TE'], [/^GigabitEthernet/i, 'GE'],
+  [/^FastEthernet/i, 'FE'], [/^Bridge-Aggregation/i, 'BAGG'],
+  [/^M-GigabitEthernet/i, 'MGE'], [/^Port-[Cc]hannel/i, 'Po'],
+  [/^Bundle-Ether/i, 'BE'], [/^Management/i, 'Mgmt'],
+  [/^Loopback/i, 'Lo'], [/^Ethernet/i, 'Eth'],
+  [/^Vlan-interface\s*/i, 'Vlan'],
+]
+function shortIf(name) {
+  if (!name) return name
+  for (const [re, prefix] of _IF_PREFIX) {
+    const m = name.match(re)
+    if (m) return prefix + name.slice(m[0].length)
+  }
+  return name
+}
+
+// hostname hash — 用於定義 edge 一致性方向
+function hashHostname(name) {
+  let h = 0
+  for (let i = 0; i < name.length; i++) {
+    h = (h * 31 + name.charCodeAt(i)) | 0
+  }
+  return h >>> 0
+}
+
 async function refreshTopologyQuiet() {
   if (!selectedMaintenanceId.value) return
+  captureNodePositions()
   try {
     const { data } = await api.get(`/topology/${selectedMaintenanceId.value}`)
     topology.value = data   // watcher 會保留 pinnedNodes
@@ -463,6 +510,94 @@ const chartOption = computed(() => {
   // ── label 策略 ──
   const isPinMode = pinned.size > 0
 
+  // ── 預先建構 links 與中點標籤節點（避免 edge label 旋轉問題）──
+  let builtLinks
+
+  if (onlyMode) {
+    const pairMap = {}
+    displayLinks.forEach(l => {
+      // 用 hash 值決定 canonical 方向（小 hash → 大 hash）
+      const hSrc = hashHostname(l.source)
+      const hTgt = hashHostname(l.target)
+      const srcFirst = hSrc < hTgt || (hSrc === hTgt && l.source < l.target)
+      const sorted = srcFirst ? [l.source, l.target] : [l.target, l.source]
+      const key = sorted.join('|')
+      if (!pairMap[key]) pairMap[key] = { source: sorted[0], target: sorted[1], interfaces: [], src_interfaces: [], tgt_interfaces: [], statuses: [], is_management: false }
+      if (l.source === sorted[0]) {
+        pairMap[key].src_interfaces.push(l.local_interface)
+        pairMap[key].tgt_interfaces.push(l.remote_interface)
+      } else {
+        pairMap[key].src_interfaces.push(l.remote_interface)
+        pairMap[key].tgt_interfaces.push(l.local_interface)
+      }
+      pairMap[key].interfaces.push(`${l.local_interface} ↔ ${l.remote_interface}`)
+      pairMap[key].statuses.push(l.status)
+      if (l.is_management) pairMap[key].is_management = true
+    })
+
+    builtLinks = Object.values(pairMap).map(p => {
+      const status = p.statuses.includes('expected_fail') ? 'expected_fail'
+        : p.statuses.includes('expected_pass') ? 'expected_pass' : 'discovered'
+
+      // 讓每個介面名稱靠近對應的節點：
+      // ECharts edge label 文字起始端靠近 source（dx≥0）或 target（dx<0，文字翻轉）
+      // dx<0 時交換順序，讓 target 介面寫在前面（文字起始端 = target 側）
+      const srcPos = userPositions.value[p.source] || hierPositions[p.source]
+      const tgtPos = userPositions.value[p.target] || hierPositions[p.target]
+      let needSwap = false
+      if (srcPos && tgtPos) {
+        needSwap = (tgtPos[0] - srcPos[0]) < 0
+      }
+
+      const labelText = p.src_interfaces.map((s, i) => {
+        const si = shortIf(s), ti = shortIf(p.tgt_interfaces[i]) || '?'
+        return needSwap ? `${ti} ↔ ${si}` : `${si} ↔ ${ti}`
+      }).join('\n')
+
+      return {
+        source: p.source, target: p.target,
+        value: labelText,
+        _srcIf: p.src_interfaces,
+        _tgtIf: p.tgt_interfaces,
+        status, is_management: p.is_management,
+        label: {
+          show: true,
+          formatter: '{c}',
+          fontSize: 14,
+          color: '#cbd5e1',
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          padding: [4, 10],
+          borderRadius: 3,
+        },
+        lineStyle: {
+          color: LINK_COLORS[status] || LINK_COLORS.discovered,
+          width: status === 'expected_fail' ? failWidth : Math.max(linkWidth, p.interfaces.length * 0.8),
+          type: status === 'expected_fail' ? 'dashed' : 'solid',
+          opacity: 0.9,
+        },
+      }
+    })
+  } else {
+    builtLinks = displayLinks.map(l => {
+      const isLinkHighlighted = pinned.size === 0 || pinned.has(l.source) || pinned.has(l.target)
+      return {
+        source: l.source, target: l.target,
+        local_interface: l.local_interface, remote_interface: l.remote_interface,
+        status: l.status, is_management: l.is_management,
+        silent: isLarge,
+        lineStyle: {
+          color: LINK_COLORS[l.status] || LINK_COLORS.discovered,
+          width: l.status === 'expected_fail' ? failWidth : linkWidth,
+          type: l.status === 'expected_fail' ? 'dashed' : 'solid',
+          opacity: isLinkHighlighted
+            ? (l.is_management ? linkOpacity * 0.5 : linkOpacity)
+            : 0.05,
+          curveness: 0,
+        },
+      }
+    })
+  }
+
   return {
     backgroundColor: 'transparent',
     tooltip: {
@@ -499,14 +634,13 @@ const chartOption = computed(() => {
             discovered: '<span style="color:#94a3b8;">無期望 (已發現)</span>',
           }
           let html = `<div style="font-weight:600;margin-bottom:4px;">${d.source} ↔ ${d.target}</div>`
-          // 合併模式下 value 是多行介面文字，非合併模式下有 local_interface/remote_interface
-          if (d.value) {
-            const lines = d.value.split('\n')
-            lines.forEach(line => {
-              html += `<div style="color:#94a3b8;">${line}</div>`
+          if (d._srcIf) {
+            d._srcIf.forEach((s, i) => {
+              const t = d._tgtIf[i] || '?'
+              html += `<div style="color:#e2e8f0;">${s} ↔ ${t}</div>`
             })
           } else if (d.local_interface) {
-            html += `<div style="color:#94a3b8;">${d.local_interface} ↔ ${d.remote_interface}</div>`
+            html += `<div style="color:#e2e8f0;">${d.local_interface} ↔ ${d.remote_interface}</div>`
           }
           html += `<div style="margin-top:4px;">${statusLabels[d.status] || d.status}</div>`
           if (d.is_management) html += `<div style="color:#f59e0b;margin-top:2px;">管理介面</div>`
@@ -546,13 +680,12 @@ const chartOption = computed(() => {
         { name: '設備清單', itemStyle: { color: NODE_COLORS.device_list } },
         { name: '外部設備', itemStyle: { color: NODE_COLORS.external } },
       ],
-      nodes: displayNodes.map(n => {
+      nodes: [...displayNodes.map(n => {
         const pos = hierPositions[n.name]
         const isFail = failNodes.has(n.name)
         const isPinnedNode = pinned.has(n.name)
         const isHighlighted = highlightNodes.has(n.name)
         const isDimmed = pinned.size > 0 && !isHighlighted
-        // Bug 3: 只有驗收失敗的節點才標紅（依據 indicator_failures）
         const color = isFail ? '#ef4444' : n.in_device_list ? getLevelColor(n.level ?? 0) : NODE_COLORS.external
         return {
           name: n.name,
@@ -564,7 +697,7 @@ const chartOption = computed(() => {
           level: n.level,
           indicator_failures: n.indicator_failures,
           hasFail: isFail,
-          ...(pos ? { x: pos[0], y: pos[1], fixed: true } : {}),
+          ...((userPositions.value[n.name] || pos) ? { x: (userPositions.value[n.name] || pos)[0], y: (userPositions.value[n.name] || pos)[1], fixed: true } : {}),
           itemStyle: {
             color,
             opacity: isDimmed ? 0.15 : 1,
@@ -578,72 +711,8 @@ const chartOption = computed(() => {
             color: (onlyMode || isPinnedNode) ? '#fff' : '#94a3b8',
           },
         }
-      }),
-      links: onlyMode
-        ? (() => {
-            // 僅選取模式：合併同對節點的平行線，顯示完整介面資訊
-            const pairMap = {}
-            displayLinks.forEach(l => {
-              const sorted = [l.source, l.target].sort()
-              const key = sorted.join('|')
-              if (!pairMap[key]) pairMap[key] = { source: sorted[0], target: sorted[1], interfaces: [], src_interfaces: [], tgt_interfaces: [], statuses: [], is_management: false }
-              if (l.source === sorted[0]) {
-                pairMap[key].src_interfaces.push(l.local_interface)
-                pairMap[key].tgt_interfaces.push(l.remote_interface)
-              } else {
-                pairMap[key].src_interfaces.push(l.remote_interface)
-                pairMap[key].tgt_interfaces.push(l.local_interface)
-              }
-              pairMap[key].interfaces.push(`${l.local_interface} ↔ ${l.remote_interface}`)
-              pairMap[key].statuses.push(l.status)
-              if (l.is_management) pairMap[key].is_management = true
-            })
-            return Object.values(pairMap).map(p => {
-              const status = p.statuses.includes('expected_fail') ? 'expected_fail'
-                : p.statuses.includes('expected_pass') ? 'expected_pass' : 'discovered'
-              const labelText = p.src_interfaces.map((s, i) =>
-                `[${p.source}] ${s} ↔ [${p.target}] ${p.tgt_interfaces[i] || '?'}`
-              ).join('\n')
-              return {
-                source: p.source, target: p.target,
-                value: labelText,
-                status, is_management: p.is_management,
-                label: {
-                  show: true,
-                  fontSize: 10,
-                  color: '#cbd5e1',
-                  backgroundColor: 'rgba(15, 23, 42, 0.75)',
-                  padding: [2, 6],
-                  borderRadius: 3,
-                  formatter: '{c}',
-                },
-                lineStyle: {
-                  color: LINK_COLORS[status] || LINK_COLORS.discovered,
-                  width: status === 'expected_fail' ? failWidth : Math.max(linkWidth, p.interfaces.length * 0.8),
-                  type: status === 'expected_fail' ? 'dashed' : 'solid',
-                  opacity: 0.9,
-                },
-              }
-            })
-          })()
-        : displayLinks.map(l => {
-            const isLinkHighlighted = pinned.size === 0 || pinned.has(l.source) || pinned.has(l.target)
-            return {
-              source: l.source, target: l.target,
-              local_interface: l.local_interface, remote_interface: l.remote_interface,
-              status: l.status, is_management: l.is_management,
-              silent: isLarge,
-              lineStyle: {
-                color: LINK_COLORS[l.status] || LINK_COLORS.discovered,
-                width: l.status === 'expected_fail' ? failWidth : linkWidth,
-                type: l.status === 'expected_fail' ? 'dashed' : 'solid',
-                opacity: isLinkHighlighted
-                  ? (l.is_management ? linkOpacity * 0.5 : linkOpacity)
-                  : 0.05,
-                curveness: 0,
-              },
-            }
-          }),
+      })],
+      links: builtLinks,
     }],
   }
 })
@@ -653,6 +722,7 @@ const fetchTopology = async () => {
 
   loading.value = true
   fetchError.value = null
+  userPositions.value = {}  // 重新整理時清除拖曳位置
   try {
     const response = await api.get(`/topology/${selectedMaintenanceId.value}`)
     topology.value = response.data
@@ -709,6 +779,36 @@ function resetPins() {
   pinnedNodes.value = new Set()
 }
 
+// ── 拖曳偵測：拖曳結束後重新擷取座標，觸發 label 方向修正 ──
+let _dragStart = null
+let _zrBound = false
+
+function bindDragEvents() {
+  const chart = chartRef.value?.chart
+  if (!chart || _zrBound) return
+  const zr = chart.getZr()
+  zr.on('mousedown', (e) => {
+    _dragStart = { x: e.offsetX, y: e.offsetY }
+  })
+  zr.on('mouseup', (e) => {
+    if (!_dragStart) return
+    const ddx = e.offsetX - _dragStart.x
+    const ddy = e.offsetY - _dragStart.y
+    if (ddx * ddx + ddy * ddy > 25) {  // 超過 5px 才算拖曳
+      captureNodePositions()
+    }
+    _dragStart = null
+  })
+  _zrBound = true
+}
+
+watch(chartOption, async (val) => {
+  if (val && !_zrBound) {
+    await nextTick()
+    bindDragEvents()
+  }
+})
+
 // 資料更新時保留選取狀態，只清理不存在的節點
 watch(topology, (newTopo) => {
   if (!newTopo || newTopo.nodes.length === 0) {
@@ -724,8 +824,13 @@ watch(topology, (newTopo) => {
   if (cleaned.size === 0) pinnedOnly.value = false
 })
 
-// 選取/toggle 變化時自動儲存
+// 切換 onlyMode 或改變 pin 時清除拖曳座標，避免用到全圖舊座標算出錯誤方向
+// 只在切換 onlyMode 時清除拖曳座標（佈局完全改變）
+watch(pinnedOnly, () => {
+  userPositions.value = {}
+  saveUiState()
+})
 watch(pinnedNodes, (v) => { if (v.size === 0) pinnedOnly.value = false; saveUiState() })
-watch([pinnedOnly, showManagement, showExternal], saveUiState)
+watch([showManagement, showExternal], saveUiState)
 
 </script>

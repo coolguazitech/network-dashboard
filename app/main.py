@@ -133,18 +133,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Threshold overrides: per-maintenance, loaded lazily on first access
 
-    # Start scheduled jobs
-    jobs = fetcher_config.get("jobs", [])
-    if jobs:
-        await setup_scheduled_jobs(jobs)
-        logger.info(f"Started {len(jobs)} scheduled jobs")
+    # Start scheduled jobs (可透過 ENABLE_SCHEDULER=false 停用，用於 K8s 拆分 API / Worker)
+    enable_scheduler = settings.enable_scheduler
+    if enable_scheduler:
+        jobs = fetcher_config.get("jobs", [])
+        if jobs:
+            await setup_scheduled_jobs(jobs)
+            logger.info(f"Started {len(jobs)} scheduled jobs")
+    else:
+        logger.info("Scheduler disabled (ENABLE_SCHEDULER=false), running as API-only")
 
     yield
 
     # Shutdown
     logger.info("Shutting down application...")
-    scheduler = get_scheduler_service()
-    scheduler.stop()
+    if enable_scheduler:
+        scheduler = get_scheduler_service()
+        scheduler.stop()
     await close_db()
 
 

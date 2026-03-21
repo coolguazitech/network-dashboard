@@ -1,7 +1,14 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.15.3 (2026-03-18)
+> **版本**: v2.18.0 (2026-03-21)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.18.0 變更摘要**:
+> - **K8s API/Scheduler 分離架構**：新增 `ENABLE_SCHEDULER` 環境變數，同一 image 可分別部署為 API-only（水平擴展）或 Scheduler-only（固定 1 replica），附完整 K8s manifest 範例（附錄 E）
+> - **DB 連線池可調**：新增 `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` 環境變數，API 和 Scheduler 可獨立調整連線池大小
+> - **Device Ping 分批**：比照 Client Ping 加入 500/batch chunking，避免大量 IP 一次送出導致 GNMSPING timeout
+> - **拓樸 Edge Label 方向修正**：使用 hash 排序 + dx 判斷，確保每個介面名稱靠近對應節點
+> - **拓樸 Edge Label 格式改用 `{c}` formatter**：修復 ECharts graph edge label 不支援 function formatter 的問題
 >
 > **v2.15.3 變更摘要**:
 > - **[Production Bug] Client Ping 修復**：修復 5000+ IP ping 結果導致 `Data too long for column 'raw_data'` 錯誤（TEXT 64KB → MEDIUMTEXT 16MB）
@@ -115,6 +122,7 @@
 - [附錄 B：Parser 對照表](#附錄-bparser-對照表)
 - [附錄 C：ParsedData 模型欄位](#附錄-cparseddata-模型欄位)
 - [附錄 D：SNMP 程式碼除錯指南（自己看懂 + 找問題）](#附錄-dsnmp-程式碼除錯指南自己看懂--找問題)
+- [附錄 E：Kubernetes 部署指南（API / Scheduler 分離架構）](#附錄-ekubernetes-部署指南api--scheduler-分離架構)
 
 ---
 
@@ -128,16 +136,16 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.15.3` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.18.0` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.15.3` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.18.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
 掃描通過後會拿到公司內部的 image URL，例如：
 
 ```
-registry.company.com/netora/network-dashboard-base:v2.15.3
+registry.company.com/netora/network-dashboard-base:v2.18.0
 registry.company.com/netora/netora-mariadb:10.11
 ...
 ```
@@ -166,17 +174,17 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.3
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.0
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.15.3
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.18.0
 ```
 
 拉取 image：
 
 ```bash
-docker pull registry.company.com/netora/network-dashboard-base:v2.15.3
+docker pull registry.company.com/netora/network-dashboard-base:v2.18.0
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.15.3
+docker pull registry.company.com/netora/netora-mock-server:v2.18.0
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 
@@ -210,7 +218,7 @@ DB_ROOT_PASSWORD=<強密碼>
 JWT_SECRET=<隨機字串>
 
 # ===== Image URL（必改）=====
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.3
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.0
 
 # ===== 真實 API 來源（必改）=====
 # FNA: Bearer token 認證; DNA: 不需認證; 皆無 SSL
@@ -756,19 +764,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.15.3 \
+    -t coolguazi/network-dashboard-base:v2.18.0 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.15.3
+    coolguazi/network-dashboard-base:v2.18.0
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.15.3
+docker push coolguazi/network-dashboard-base:v2.18.0
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.15.3 | gzip > netora-app-v2.9.0.tar.gz
+docker save coolguazi/network-dashboard-base:v2.18.0 | gzip > netora-app-v2.9.0.tar.gz
 ```
 
 #### 在公司環境（無外網）
@@ -777,7 +785,7 @@ docker save coolguazi/network-dashboard-base:v2.15.3 | gzip > netora-app-v2.9.0.
 
 ```bash
 docker build \
-    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.3 \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.0 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.9.0-fix1 \
     .
@@ -1161,7 +1169,7 @@ cd netora
 
 # BASE_IMAGE = 公司 registry 掃描通過後的 URL
 docker build \
-    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.15.3 \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.0 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.9.0 \
     .
@@ -1736,7 +1744,7 @@ app/snmp/
      ↓
 5. 在公司重建 image（見 SOP 1b.8）：
    docker build \
-     --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.15.3 \
+     --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.18.0 \
      -f docker/production/Dockerfile \
      -t netora-production:v2.9.0-fix1 .
      ↓
@@ -1770,9 +1778,9 @@ app/snmp/
 ```
 # ===== Phase 1: 起服務（SNMP Mock，推薦首次驗證）=====
 unzip netora-main.zip && cd netora-main
-docker pull <公司registry>/network-dashboard-base:v2.15.3
+docker pull <公司registry>/network-dashboard-base:v2.18.0
 cp .env.mock .env
-# 編輯 .env：APP_IMAGE=<公司registry>/network-dashboard-base:v2.15.3
+# 編輯 .env：APP_IMAGE=<公司registry>/network-dashboard-base:v2.18.0
 docker compose -f docker-compose.production.yml --profile mock up -d
 # alembic 自動執行，等 30 秒
 curl http://localhost:8000/health
@@ -1807,7 +1815,7 @@ make parse-debug                            # 產生 AI bundle
 
 # ===== Phase 3: 最終部署 =====
 docker build \
-    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.15.3 \
+    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.18.0 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.9.0 .
 # 編輯 .env: APP_IMAGE=netora-production:v2.9.0
@@ -1815,3 +1823,360 @@ docker-compose -f docker-compose.production.yml down
 docker-compose -f docker-compose.production.yml up -d
 # alembic 自動執行
 ```
+
+---
+
+## 附錄 E：Kubernetes 部署指南（API / Scheduler 分離架構）
+
+> **適用情境**：從 Docker Compose 遷移到 Kubernetes，或需要水平擴展 API 層。
+>
+> **架構原理**：同一個 image 透過環境變數 `ENABLE_SCHEDULER` 控制角色：
+> - `true`（預設）= 啟動排程 + API（Scheduler Pod）
+> - `false` = 只跑 API，不啟動排程（API Pod）
+>
+> 分離的好處：
+> 1. **隔離**：採集任務（SNMP/Ping）不阻塞 API 回應
+> 2. **獨立擴展**：API 流量大加 replica，採集不受影響
+> 3. **故障不擴散**：Worker OOM 不影響 API 服務
+
+### E.1 資源分配建議
+
+以 **400 台設備** 為基準：
+
+| 元件 | 類型 | Replicas | CPU req/limit | MEM req/limit | PVC |
+|------|------|----------|---------------|---------------|-----|
+| **netora-api** | Deployment | 2-3 | 200m / 1000m | 256Mi / 512Mi | — |
+| **netora-scheduler** | Deployment | **1** | 500m / 2000m | 512Mi / 2Gi | — |
+| **mariadb** | StatefulSet | 1 | 500m / 2000m | 512Mi / 2Gi | 20Gi (SSD) |
+| **seaweedfs** | StatefulSet | 1 | 100m / 500m | 256Mi / 1Gi | 10Gi |
+| **phpmyadmin** | Deployment | 1 | 50m / 500m | 128Mi / 256Mi | — |
+
+> **設備規模換算**：
+> - 200-500 台：上表配置
+> - 500-1000 台：Scheduler CPU 1000m/4000m、MEM 1Gi/4Gi、DB PVC 50Gi
+> - 1000+ 台：Scheduler CPU 2000m/4000m、MEM 2Gi/8Gi、DB PVC 100Gi
+> - API 不用調，加 replica 即可
+
+### E.2 Manifest 範例
+
+#### API Deployment（可水平擴展）
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netora-api
+  labels:
+    app: netora
+    role: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: netora
+      role: api
+  template:
+    metadata:
+      labels:
+        app: netora
+        role: api
+    spec:
+      containers:
+      - name: app
+        image: registry.company.com/netora/network-dashboard-base:v2.18.0
+        ports:
+        - containerPort: 8000
+        env:
+        - name: ENABLE_SCHEDULER
+          value: "false"
+        - name: DB_POOL_SIZE       # API 輕量，少連線即可
+          value: "5"
+        - name: DB_MAX_OVERFLOW
+          value: "10"
+        # --- 以下與 .env.production 相同，改用 ConfigMap/Secret 管理 ---
+        envFrom:
+        - configMapRef:
+            name: netora-config
+        - secretRef:
+            name: netora-secrets
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "512Mi"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+```
+
+#### Scheduler Deployment（固定 1 replica）
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netora-scheduler
+  labels:
+    app: netora
+    role: scheduler
+spec:
+  replicas: 1                    # ⚠️ 必須為 1，避免重複採集
+  strategy:
+    type: Recreate               # 不要 RollingUpdate，確保同時只有一個
+  selector:
+    matchLabels:
+      app: netora
+      role: scheduler
+  template:
+    metadata:
+      labels:
+        app: netora
+        role: scheduler
+    spec:
+      containers:
+      - name: app
+        image: registry.company.com/netora/network-dashboard-base:v2.18.0
+        ports:
+        - containerPort: 8000
+        env:
+        - name: ENABLE_SCHEDULER
+          value: "true"
+        - name: DB_POOL_SIZE       # Scheduler 密集 DB 操作，需要多連線
+          value: "15"
+        - name: DB_MAX_OVERFLOW
+          value: "30"
+        envFrom:
+        - configMapRef:
+            name: netora-config
+        - secretRef:
+            name: netora-secrets
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+```
+
+#### Service（指向 API pods，Scheduler 也可收 API 但不必要）
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: netora-api
+spec:
+  selector:
+    app: netora
+    role: api
+  ports:
+  - port: 8000
+    targetPort: 8000
+```
+
+#### MariaDB StatefulSet
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mariadb
+spec:
+  serviceName: mariadb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mariadb
+  template:
+    metadata:
+      labels:
+        app: mariadb
+    spec:
+      containers:
+      - name: mariadb
+        image: registry.company.com/netora/netora-mariadb:10.11
+        ports:
+        - containerPort: 3306
+        env:
+        - name: MARIADB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: netora-secrets
+              key: DB_ROOT_PASSWORD
+        - name: MARIADB_DATABASE
+          value: "netora"
+        - name: MARIADB_USER
+          value: "admin"
+        - name: MARIADB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: netora-secrets
+              key: DB_PASSWORD
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/mysql
+        - name: config
+          mountPath: /etc/mysql/conf.d
+      volumes:
+      - name: config
+        configMap:
+          name: mariadb-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: ssd        # 依環境替換（gp3, premium-rw 等）
+      resources:
+        requests:
+          storage: 20Gi
+```
+
+#### SeaweedFS StatefulSet
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: seaweedfs
+spec:
+  serviceName: seaweedfs
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seaweedfs
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+    spec:
+      containers:
+      - name: seaweedfs
+        image: registry.company.com/netora/netora-seaweedfs:4.13
+        ports:
+        - containerPort: 8333
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+#### MariaDB ConfigMap（調整 max_connections）
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mariadb-config
+data:
+  custom.cnf: |
+    [mysqld]
+    max_connections = 300
+```
+
+> **連線數計算**：API ×3（每個 max 15）+ Scheduler ×1（max 45）= 90 連線，300 留有餘裕。
+
+#### ConfigMap / Secret（將 .env.production 拆開）
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netora-config
+data:
+  DB_HOST: "mariadb"
+  DB_PORT: "3306"
+  DB_NAME: "netora"
+  DB_USER: "admin"
+  COLLECTION_MODE: "snmp"
+  COLLECTION_INTERVAL_SECONDS: "300"
+  SNMP_CONCURRENCY: "50"
+  GNMSPING__TIMEOUT: "60"
+  GNMSPING__ENDPOINT: "/api/v1/ping"
+  # ... 其餘非機敏設定
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: netora-secrets
+type: Opaque
+stringData:
+  DB_PASSWORD: "<強密碼>"
+  DB_ROOT_PASSWORD: "<強密碼>"
+  JWT_SECRET: "<隨機字串>"
+  FETCHER_SOURCE__FNA__TOKEN: "<FNA token>"
+  GNMSPING__TOKEN: "<Ping token>"
+```
+
+### E.3 驗證部署
+
+```bash
+# 確認所有 Pod 正常
+kubectl get pods -l app=netora
+
+# 確認 API 可用
+kubectl port-forward svc/netora-api 8000:8000
+curl http://localhost:8000/health
+
+# 確認 Scheduler 有啟動排程（看 log）
+kubectl logs -l role=scheduler --tail=20
+# 應看到 "Started X scheduled jobs"
+
+# 確認 API Pod 沒有排程（看 log）
+kubectl logs -l role=api --tail=20
+# 應看到 "Scheduler disabled (ENABLE_SCHEDULER=false), running as API-only"
+```
+
+### E.4 注意事項
+
+1. **Scheduler 必須只有 1 個 replica**，否則排程任務會重複執行
+2. **Scheduler strategy 用 `Recreate`**，避免滾動更新時短暫出現 2 個 scheduler
+3. **DB PVC 用 SSD storageClass**，MEDIUMTEXT 欄位的讀寫效能差異明顯
+4. **不設 `ENABLE_SCHEDULER` 時預設為 `true`**，與現有 Docker Compose 部署行為完全相同
+5. **.env 遷移到 ConfigMap/Secret**：機敏資料（密碼、token）放 Secret，其餘放 ConfigMap

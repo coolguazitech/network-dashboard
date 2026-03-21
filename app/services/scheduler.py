@@ -463,6 +463,8 @@ class SchedulerService:
                             if d.old_ip_address:
                                 ip_to_dev_side.setdefault(d.old_ip_address, []).append((d, "old"))
 
+                        CHUNK_SIZE = 500  # 與 client_ping 一致，避免大量 IP 一次送出導致 timeout
+
                         for tg, device_ip_map in groups.items():
                             if not device_ip_map:
                                 continue
@@ -475,31 +477,36 @@ class SchedulerService:
                                 continue
 
                             url = base_url.rstrip("/") + ping_cfg.endpoint
-                            try:
-                                resp = await http.post(
-                                    url,
-                                    json={
-                                        "app_name": "network-change-orchestrator",
-                                        "token": ping_cfg.token,
-                                        "addresses": sorted(device_ip_map),
-                                        "count": 1,
-                                        "interval": 0.1,
-                                        "timeout": 1,
-                                        "concurrent_tasks": 100,
-                                        "family": 4,
-                                        "privileged": True,
-                                    },
-                                )
-                                resp.raise_for_status()
-                            except Exception as fetch_err:
-                                logger.error(
-                                    "device_ping fetch failed for %s/%s: %s",
-                                    mid, tg.value, fetch_err,
-                                )
-                                continue
+                            all_ips = sorted(device_ip_map)
+                            all_parsed_items = []
 
-                            parsed_items = self._parse_ping_response(resp.text)
-                            ip_to_result = {i.target: i for i in parsed_items}
+                            # 分批送出 ping 請求
+                            for chunk_start in range(0, len(all_ips), CHUNK_SIZE):
+                                chunk_ips = all_ips[chunk_start:chunk_start + CHUNK_SIZE]
+                                try:
+                                    resp = await http.post(
+                                        url,
+                                        json={
+                                            "app_name": "network-change-orchestrator",
+                                            "token": ping_cfg.token,
+                                            "addresses": chunk_ips,
+                                            "count": 1,
+                                            "interval": 0.1,
+                                            "timeout": 1,
+                                            "concurrent_tasks": 100,
+                                            "family": 4,
+                                            "privileged": True,
+                                        },
+                                    )
+                                    resp.raise_for_status()
+                                    all_parsed_items.extend(self._parse_ping_response(resp.text))
+                                except Exception as fetch_err:
+                                    logger.error(
+                                        "device_ping fetch failed for %s/%s chunk %d: %s",
+                                        mid, tg.value, chunk_start // CHUNK_SIZE, fetch_err,
+                                    )
+
+                            ip_to_result = {i.target: i for i in all_parsed_items}
 
                             ping_repo = get_typed_repo("ping_batch", session)
                             for ip, hostname in device_ip_map.items():
@@ -508,7 +515,7 @@ class SchedulerService:
                                     continue
                                 await ping_repo.save_batch(
                                     switch_hostname=hostname,
-                                    raw_data=resp.text,
+                                    raw_data=None,
                                     parsed_items=[result_item],
                                     maintenance_id=mid,
                                 )
@@ -528,8 +535,9 @@ class SchedulerService:
                             await session.flush()
 
                             logger.info(
-                                "device_ping %s/%s: %d IPs",
+                                "device_ping %s/%s: %d IPs (%d chunks)",
                                 mid, tg.value, len(device_ip_map),
+                                (len(all_ips) + CHUNK_SIZE - 1) // CHUNK_SIZE,
                             )
 
                 except Exception as e:

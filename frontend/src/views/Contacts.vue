@@ -240,11 +240,11 @@
               />
             </div>
             <div :class="userCanWrite ? 'col-span-2' : 'col-span-2'">姓名</div>
-            <div class="col-span-2">分類</div>
-            <div class="col-span-2">角色</div>
+            <div class="col-span-1">分類</div>
+            <div class="col-span-1">角色</div>
             <div class="col-span-1">公司</div>
-            <div class="col-span-1">電話</div>
-            <div :class="userCanWrite ? 'col-span-2' : 'col-span-3'">手機</div>
+            <div class="col-span-2">電話</div>
+            <div :class="userCanWrite ? 'col-span-3' : 'col-span-4'">手機</div>
             <div v-if="userCanWrite" class="col-span-1"></div>
           </div>
 
@@ -265,11 +265,11 @@
                 />
               </div>
               <div :class="userCanWrite ? 'col-span-2' : 'col-span-2'" class="text-white font-medium truncate">{{ contact.name }}</div>
-              <div class="col-span-2 text-slate-500 text-xs truncate" :title="getCategoryPath(contact.category_id)">{{ getCategoryPath(contact.category_id) || '-' }}</div>
-              <div class="col-span-2 text-slate-400 truncate">{{ contact.title || '-' }}</div>
+              <div class="col-span-1 text-slate-500 text-xs truncate" :title="getCategoryPath(contact.category_id)">{{ getCategoryPath(contact.category_id) || '-' }}</div>
+              <div class="col-span-1 text-slate-400 truncate">{{ contact.title || '-' }}</div>
               <div class="col-span-1 text-slate-400 truncate">{{ contact.company || '-' }}</div>
-              <div class="col-span-1 text-cyan-400 truncate">{{ contact.phone || '-' }}</div>
-              <div :class="userCanWrite ? 'col-span-2' : 'col-span-3'" class="text-cyan-400">{{ contact.mobile || '-' }}</div>
+              <div class="col-span-2 text-cyan-400 truncate">{{ contact.phone || '-' }}</div>
+              <div :class="userCanWrite ? 'col-span-3' : 'col-span-4'" class="text-cyan-400">{{ contact.mobile || '-' }}</div>
               <div v-if="userCanWrite" class="col-span-1 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition">
                 <button
                   @click="openContactModal(contact)"

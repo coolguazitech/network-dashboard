@@ -206,7 +206,7 @@ class SnmpCollectionService:
                         typed_repo = get_typed_repo(api_name, dev_session)
                         await typed_repo.save_batch(
                             switch_hostname=hostname,
-                            raw_data=raw_text,
+                            raw_data=None,
                             parsed_items=parsed_items,
                             maintenance_id=maintenance_id,
                         )

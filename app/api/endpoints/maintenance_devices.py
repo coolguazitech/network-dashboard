@@ -1114,22 +1114,31 @@ async def export_devices_csv(
         "old_hostname",
         "old_ip_address",
         "old_vendor",
+        "old_reachable",
         "new_hostname",
         "new_ip_address",
         "new_vendor",
+        "new_reachable",
         "tenant_group",
         "description",
     ])
 
     # 寫入數據行
+    def _reach(v):
+        if v is None:
+            return "未檢測"
+        return "可達" if v else "不可達"
+
     for d in devices:
         writer.writerow([
             d.old_hostname or "",
             d.old_ip_address or "",
             d.old_vendor or "",
+            _reach(d.old_is_reachable) if d.old_hostname else "",
             d.new_hostname or "",
             d.new_ip_address or "",
             d.new_vendor or "",
+            _reach(d.new_is_reachable) if d.new_hostname else "",
             d.tenant_group.value if d.tenant_group else TenantGroup.F18.value,
             d.description or "",
         ])

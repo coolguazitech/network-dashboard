@@ -113,12 +113,13 @@ const toggle = async () => {
   border-radius: 0.5rem 0 0 0.5rem;
   padding: 0.5rem 0.625rem;
   cursor: pointer;
-  transition: all 0.25s ease;
-  transform: translateX(0);
+  transition: all 0.3s ease;
+  transform: translateX(calc(100% - 1.25rem));
 }
 
 .ref-trigger:hover .ref-tab,
 .ref-trigger.active .ref-tab {
+  transform: translateX(0);
   border-color: #22d3ee;
   background: rgba(15, 23, 42, 0.97);
 }
