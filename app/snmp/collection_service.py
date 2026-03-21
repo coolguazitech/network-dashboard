@@ -184,86 +184,112 @@ class SnmpCollectionService:
             results["total"] = len(devices)
 
         # 2. Collect all devices in parallel
+        # IMPORTANT: DB session is opened ONLY for the write phase,
+        # NOT held during the SNMP walk. This prevents connection pool
+        # exhaustion when multiple jobs overlap with slow/unreachable devices.
         async def _collect_one(device: MaintenanceDeviceList) -> str:
             async with sem:
-                async with get_session_context() as dev_session:
-                    typed_repo = get_typed_repo(api_name, dev_session)
-                    hostname = device.new_hostname
-                    ip_address = device.new_ip_address
-                    try:
-                        await self._collect_for_target(
-                            hostname=hostname,
-                            ip_address=ip_address,
-                            vendor=device.new_vendor,
-                            api_name=api_name,
+                hostname = device.new_hostname
+                ip_address = device.new_ip_address
+                try:
+                    # Phase 1: SNMP walk (network I/O, no DB connection)
+                    raw_text, parsed_items = await self._snmp_walk(
+                        hostname=hostname,
+                        ip_address=ip_address,
+                        vendor=device.new_vendor,
+                        collector=collector,
+                        session_cache=session_cache,
+                    )
+
+                    # Phase 2: DB write (short-lived session)
+                    async with get_session_context() as dev_session:
+                        typed_repo = get_typed_repo(api_name, dev_session)
+                        await typed_repo.save_batch(
+                            switch_hostname=hostname,
+                            raw_data=raw_text,
+                            parsed_items=parsed_items,
                             maintenance_id=maintenance_id,
-                            collector=collector,
-                            session_cache=session_cache,
-                            typed_repo=typed_repo,
                         )
                         await _clear_collection_error(
                             dev_session, maintenance_id,
                             api_name, hostname,
                         )
-                        return "ok"
-                    except Exception as e:
-                        logger.error(
-                            "SNMP %s failed for %s: %s",
-                            api_name, hostname, e,
+
+                    if parsed_items:
+                        logger.debug(
+                            "SNMP collected %s from %s: %d items",
+                            api_name, hostname, len(parsed_items),
                         )
-                        try:
+                    return "ok"
+                except Exception as e:
+                    logger.error(
+                        "SNMP %s failed for %s: %s",
+                        api_name, hostname, e,
+                    )
+                    try:
+                        async with get_session_context() as err_session:
                             await _upsert_collection_error(
-                                dev_session, maintenance_id,
+                                err_session, maintenance_id,
                                 api_name, hostname, str(e),
                             )
-                        except Exception:
-                            logger.error(
-                                "Failed to record CollectionError for %s",
-                                hostname,
-                            )
-                        from app.services.system_log import (
-                            format_error_detail,
-                            write_log,
+                    except Exception:
+                        logger.error(
+                            "Failed to record CollectionError for %s",
+                            hostname,
                         )
-                        await write_log(
-                            level="WARNING",
-                            source="service",
-                            summary=(
-                                f"SNMP 採集失敗: {hostname} ({api_name})"
-                            ),
-                            detail=format_error_detail(
-                                exc=e,
-                                context={
-                                    "設備": hostname,
-                                    "API": api_name,
-                                    "歲修": maintenance_id,
-                                    "模式": "SNMP",
-                                    "廠商": device.new_vendor or "unknown",
-                                },
-                            ),
-                            module="snmp_collection",
-                            maintenance_id=maintenance_id,
-                        )
-                        # Save empty batch so UI shows "0 items" status
-                        try:
+                    from app.services.system_log import (
+                        format_error_detail,
+                        write_log,
+                    )
+                    await write_log(
+                        level="WARNING",
+                        source="service",
+                        summary=(
+                            f"SNMP 採集失敗: {hostname} ({api_name})"
+                        ),
+                        detail=format_error_detail(
+                            exc=e,
+                            context={
+                                "設備": hostname,
+                                "API": api_name,
+                                "歲修": maintenance_id,
+                                "模式": "SNMP",
+                                "廠商": device.new_vendor or "unknown",
+                            },
+                        ),
+                        module="snmp_collection",
+                        maintenance_id=maintenance_id,
+                    )
+                    # Save empty batch so UI shows "0 items" status
+                    try:
+                        async with get_session_context() as null_session:
+                            typed_repo = get_typed_repo(api_name, null_session)
                             await typed_repo.save_batch(
                                 switch_hostname=hostname,
                                 raw_data=f"[SNMP_ERROR] {e}",
                                 parsed_items=[],
                                 maintenance_id=maintenance_id,
                             )
-                        except Exception:
-                            logger.error(
-                                "Failed to save null batch for %s/%s",
-                                api_name, hostname,
-                            )
-                        return "fail"
+                    except Exception:
+                        logger.error(
+                            "Failed to save null batch for %s/%s",
+                            api_name, hostname,
+                        )
+                    return "fail"
 
         outcomes = await asyncio.gather(
             *[_collect_one(d) for d in devices],
+            return_exceptions=True,
         )
-        results["success"] = outcomes.count("ok")
-        results["failed"] = outcomes.count("fail")
+        # Count results (treat unexpected exceptions as failures)
+        for outcome in outcomes:
+            if isinstance(outcome, Exception):
+                logger.error("Unexpected collection error: %s", outcome)
+                results["failed"] += 1
+            elif outcome == "ok":
+                results["success"] += 1
+            else:
+                results["failed"] += 1
 
         elapsed = _time.monotonic() - t0
         logger.info(
@@ -273,50 +299,29 @@ class SnmpCollectionService:
         )
         return results
 
-    async def _collect_for_target(
+    async def _snmp_walk(
         self,
         *,
         hostname: str,
         ip_address: str,
         vendor: str | None,
-        api_name: str,
-        maintenance_id: str,
         collector: BaseSnmpCollector,
         session_cache: SnmpSessionCache,
-        typed_repo: Any,
-    ) -> None:
-        """Collect from a single device via SNMP and save to DB."""
+    ) -> tuple[str, list[BaseModel]]:
+        """
+        SNMP walk only — no DB connection needed.
+
+        Returns (raw_text, parsed_items) for the caller to save.
+        """
         device_type = DeviceType(vendor or "HPE")
-
-        # 1. Get SNMP target (community auto-detection)
         target = await session_cache.get_target(ip_address)
-
-        # 2. SNMP collect with retry
-        raw_text, parsed_items = await collector.collect_with_retry(
+        return await collector.collect_with_retry(
             target=target,
             device_type=device_type,
             session_cache=session_cache,
             engine=self._engine,
             max_retries=settings.snmp_collector_retries,
         )
-
-        # 3. Save to DB (same as ApiCollectionService)
-        batch = await typed_repo.save_batch(
-            switch_hostname=hostname,
-            raw_data=raw_text,
-            parsed_items=parsed_items,
-            maintenance_id=maintenance_id,
-        )
-        if batch is not None:
-            logger.info(
-                "SNMP collected %s from %s: %d items (new batch)",
-                api_name, hostname, len(parsed_items),
-            )
-        else:
-            logger.debug(
-                "SNMP collected %s from %s: unchanged, skipped",
-                api_name, hostname,
-            )
 
 
 # ── Error tracking helpers (same as ApiCollectionService) ─────────
