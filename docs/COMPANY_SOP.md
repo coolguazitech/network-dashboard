@@ -1,16 +1,22 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.18.2 (2026-03-22)
+> **版本**: v2.18.3 (2026-03-22)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
 >
-> **v2.18.2 變更摘要**:
+> **v2.18.3 變更摘要**:
+> - **全域 SNMP Semaphore**：所有 SNMP job 共用一個 `Semaphore(SNMP_CONCURRENCY)`，防止 N 個 job 同時跑時併發量爆炸壓垮設備 SNMP agent
+> - **分級排程 Interval**：Client 相關（mac_table, interface_status, ACL）300s，指標類（fan, power, version 等）1800s，避免所有 job 擠在同一時段
+> - **Walk timeout 預設 120s**：大型 MAC/transceiver table 需要 60-90s，舊預設 30s 不夠
+> - **Collector retry 預設 1 次**：搭配 walk_timeout=120s，最壞 ~241s/device（原 366s）
+>
+> **v2.18.3 變更摘要**:
 > - **[Production Bug] SNMP Engine 隔離**：每次 `get()`/`walk()` 建立獨立 `PySnmpEngine`，消除共享 `transportDispatcher` 造成的跨操作污染與級聯 reset → OOMKill 問題
 > - **Per-PDU hard timeout cap**：新增 `_MAX_PDU_WAIT=30s`，避免 `SNMP_TIMEOUT=30` 導致單次 PDU 等待高達 95 秒
 >
 > **v2.18.1 變更摘要**:
 > - **SNMP bulkCmd hang 防護**：為每個 `bulkCmd`/`getCmd` PDU 加入 `asyncio.wait_for` hard timeout，防止單一 PDU 永久阻塞 event loop（修復 v2.16.0 移除 `wait_for` 後的 regression）
 >
-> **v2.18.2 變更摘要**:
+> **v2.18.0 變更摘要**:
 > - **K8s API/Scheduler 分離架構**：新增 `ENABLE_SCHEDULER` 環境變數，同一 image 可分別部署為 API-only（水平擴展）或 Scheduler-only（固定 1 replica），附完整 K8s manifest 範例（附錄 E）
 > - **DB 連線池可調**：新增 `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` 環境變數，API 和 Scheduler 可獨立調整連線池大小
 > - **Device Ping 分批**：比照 Client Ping 加入 500/batch chunking，避免大量 IP 一次送出導致 GNMSPING timeout
@@ -143,16 +149,16 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.18.2` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.18.3` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.18.2` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.18.3` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
 掃描通過後會拿到公司內部的 image URL，例如：
 
 ```
-registry.company.com/netora/network-dashboard-base:v2.18.2
+registry.company.com/netora/network-dashboard-base:v2.18.3
 registry.company.com/netora/netora-mariadb:10.11
 ...
 ```
@@ -181,17 +187,17 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.2
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.3
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.18.2
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.18.3
 ```
 
 拉取 image：
 
 ```bash
-docker pull registry.company.com/netora/network-dashboard-base:v2.18.2
+docker pull registry.company.com/netora/network-dashboard-base:v2.18.3
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.18.2
+docker pull registry.company.com/netora/netora-mock-server:v2.18.3
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 
@@ -225,7 +231,7 @@ DB_ROOT_PASSWORD=<強密碼>
 JWT_SECRET=<隨機字串>
 
 # ===== Image URL（必改）=====
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.2
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.3
 
 # ===== 真實 API 來源（必改）=====
 # FNA: Bearer token 認證; DNA: 不需認證; 皆無 SSL
@@ -771,19 +777,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.18.2 \
+    -t coolguazi/network-dashboard-base:v2.18.3 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.18.2
+    coolguazi/network-dashboard-base:v2.18.3
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.18.2
+docker push coolguazi/network-dashboard-base:v2.18.3
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.18.2 | gzip > netora-app-v2.9.0.tar.gz
+docker save coolguazi/network-dashboard-base:v2.18.3 | gzip > netora-app-v2.9.0.tar.gz
 ```
 
 #### 在公司環境（無外網）
@@ -792,7 +798,7 @@ docker save coolguazi/network-dashboard-base:v2.18.2 | gzip > netora-app-v2.9.0.
 
 ```bash
 docker build \
-    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.2 \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.3 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.9.0-fix1 \
     .
@@ -1176,7 +1182,7 @@ cd netora
 
 # BASE_IMAGE = 公司 registry 掃描通過後的 URL
 docker build \
-    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.2 \
+    --build-arg BASE_IMAGE=registry.company.com/netora/network-dashboard-base:v2.18.3 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.9.0 \
     .
@@ -1751,7 +1757,7 @@ app/snmp/
      ↓
 5. 在公司重建 image（見 SOP 1b.8）：
    docker build \
-     --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.18.2 \
+     --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.18.3 \
      -f docker/production/Dockerfile \
      -t netora-production:v2.9.0-fix1 .
      ↓
@@ -1785,9 +1791,9 @@ app/snmp/
 ```
 # ===== Phase 1: 起服務（SNMP Mock，推薦首次驗證）=====
 unzip netora-main.zip && cd netora-main
-docker pull <公司registry>/network-dashboard-base:v2.18.2
+docker pull <公司registry>/network-dashboard-base:v2.18.3
 cp .env.mock .env
-# 編輯 .env：APP_IMAGE=<公司registry>/network-dashboard-base:v2.18.2
+# 編輯 .env：APP_IMAGE=<公司registry>/network-dashboard-base:v2.18.3
 docker compose -f docker-compose.production.yml --profile mock up -d
 # alembic 自動執行，等 30 秒
 curl http://localhost:8000/health
@@ -1822,7 +1828,7 @@ make parse-debug                            # 產生 AI bundle
 
 # ===== Phase 3: 最終部署 =====
 docker build \
-    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.18.2 \
+    --build-arg BASE_IMAGE=<公司registry>/network-dashboard-base:v2.18.3 \
     -f docker/production/Dockerfile \
     -t netora-production:v2.9.0 .
 # 編輯 .env: APP_IMAGE=netora-production:v2.9.0
@@ -1890,7 +1896,7 @@ spec:
     spec:
       containers:
       - name: app
-        image: registry.company.com/netora/network-dashboard-base:v2.18.2
+        image: registry.company.com/netora/network-dashboard-base:v2.18.3
         ports:
         - containerPort: 8000
         env:
@@ -1953,7 +1959,7 @@ spec:
     spec:
       containers:
       - name: app
-        image: registry.company.com/netora/network-dashboard-base:v2.18.2
+        image: registry.company.com/netora/network-dashboard-base:v2.18.3
         ports:
         - containerPort: 8000
         env:
