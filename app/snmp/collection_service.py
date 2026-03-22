@@ -1,27 +1,21 @@
 """
 SNMP Collection Service.
 
-與 ApiCollectionService 完全相同的介面，用於 SNMP 模式。
-ACL 和 Ping 自動 delegate 給 ApiCollectionService（SNMP 無法處理這些）。
+Provides two interfaces:
+1. collect() — legacy per-api_name interface (used by old scheduler path)
+2. collect_round() — new device-centric round interface (preferred)
+
+ACL and Ping automatically delegate to ApiCollectionService (not SNMP-capable).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import time as _time
 from typing import Any
 
-from pydantic import BaseModel
-from sqlalchemy import delete, select
-
 from app.core.config import settings
-from app.core.enums import DeviceType
-from app.db.base import get_session_context
-from app.db.models import CollectionError, MaintenanceDeviceList
-from app.repositories.typed_records import get_typed_repo
 from app.snmp.collector_base import BaseSnmpCollector
 from app.snmp.engine import AsyncSnmpEngine, SnmpEngineConfig
-from app.snmp.session_cache import SnmpSessionCache
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +27,28 @@ _API_PASSTHROUGH = frozenset({
     "ping_batch",
 })
 
+# SNMP collectors grouped by collection round
+FAST_ROUND_COLLECTORS = [
+    "get_mac_table",
+    "get_interface_status",
+]
+
+FULL_ROUND_COLLECTORS = [
+    "get_mac_table",
+    "get_interface_status",
+    "get_fan",
+    "get_power",
+    "get_version",
+    "get_gbic_details",
+    "get_error_count",
+    "get_channel_group",
+    "get_uplink_lldp",
+    "get_uplink_cdp",
+]
+
 
 def _build_collector_map() -> dict[str, BaseSnmpCollector]:
-    """Build registry of api_name → SNMP collector instances."""
+    """Build registry of api_name -> SNMP collector instances."""
     from app.snmp.collectors.channel_group import ChannelGroupCollector
     from app.snmp.collectors.error_count import ErrorCountCollector
     from app.snmp.collectors.fan import FanCollector
@@ -64,10 +77,10 @@ def _build_collector_map() -> dict[str, BaseSnmpCollector]:
 
 class SnmpCollectionService:
     """
-    SNMP collection service — same interface as ApiCollectionService.
+    SNMP collection service.
 
-    For api_names that have no SNMP collector (ACL, ping),
-    delegates to ApiCollectionService.
+    Primary interface: collect_round() for device-centric collection.
+    Legacy interface: collect() for backward compatibility.
     """
 
     def __init__(self) -> None:
@@ -83,13 +96,25 @@ class SnmpCollectionService:
             self._engine = AsyncSnmpEngine(config=engine_config)
         self._collectors = _build_collector_map()
         self._api_fallback: Any = None  # lazy init
-        # Global semaphore: bounds total concurrent SNMP walks across ALL jobs.
-        # Without this, N jobs × per-job concurrency overwhelms device SNMP agents.
+        # Global semaphore: bounds total concurrent SNMP device walks
+        # across ALL rounds. One slot = one device being collected.
         self._global_sem = asyncio.Semaphore(settings.snmp_concurrency)
+        self._coordinator = None  # lazy init
         logger.info(
-            "SNMP global concurrency semaphore: max %d concurrent walks",
+            "SNMP global concurrency semaphore: max %d concurrent device walks",
             settings.snmp_concurrency,
         )
+
+    def _get_coordinator(self) -> Any:
+        """Lazy-init CollectionCoordinator."""
+        if self._coordinator is None:
+            from app.snmp.collection_coordinator import CollectionCoordinator
+            self._coordinator = CollectionCoordinator(
+                engine=self._engine,
+                collectors=self._collectors,
+                semaphore=self._global_sem,
+            )
+        return self._coordinator
 
     def _get_api_fallback(self) -> Any:
         """Lazy-init ApiCollectionService to avoid circular imports."""
@@ -98,6 +123,37 @@ class SnmpCollectionService:
             self._api_fallback = ApiCollectionService()
         return self._api_fallback
 
+    async def collect_round(
+        self,
+        round_name: str,
+        collector_names: list[str],
+        maintenance_id: str,
+    ) -> dict[str, Any]:
+        """
+        Device-centric collection round.
+
+        Iterates all devices once, running all specified collectors
+        per device. Each device's community is probed only once.
+
+        Returns:
+            Dict with round stats (total, ok, unreachable, elapsed, etc.)
+        """
+        coordinator = self._get_coordinator()
+        result = await coordinator.run_round(
+            round_name=round_name,
+            collector_names=collector_names,
+            maintenance_id=maintenance_id,
+        )
+        return {
+            "round_name": result.round_name,
+            "total": result.total_devices,
+            "ok": result.ok,
+            "unreachable": result.unreachable,
+            "partial": result.partial,
+            "elapsed": result.elapsed,
+            "per_collector": result.per_collector,
+        }
+
     async def collect(
         self,
         api_name: str,
@@ -105,7 +161,10 @@ class SnmpCollectionService:
         maintenance_id: str,
     ) -> dict[str, Any]:
         """
-        Same signature and return type as ApiCollectionService.collect().
+        Legacy per-api_name interface.
+
+        For non-SNMP APIs (ACL, ping), delegates to ApiCollectionService.
+        For SNMP APIs, runs a single-collector round via the coordinator.
         """
         # Passthrough to API for non-SNMP indicators
         if api_name in _API_PASSTHROUGH:
@@ -126,259 +185,21 @@ class SnmpCollectionService:
                 maintenance_id=maintenance_id,
             )
 
-        results: dict[str, Any] = {
+        # Delegate to coordinator for a single-collector round
+        round_result = await self.collect_round(
+            round_name=f"single_{api_name}",
+            collector_names=[api_name],
+            maintenance_id=maintenance_id,
+        )
+
+        # Convert to legacy format
+        return {
             "api_name": api_name,
-            "total": 0,
-            "success": 0,
-            "failed": 0,
+            "total": round_result["total"],
+            "success": round_result["ok"],
+            "failed": round_result["unreachable"] + round_result["partial"],
             "errors": [],
         }
-
-        max_retries = 2
-        for attempt in range(max_retries + 1):
-            try:
-                return await self._do_collect(
-                    api_name=api_name,
-                    collector=collector,
-                    maintenance_id=maintenance_id,
-                    results=results,
-                )
-            except Exception as e:
-                if "Deadlock" in str(e) and attempt < max_retries:
-                    logger.warning(
-                        "Deadlock on SNMP %s, retrying (%d/%d)",
-                        api_name, attempt + 1, max_retries,
-                    )
-                    results["success"] = 0
-                    results["failed"] = 0
-                    results["errors"] = []
-                    await asyncio.sleep(0.3 * (attempt + 1))
-                    continue
-                raise
-
-        return results  # unreachable
-
-    async def _do_collect(
-        self,
-        api_name: str,
-        collector: BaseSnmpCollector,
-        maintenance_id: str,
-        results: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Execute SNMP collection with parallel device fetching."""
-        t0 = _time.monotonic()
-        sem = self._global_sem
-
-        # Fresh session cache per collection cycle
-        session_cache = SnmpSessionCache(
-            engine=self._engine,
-            communities=settings.snmp_community_list,
-            port=settings.snmp_port,
-            timeout=settings.snmp_timeout,
-            retries=settings.snmp_retries,
-        )
-
-        # 1. Load target devices (only reachable ones to avoid SNMP timeout waste)
-        async with get_session_context() as session:
-            stmt = select(MaintenanceDeviceList).where(
-                MaintenanceDeviceList.maintenance_id == maintenance_id,
-                MaintenanceDeviceList.new_hostname != None,  # noqa: E711
-                MaintenanceDeviceList.new_ip_address != None,  # noqa: E711
-                MaintenanceDeviceList.new_is_reachable == True,  # noqa: E712
-            )
-            result = await session.execute(stmt)
-            devices = result.scalars().all()
-            results["total"] = len(devices)
-
-        # 2. Collect all devices in parallel
-        # IMPORTANT: DB session is opened ONLY for the write phase,
-        # NOT held during the SNMP walk. This prevents connection pool
-        # exhaustion when multiple jobs overlap with slow/unreachable devices.
-        async def _collect_one(device: MaintenanceDeviceList) -> str:
-            async with sem:
-                hostname = device.new_hostname
-                ip_address = device.new_ip_address
-                try:
-                    # Phase 1: SNMP walk (network I/O, no DB connection)
-                    raw_text, parsed_items = await self._snmp_walk(
-                        hostname=hostname,
-                        ip_address=ip_address,
-                        vendor=device.new_vendor,
-                        collector=collector,
-                        session_cache=session_cache,
-                    )
-
-                    # Phase 2: DB write (short-lived session)
-                    async with get_session_context() as dev_session:
-                        typed_repo = get_typed_repo(api_name, dev_session)
-                        await typed_repo.save_batch(
-                            switch_hostname=hostname,
-                            raw_data=None,
-                            parsed_items=parsed_items,
-                            maintenance_id=maintenance_id,
-                        )
-                        await _clear_collection_error(
-                            dev_session, maintenance_id,
-                            api_name, hostname,
-                        )
-
-                    if parsed_items:
-                        logger.debug(
-                            "SNMP collected %s from %s: %d items",
-                            api_name, hostname, len(parsed_items),
-                        )
-                    return "ok"
-                except Exception as e:
-                    logger.error(
-                        "SNMP %s failed for %s: %s",
-                        api_name, hostname, e,
-                    )
-                    try:
-                        async with get_session_context() as err_session:
-                            await _upsert_collection_error(
-                                err_session, maintenance_id,
-                                api_name, hostname, str(e),
-                            )
-                    except Exception:
-                        logger.error(
-                            "Failed to record CollectionError for %s",
-                            hostname,
-                        )
-                    from app.services.system_log import (
-                        format_error_detail,
-                        write_log,
-                    )
-                    await write_log(
-                        level="WARNING",
-                        source="service",
-                        summary=(
-                            f"SNMP 採集失敗: {hostname} ({api_name})"
-                        ),
-                        detail=format_error_detail(
-                            exc=e,
-                            context={
-                                "設備": hostname,
-                                "API": api_name,
-                                "歲修": maintenance_id,
-                                "模式": "SNMP",
-                                "廠商": device.new_vendor or "unknown",
-                            },
-                        ),
-                        module="snmp_collection",
-                        maintenance_id=maintenance_id,
-                    )
-                    # Save empty batch so UI shows "0 items" status
-                    try:
-                        async with get_session_context() as null_session:
-                            typed_repo = get_typed_repo(api_name, null_session)
-                            await typed_repo.save_batch(
-                                switch_hostname=hostname,
-                                raw_data=f"[SNMP_ERROR] {e}",
-                                parsed_items=[],
-                                maintenance_id=maintenance_id,
-                            )
-                    except Exception:
-                        logger.error(
-                            "Failed to save null batch for %s/%s",
-                            api_name, hostname,
-                        )
-                    return "fail"
-
-        outcomes = await asyncio.gather(
-            *[_collect_one(d) for d in devices],
-            return_exceptions=True,
-        )
-        # Count results (treat unexpected exceptions as failures)
-        for outcome in outcomes:
-            if isinstance(outcome, Exception):
-                logger.error("Unexpected collection error: %s", outcome)
-                results["failed"] += 1
-            elif outcome == "ok":
-                results["success"] += 1
-            else:
-                results["failed"] += 1
-
-        elapsed = _time.monotonic() - t0
-        logger.info(
-            "SNMP %s for %s: %d/%d ok, %.2fs",
-            api_name, maintenance_id,
-            results["success"], results["total"], elapsed,
-        )
-        return results
-
-    async def _snmp_walk(
-        self,
-        *,
-        hostname: str,
-        ip_address: str,
-        vendor: str | None,
-        collector: BaseSnmpCollector,
-        session_cache: SnmpSessionCache,
-    ) -> tuple[str, list[BaseModel]]:
-        """
-        SNMP walk only — no DB connection needed.
-
-        Returns (raw_text, parsed_items) for the caller to save.
-        """
-        device_type = DeviceType(vendor or "HPE")
-        target = await session_cache.get_target(ip_address)
-        return await collector.collect_with_retry(
-            target=target,
-            device_type=device_type,
-            session_cache=session_cache,
-            engine=self._engine,
-            max_retries=settings.snmp_collector_retries,
-        )
-
-
-# ── Error tracking helpers (same as ApiCollectionService) ─────────
-
-
-async def _clear_collection_error(
-    session: Any,
-    maintenance_id: str,
-    api_name: str,
-    hostname: str,
-) -> None:
-    """Clear error record after successful collection."""
-    await session.execute(
-        delete(CollectionError).where(
-            CollectionError.maintenance_id == maintenance_id,
-            CollectionError.collection_type == api_name,
-            CollectionError.switch_hostname == hostname,
-        )
-    )
-
-
-async def _upsert_collection_error(
-    session: Any,
-    maintenance_id: str,
-    api_name: str,
-    hostname: str,
-    error_msg: str,
-) -> None:
-    """Upsert error record on collection failure."""
-    from datetime import datetime, timezone
-
-    stmt = select(CollectionError).where(
-        CollectionError.maintenance_id == maintenance_id,
-        CollectionError.collection_type == api_name,
-        CollectionError.switch_hostname == hostname,
-    )
-    result = await session.execute(stmt)
-    existing = result.scalar_one_or_none()
-
-    if existing:
-        existing.error_message = error_msg
-        existing.occurred_at = datetime.now(timezone.utc)
-    else:
-        session.add(CollectionError(
-            maintenance_id=maintenance_id,
-            collection_type=api_name,
-            switch_hostname=hostname,
-            error_message=error_msg,
-            occurred_at=datetime.now(timezone.utc),
-        ))
 
 
 # Singleton

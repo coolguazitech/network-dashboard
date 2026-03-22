@@ -1,35 +1,30 @@
 # =============================================================================
-# Scheduler Configuration — API 採集排程
+# Scheduler Configuration — 採集排程
 # =============================================================================
 #
-# 每筆 entry = 一個 API call，scheduler 定期對所有目標設備執行。
+# v2.19.0 架構：Device-Centric Collection Rounds
 #
-# 命名規範（三處必須一致）：
-#   1. 本檔的 key（如 get_fan）
-#   2. .env 中 FETCHER_ENDPOINT__GET_FAN=...
-#   3. Parser command: {key}_{device_type}_{source}
-#      e.g. get_fan + hpe + dna → get_fan_hpe_dna
+# SNMP 模式下使用兩個「輪次」取代舊的 12 個獨立 job：
+#   - fast_round (300s): mac_table + interface_status（影響客戶端狀態）
+#   - full_round (1800s): 所有 10 個 SNMP collectors
 #
-# source: 外部 API 來源
-#   - FNA: FAB Network API（共用 endpoint，server 側自動偵測廠牌）
-#   - DNA: Data Network API（每個 device_type 各自的 endpoint）
+# 每個輪次遍歷設備一次，每台設備只探測一次 community，
+# 然後依序跑該輪次的所有 collectors。不通設備一次判定整台跳過。
 #
-# interval: 觸發頻率（秒）。上一輪未完成時本次跳過（max_instances=1）
+# Ping 由獨立排程處理（device_ping + client_ping），不走 SNMP 輪次。
 #
-# 分級策略：
-#   - Client 相關 (300s)：影響客戶端狀態顯示，需要較即時
-#   - 指標類 (1800s)：純監控，30 分鐘更新一次可接受
-#   - Ping (15s)：由獨立排程處理，不走標準 SNMP 採集
+# API 模式仍使用舊的 per-job 排程（向下相容）。
 #
-# 所有 SNMP job 共用全域 Semaphore（SNMP_CONCURRENCY），
-# 不論幾個 job 同時跑，設備端總併發量都不超過此上限。
+# interval 值會被 setup_scheduled_jobs() 讀取：
+#   - Client 相關 collectors 的最小 interval → fast_round 間隔
+#   - 指標類 collectors 的最大 interval → full_round 間隔
 #
 # =============================================================================
 
 fetchers:
   # ---------------------------------------------------------------------------
   # Client 相關 — 300s (5min)
-  # 影響客戶端介面匹配、ACL 綁定、連線狀態
+  # 歸入 fast_round（影響客戶端介面匹配、連線狀態）
   # ---------------------------------------------------------------------------
   get_mac_table:
     source: DNA
@@ -53,7 +48,7 @@ fetchers:
 
   # ---------------------------------------------------------------------------
   # 指標類 — 1800s (30min)
-  # 純設備健康監控，不影響客戶端狀態
+  # 歸入 full_round（純設備健康監控）
   # ---------------------------------------------------------------------------
   get_fan:
     source: DNA
@@ -96,9 +91,7 @@ fetchers:
     description: "Uplink 鄰居拓撲 (CDP，僅 Cisco IOS/NXOS)"
 
   # ---------------------------------------------------------------------------
-  # GNMSPING: ICMP 連通性測試（統一批次 Ping）
-  # 不走標準 ConfiguredFetcher，由 scheduler 按 tenant_group 分組 batch ping
-  # base_url 設定在 GNMSPING__BASE_URLS__{TENANT} env vars
+  # GNMSPING: ICMP 連通性測試（獨立排程，不走 SNMP 輪次）
   # ---------------------------------------------------------------------------
   gnms_ping:
     source: GNMSPING

@@ -1,14 +1,16 @@
 """
 SNMP Session Cache.
 
-管理三種快取：
-1. Community string cache — 記住每台設備用哪個 community（跨 job 共享）
-2. Negative cache — SNMP 不通的設備冷卻期間不再嘗試（跨 job 共享）
-3. ifIndex→ifName mapping — 每台設備建一次，同一 job 內共用
-4. bridge port→ifIndex mapping — MAC table 專用，同一 job 內共用
+管理四種快取：
+1. Community string cache — 記住每台設備用哪個 community（跨 round 共享）
+2. Negative cache — SNMP 不通的設備冷卻期間不再嘗試（跨 round 共享）
+3. Probe lock — 防止同一 IP 同時被多個 coroutine 探測（跨 round 共享）
+4. ifIndex→ifName mapping — 每台設備建一次，同一 round 內共用
+5. bridge port→ifIndex mapping — MAC table 專用，同一 round 內共用
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time as _time
 from typing import TYPE_CHECKING, ClassVar
@@ -51,9 +53,10 @@ class SnmpSessionCache:
     ifIndex/bridge caches (instance-level): rebuilt each collection cycle.
     """
 
-    # ── Class-level shared state (survives across job invocations) ──
+    # ── Class-level shared state (survives across round invocations) ──
     _community_cache: ClassVar[dict[str, str]] = {}
     _negative_cache: ClassVar[dict[str, float]] = {}  # ip -> expiry monotonic
+    _probe_locks: ClassVar[dict[str, asyncio.Lock]] = {}  # per-IP probe dedup
     NEGATIVE_TTL: ClassVar[float] = 300.0  # 5 min cooldown for SNMP-unreachable
 
     def __init__(
@@ -79,10 +82,11 @@ class SnmpSessionCache:
 
         1. Check class-level community cache (instant)
         2. Check negative cache — skip if recently failed (instant)
-        3. Probe with fast timeout (3s × 1 retry per community)
-        4. On success → cache community; on failure → add to negative cache
+        3. Acquire per-IP lock (prevents duplicate probes from concurrent coroutines)
+        4. Probe with fast timeout (3s × 1 retry per community)
+        5. On success → cache community; on failure → add to negative cache
         """
-        # 1. Known-good community (cached from any previous job)
+        # 1. Known-good community (cached from any previous round)
         if ip in self._community_cache:
             return SnmpTarget(
                 ip=ip,
@@ -103,54 +107,76 @@ class SnmpSessionCache:
             # Cooldown expired, retry
             del self._negative_cache[ip]
 
-        # 3. Probe with FAST timeout (not the full walk timeout)
-        for community in self._communities:
-            probe_target = SnmpTarget(
-                ip=ip,
-                community=community,
-                port=self._port,
-                timeout=_PROBE_TIMEOUT,
-                retries=_PROBE_RETRIES,
-            )
-            try:
-                result = await self._engine.get(probe_target, _SYS_OBJECT_ID)
-                if result:
-                    self._community_cache[ip] = community
-                    logger.debug(
-                        "Community for %s: %s", ip, community,
-                    )
-                    # Return target with FULL timeout for actual walks
-                    return SnmpTarget(
-                        ip=ip,
-                        community=community,
-                        port=self._port,
-                        timeout=self._timeout,
-                        retries=self._retries,
-                    )
-            except SnmpTimeoutError:
-                logger.debug(
-                    "Community '%s' timed out for %s, trying next",
-                    community, ip,
+        # 3. Per-IP lock — if another coroutine is already probing this IP,
+        #    wait for it instead of sending duplicate SNMP probes.
+        if ip not in self._probe_locks:
+            self._probe_locks[ip] = asyncio.Lock()
+        async with self._probe_locks[ip]:
+            # Re-check caches after acquiring lock (another coroutine may
+            # have populated them while we waited)
+            if ip in self._community_cache:
+                return SnmpTarget(
+                    ip=ip,
+                    community=self._community_cache[ip],
+                    port=self._port,
+                    timeout=self._timeout,
+                    retries=self._retries,
                 )
-                continue
-            except SnmpError as e:
-                logger.debug(
-                    "Community '%s' failed for %s: %s, trying next",
-                    community, ip, e,
+            neg_expiry = self._negative_cache.get(ip)
+            if neg_expiry is not None and _time.monotonic() < neg_expiry:
+                raise SnmpTimeoutError(
+                    f"SNMP unreachable (cached, retry in "
+                    f"{neg_expiry - _time.monotonic():.0f}s): {ip}"
                 )
-                continue
 
-        # 4. All communities failed → negative cache
-        self._negative_cache[ip] = _time.monotonic() + self.NEGATIVE_TTL
-        logger.info(
-            "SNMP unreachable: %s (all communities failed, "
-            "skipping for %ds)",
-            ip, int(self.NEGATIVE_TTL),
-        )
-        raise SnmpTimeoutError(
-            f"All communities failed for {ip}: "
-            f"tried {self._communities}"
-        )
+            # 4. Probe with FAST timeout (not the full walk timeout)
+            for community in self._communities:
+                probe_target = SnmpTarget(
+                    ip=ip,
+                    community=community,
+                    port=self._port,
+                    timeout=_PROBE_TIMEOUT,
+                    retries=_PROBE_RETRIES,
+                )
+                try:
+                    result = await self._engine.get(probe_target, _SYS_OBJECT_ID)
+                    if result:
+                        self._community_cache[ip] = community
+                        logger.debug(
+                            "Community for %s: %s", ip, community,
+                        )
+                        # Return target with FULL timeout for actual walks
+                        return SnmpTarget(
+                            ip=ip,
+                            community=community,
+                            port=self._port,
+                            timeout=self._timeout,
+                            retries=self._retries,
+                        )
+                except SnmpTimeoutError:
+                    logger.debug(
+                        "Community '%s' timed out for %s, trying next",
+                        community, ip,
+                    )
+                    continue
+                except SnmpError as e:
+                    logger.debug(
+                        "Community '%s' failed for %s: %s, trying next",
+                        community, ip, e,
+                    )
+                    continue
+
+            # 5. All communities failed → negative cache
+            self._negative_cache[ip] = _time.monotonic() + self.NEGATIVE_TTL
+            logger.info(
+                "SNMP unreachable: %s (all communities failed, "
+                "skipping for %ds)",
+                ip, int(self.NEGATIVE_TTL),
+            )
+            raise SnmpTimeoutError(
+                f"All communities failed for {ip}: "
+                f"tried {self._communities}"
+            )
 
     async def get_ifindex_map(self, ip: str) -> dict[int, str]:
         """
@@ -225,3 +251,4 @@ class SnmpSessionCache:
         """Clear all caches including class-level (for testing/reset)."""
         cls._community_cache.clear()
         cls._negative_cache.clear()
+        cls._probe_locks.clear()
