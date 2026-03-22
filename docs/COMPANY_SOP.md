@@ -1503,7 +1503,7 @@ app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
       │
       ├─ 載入活躍歲修的設備清單
       │
-      └─ 對每台設備平行執行（最多 snmp_concurrency=10 台同時）：
+      └─ 對每台設備平行執行（全域 Semaphore，所有 job 共用 SNMP_CONCURRENCY=50）：
           │
           ├─ session_cache.get_target(ip)      ← app/snmp/session_cache.py
           │   └─ 逐一嘗試 community → engine.get(sysObjectID.0)
@@ -2142,13 +2142,28 @@ kind: ConfigMap
 metadata:
   name: netora-config
 data:
+  # ── DB ──
   DB_HOST: "mariadb"
   DB_PORT: "3306"
   DB_NAME: "netora"
   DB_USER: "admin"
+  DB_POOL_SIZE: "10"
+  DB_MAX_OVERFLOW: "20"
+
+  # ── 採集模式 ──
   COLLECTION_MODE: "snmp"
-  COLLECTION_INTERVAL_SECONDS: "300"
-  SNMP_CONCURRENCY: "50"
+  APP_DEBUG: "false"
+  ENABLE_SCHEDULER: "true"
+
+  # ── SNMP（v2.18.3 關鍵設定） ──
+  SNMP_CONCURRENCY: "50"            # 全域 semaphore，所有 job 共用。400 台設備建議 30-50
+  SNMP_WALK_TIMEOUT: "120"          # 單次 walk deadline (秒)。大型 table 需 60-90s
+  SNMP_TIMEOUT: "8"                 # 單一 PDU timeout (秒)。8×3+2=26s < _MAX_PDU_WAIT(30s)
+  SNMP_RETRIES: "2"                 # PDU 層 retry（pysnmp transport）
+  SNMP_COLLECTOR_RETRIES: "1"       # walk timeout 後 collector 層 retry。120×2+1=241s 最壞
+  SNMP_MAX_REPETITIONS: "25"        # GETBULK 每 PDU 回傳 OID 數
+
+  # ── Ping ──
   GNMSPING__TIMEOUT: "60"
   GNMSPING__ENDPOINT: "/api/v1/ping"
   # ... 其餘非機敏設定
