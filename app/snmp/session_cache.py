@@ -1,15 +1,17 @@
 """
 SNMP Session Cache.
 
-管理兩種快取：
-1. Community string cache — 記住每台設備用哪個 community
-2. ifIndex→ifName mapping — 每台設備建一次，所有 collector 共用
-3. bridge port→ifIndex mapping — MAC table 專用
+管理三種快取：
+1. Community string cache — 記住每台設備用哪個 community（跨 job 共享）
+2. Negative cache — SNMP 不通的設備冷卻期間不再嘗試（跨 job 共享）
+3. ifIndex→ifName mapping — 每台設備建一次，同一 job 內共用
+4. bridge port→ifIndex mapping — MAC table 專用，同一 job 內共用
 """
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+import time as _time
+from typing import TYPE_CHECKING, ClassVar
 
 from app.snmp.engine import (
     AsyncSnmpEngine,
@@ -28,15 +30,31 @@ _SYS_OBJECT_ID = "1.3.6.1.2.1.1.2.0"
 _IF_NAME_OID = "1.3.6.1.2.1.31.1.1.1.1"  # IF-MIB::ifName
 _DOT1D_BASE_PORT_IF_INDEX = "1.3.6.1.2.1.17.1.4.1.2"  # BRIDGE-MIB
 
+# Community probe uses shorter timeout than actual walks.
+# A single sysObjectID GET should reply in <1s if SNMP is working.
+_PROBE_TIMEOUT: float = 3.0
+_PROBE_RETRIES: int = 1
+
 
 class SnmpSessionCache:
     """
-    Per-collection-cycle cache.
+    Per-collection-cycle cache with shared cross-cycle community knowledge.
 
-    Community cache: {ip: working_community}
-    ifIndex cache:   {ip: {ifIndex: ifName}}
-    bridge port cache: {ip: {bridge_port: ifIndex}}
+    Community cache (class-level): {ip: working_community}
+      — Persists across job invocations. Once we know a device speaks
+        community "public", we don't probe again next cycle.
+
+    Negative cache (class-level): {ip: expiry_monotonic}
+      — Devices where ALL communities failed. Skip for NEGATIVE_TTL seconds
+        to avoid 50+ devices × 26s timeout blocking the entire semaphore pool.
+
+    ifIndex/bridge caches (instance-level): rebuilt each collection cycle.
     """
+
+    # ── Class-level shared state (survives across job invocations) ──
+    _community_cache: ClassVar[dict[str, str]] = {}
+    _negative_cache: ClassVar[dict[str, float]] = {}  # ip -> expiry monotonic
+    NEGATIVE_TTL: ClassVar[float] = 300.0  # 5 min cooldown for SNMP-unreachable
 
     def __init__(
         self,
@@ -51,7 +69,7 @@ class SnmpSessionCache:
         self._port = port
         self._timeout = timeout
         self._retries = retries
-        self._community_cache: dict[str, str] = {}
+        # Instance-level caches (per collection cycle)
         self._ifindex_cache: dict[str, dict[int, str]] = {}
         self._bridge_port_cache: dict[str, dict[int, int]] = {}
 
@@ -59,9 +77,12 @@ class SnmpSessionCache:
         """
         Get an SnmpTarget with the correct community for this IP.
 
-        Probes with sysObjectID.0 GET, trying each community in order.
-        Caches the first successful community.
+        1. Check class-level community cache (instant)
+        2. Check negative cache — skip if recently failed (instant)
+        3. Probe with fast timeout (3s × 1 retry per community)
+        4. On success → cache community; on failure → add to negative cache
         """
+        # 1. Known-good community (cached from any previous job)
         if ip in self._community_cache:
             return SnmpTarget(
                 ip=ip,
@@ -71,22 +92,41 @@ class SnmpSessionCache:
                 retries=self._retries,
             )
 
+        # 2. Known-bad: recently failed all communities
+        neg_expiry = self._negative_cache.get(ip)
+        if neg_expiry is not None:
+            if _time.monotonic() < neg_expiry:
+                raise SnmpTimeoutError(
+                    f"SNMP unreachable (cached, retry in "
+                    f"{neg_expiry - _time.monotonic():.0f}s): {ip}"
+                )
+            # Cooldown expired, retry
+            del self._negative_cache[ip]
+
+        # 3. Probe with FAST timeout (not the full walk timeout)
         for community in self._communities:
-            target = SnmpTarget(
+            probe_target = SnmpTarget(
                 ip=ip,
                 community=community,
                 port=self._port,
-                timeout=self._timeout,
-                retries=self._retries,
+                timeout=_PROBE_TIMEOUT,
+                retries=_PROBE_RETRIES,
             )
             try:
-                result = await self._engine.get(target, _SYS_OBJECT_ID)
+                result = await self._engine.get(probe_target, _SYS_OBJECT_ID)
                 if result:
                     self._community_cache[ip] = community
                     logger.debug(
                         "Community for %s: %s", ip, community,
                     )
-                    return target
+                    # Return target with FULL timeout for actual walks
+                    return SnmpTarget(
+                        ip=ip,
+                        community=community,
+                        port=self._port,
+                        timeout=self._timeout,
+                        retries=self._retries,
+                    )
             except SnmpTimeoutError:
                 logger.debug(
                     "Community '%s' timed out for %s, trying next",
@@ -100,6 +140,13 @@ class SnmpSessionCache:
                 )
                 continue
 
+        # 4. All communities failed → negative cache
+        self._negative_cache[ip] = _time.monotonic() + self.NEGATIVE_TTL
+        logger.info(
+            "SNMP unreachable: %s (all communities failed, "
+            "skipping for %ds)",
+            ip, int(self.NEGATIVE_TTL),
+        )
         raise SnmpTimeoutError(
             f"All communities failed for {ip}: "
             f"tried {self._communities}"
@@ -165,7 +212,16 @@ class SnmpSessionCache:
         return bridge_map
 
     def clear(self) -> None:
-        """Clear all caches (call at start of each collection cycle)."""
-        self._community_cache.clear()
+        """Clear instance-level caches (call at start of each collection cycle).
+
+        NOTE: community_cache and negative_cache are class-level
+        and intentionally NOT cleared here.
+        """
         self._ifindex_cache.clear()
         self._bridge_port_cache.clear()
+
+    @classmethod
+    def clear_all(cls) -> None:
+        """Clear all caches including class-level (for testing/reset)."""
+        cls._community_cache.clear()
+        cls._negative_cache.clear()
