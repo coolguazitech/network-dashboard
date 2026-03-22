@@ -964,7 +964,11 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
     In API mode: uses legacy per-job scheduling.
     """
     from app.core.config import settings
-    from app.snmp.collection_service import FAST_ROUND_COLLECTORS, FULL_ROUND_COLLECTORS
+    from app.snmp.collection_service import (
+        API_PASSTHROUGH_COLLECTORS,
+        FAST_ROUND_COLLECTORS,
+        FULL_ROUND_COLLECTORS,
+    )
 
     scheduler = get_scheduler_service()
 
@@ -976,22 +980,21 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
             ping_interval = config.get("interval", 15)
 
     if settings.collection_mode == "snmp":
-        # ── Device-centric rounds ──
-        # Fast round: client-related collectors, every 5 minutes
+        # ── Device-centric SNMP rounds ──
         fast_interval = 300
         full_interval = 1800
 
-        # Read intervals from config if provided
-        for config in job_configs:
-            name = config["name"]
-            if name in _CUSTOM_JOBS:
-                continue
-            interval = config.get("interval", 300)
-            if name in FAST_ROUND_COLLECTORS:
-                fast_interval = min(fast_interval, interval)
-            else:
-                full_interval = max(full_interval, interval)
+        # Build config lookup for interval values
+        config_by_name = {c["name"]: c for c in job_configs}
 
+        for name in FAST_ROUND_COLLECTORS:
+            if name in config_by_name:
+                fast_interval = min(fast_interval, config_by_name[name].get("interval", 300))
+        for name in FULL_ROUND_COLLECTORS:
+            if name in config_by_name:
+                full_interval = max(full_interval, config_by_name[name].get("interval", 1800))
+
+        # Fast round: client-related SNMP collectors (mac_table, interface_status)
         scheduler.add_round_job(
             round_name="fast_round",
             collector_names=FAST_ROUND_COLLECTORS,
@@ -999,8 +1002,8 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
             initial_delay=5,
         )
 
-        # Full round: ALL collectors, every 30 minutes
-        # Offset by 30s so it doesn't overlap with fast_round start
+        # Full round: indicator-only SNMP collectors (fan, power, version, etc.)
+        # Does NOT include mac_table/interface_status — those are in fast_round.
         scheduler.add_round_job(
             round_name="full_round",
             collector_names=FULL_ROUND_COLLECTORS,
@@ -1008,11 +1011,26 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
             initial_delay=30,
         )
 
+        # ACL collectors use REST API passthrough (not SNMP).
+        # They need separate legacy jobs even in SNMP mode.
+        acl_stagger = 0
+        for name in API_PASSTHROUGH_COLLECTORS:
+            cfg = config_by_name.get(name, {})
+            scheduler.add_collection_job(
+                job_name=name,
+                interval_seconds=cfg.get("interval", 300),
+                source=cfg.get("source", ""),
+                initial_delay=10 + acl_stagger,
+            )
+            acl_stagger += 5
+
         logger.info(
             "SNMP rounds configured: fast_round=%ds (%d collectors), "
-            "full_round=%ds (%d collectors)",
+            "full_round=%ds (%d collectors), "
+            "API passthrough: %s",
             fast_interval, len(FAST_ROUND_COLLECTORS),
             full_interval, len(FULL_ROUND_COLLECTORS),
+            API_PASSTHROUGH_COLLECTORS,
         )
     else:
         # ── Legacy per-job scheduling (API mode) ──

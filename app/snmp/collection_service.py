@@ -34,8 +34,6 @@ FAST_ROUND_COLLECTORS = [
 ]
 
 FULL_ROUND_COLLECTORS = [
-    "get_mac_table",
-    "get_interface_status",
     "get_fan",
     "get_power",
     "get_version",
@@ -44,6 +42,13 @@ FULL_ROUND_COLLECTORS = [
     "get_channel_group",
     "get_uplink_lldp",
     "get_uplink_cdp",
+]
+
+# ACL collectors that use REST API passthrough (not SNMP)
+# These need separate legacy jobs even in SNMP mode.
+API_PASSTHROUGH_COLLECTORS = [
+    "get_static_acl",
+    "get_dynamic_acl",
 ]
 
 

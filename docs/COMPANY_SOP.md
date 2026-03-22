@@ -5,8 +5,9 @@
 >
 > **v2.19.0 變更摘要**:
 > - **[架構重構] Device-Centric Collection Rounds**：SNMP 採集從舊的 job-centric（12 個獨立 job 各自遍歷 400 台設備）重構為 device-centric（2 個輪次，每台設備只探測一次 community 後依序跑所有 collectors）
-> - **fast_round (300s)**：client 相關 collectors（mac_table, interface_status），每台設備 community 探測 1 次 + walk 2 次
-> - **full_round (1800s)**：所有 10 個 SNMP collectors，每台設備 community 探測 1 次 + walk 10 次
+> - **fast_round (300s)**：client 相關 SNMP collectors（mac_table, interface_status），每台設備 community 探測 1 次 + walk 2 次
+> - **full_round (1800s)**：指標類 SNMP collectors（fan, power, version, gbic, error_count, channel_group, lldp, cdp），每台設備 community 探測 1 次 + walk 8 次
+> - **ACL legacy jobs (300s)**：get_static_acl, get_dynamic_acl 走 REST API passthrough，獨立排程不走 SNMP rounds
 > - **移除 is_reachable 過濾**：不再依賴 ping 結果決定是否 SNMP 採集，消除首次啟動時 ping 未跑導致所有設備被跳過的 chicken-and-egg 問題
 > - **Per-IP probe lock**：同一 IP 同時被多個 coroutine 請求時只探測一次，其餘等待結果，避免重複 SNMP probe
 > - **DB 連線減少 10 倍**：從 10 jobs × 400 devices = 4000 次 session 降為 400 次（每台設備一次 session 寫入所有 collector 結果）
@@ -2170,9 +2171,10 @@ data:
   ENABLE_SCHEDULER: "true"
 
   # ── SNMP（v2.19.0 device-centric rounds） ──
-  # v2.19.0 架構：2 個輪次取代 12 個獨立 job
+  # v2.19.0 架構：2 個 SNMP rounds + ACL legacy jobs
   #   fast_round (300s): mac_table + interface_status（每台設備 probe 1 次 + walk 2 次）
-  #   full_round (1800s): 全部 10 個 collectors（每台設備 probe 1 次 + walk 10 次）
+  #   full_round (1800s): fan, power, version, gbic, error_count, channel_group, lldp, cdp
+  #   ACL (300s): get_static_acl + get_dynamic_acl（REST API passthrough）
   SNMP_CONCURRENCY: "50"            # 全域 semaphore，一個 slot = 一台設備正在被採集
   SNMP_WALK_TIMEOUT: "120"          # 單次 walk deadline (秒)。大型 table 需 60-90s
   SNMP_TIMEOUT: "8"                 # 單一 PDU timeout (秒)。8×3+2=26s < _MAX_PDU_WAIT(30s)

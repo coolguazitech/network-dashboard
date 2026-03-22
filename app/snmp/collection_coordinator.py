@@ -229,67 +229,68 @@ class CollectionCoordinator:
         vendor = device_info["vendor"]
         device_type = DeviceType(vendor or "HPE")
 
+        # Phase 1 & 2: SNMP work inside semaphore
+        collector_outcomes: list[tuple[str, str, str | None, list[BaseModel]]] = []
+        device_unreachable = False
+        all_ok = True
+
         async with self._semaphore:
             # Phase 1: Community probe — one attempt decides the device's fate
             try:
                 target = await session_cache.get_target(ip)
             except SnmpTimeoutError:
-                # Device unreachable — skip ALL collectors, record error
-                dr = DeviceResult(
-                    hostname=hostname,
-                    ip=ip,
-                    status="unreachable",
-                    collector_results={
-                        c.api_name: "unreachable" for c in collectors
-                    },
-                )
-                await self._save_device_results(
-                    hostname=hostname,
-                    maintenance_id=maintenance_id,
-                    collector_outcomes=[
-                        (c.api_name, "unreachable", f"SNMP unreachable: {ip}", [])
-                        for c in collectors
-                    ],
-                )
-                return dr
+                # Device unreachable — mark ALL collectors, skip walks
+                device_unreachable = True
+                collector_outcomes = [
+                    (c.api_name, "unreachable", f"SNMP unreachable: {ip}", [])
+                    for c in collectors
+                ]
 
             # Phase 2: Run each collector sequentially (sharing target)
-            collector_outcomes: list[tuple[str, str, str | None, list[BaseModel]]] = []
-            all_ok = True
+            if not device_unreachable:
+                for collector in collectors:
+                    try:
+                        raw_text, parsed_items = await collector.collect_with_retry(
+                            target=target,
+                            device_type=device_type,
+                            session_cache=session_cache,
+                            engine=self._engine,
+                            max_retries=settings.snmp_collector_retries,
+                        )
+                        collector_outcomes.append(
+                            (collector.api_name, "ok", None, parsed_items),
+                        )
+                    except SnmpTimeoutError as e:
+                        collector_outcomes.append(
+                            (collector.api_name, "timeout", str(e), []),
+                        )
+                        all_ok = False
+                    except Exception as e:
+                        logger.error(
+                            "Collector %s failed for %s: %s",
+                            collector.api_name, hostname, e,
+                        )
+                        collector_outcomes.append(
+                            (collector.api_name, "error", str(e), []),
+                        )
+                        all_ok = False
 
-            for collector in collectors:
-                try:
-                    raw_text, parsed_items = await collector.collect_with_retry(
-                        target=target,
-                        device_type=device_type,
-                        session_cache=session_cache,
-                        engine=self._engine,
-                        max_retries=settings.snmp_collector_retries,
-                    )
-                    collector_outcomes.append(
-                        (collector.api_name, "ok", None, parsed_items),
-                    )
-                except SnmpTimeoutError as e:
-                    collector_outcomes.append(
-                        (collector.api_name, "timeout", str(e), []),
-                    )
-                    all_ok = False
-                except Exception as e:
-                    logger.error(
-                        "Collector %s failed for %s: %s",
-                        collector.api_name, hostname, e,
-                    )
-                    collector_outcomes.append(
-                        (collector.api_name, "error", str(e), []),
-                    )
-                    all_ok = False
-
-        # Phase 3: DB write — outside semaphore to free slot faster
+        # Phase 3: DB write — OUTSIDE semaphore to free slot faster
         await self._save_device_results(
             hostname=hostname,
             maintenance_id=maintenance_id,
             collector_outcomes=collector_outcomes,
         )
+
+        if device_unreachable:
+            return DeviceResult(
+                hostname=hostname,
+                ip=ip,
+                status="unreachable",
+                collector_results={
+                    c.api_name: "unreachable" for c in collectors
+                },
+            )
 
         status = "ok" if all_ok else "partial"
         return DeviceResult(
