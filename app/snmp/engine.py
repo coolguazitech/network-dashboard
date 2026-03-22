@@ -13,6 +13,7 @@ mock mode (SNMP_MOCK=true) works even when pysnmp is not installed.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time as _time
 from dataclasses import dataclass
@@ -119,13 +120,30 @@ class AsyncSnmpEngine:
             ObjectType(ObjectIdentity(oid)) for oid in oids
         ]
 
-        error_indication, error_status, error_index, var_binds = await getCmd(
-            self._engine,
-            CommunityData(target.community),
-            transport,
-            ContextData(),
-            *object_types,
-        )
+        per_pdu_timeout = target.timeout * (target.retries + 1) + 5
+
+        try:
+            error_indication, error_status, error_index, var_binds = (
+                await asyncio.wait_for(
+                    getCmd(
+                        self._engine,
+                        CommunityData(target.community),
+                        transport,
+                        ContextData(),
+                        *object_types,
+                    ),
+                    timeout=per_pdu_timeout,
+                )
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "getCmd hung for %s (>%.0fs), resetting engine",
+                target.ip, per_pdu_timeout,
+            )
+            self._reset_engine()
+            raise SnmpTimeoutError(
+                f"SNMP GET hung: {target.ip} OIDs={oids}"
+            )
 
         if error_indication:
             err_str = str(error_indication)
@@ -215,6 +233,11 @@ class AsyncSnmpEngine:
         community = CommunityData(target.community)
         context = ContextData()
 
+        # Per-PDU hard timeout: pysnmp should respond within
+        # timeout * (retries+1), but if it hangs (dispatcher bug),
+        # wait_for will cancel it and we reset the engine.
+        per_pdu_timeout = target.timeout * (target.retries + 1) + 5
+
         while True:
             # Check deadline before each GETBULK request
             if _time.monotonic() > deadline:
@@ -225,17 +248,33 @@ class AsyncSnmpEngine:
                     f"({len(results)} OIDs collected before timeout)"
                 )
 
-            error_indication, error_status, error_index, var_bind_table = (
-                await bulkCmd(
-                    self._engine,
-                    community,
-                    transport,
-                    context,
-                    0,  # non-repeaters
-                    max_rep,
-                    ObjectType(current_oid),
+            try:
+                error_indication, error_status, error_index, var_bind_table = (
+                    await asyncio.wait_for(
+                        bulkCmd(
+                            self._engine,
+                            community,
+                            transport,
+                            context,
+                            0,  # non-repeaters
+                            max_rep,
+                            ObjectType(current_oid),
+                        ),
+                        timeout=per_pdu_timeout,
+                    )
                 )
-            )
+            except asyncio.TimeoutError:
+                # bulkCmd hung — engine transport dispatcher is likely
+                # corrupted by the cancellation, reset immediately.
+                logger.warning(
+                    "bulkCmd hung for %s (>%.0fs), resetting engine",
+                    target.ip, per_pdu_timeout,
+                )
+                self._reset_engine()
+                raise SnmpTimeoutError(
+                    f"SNMP bulkCmd hung: {target.ip} prefix={prefix} "
+                    f"({len(results)} OIDs collected before hang)"
+                )
 
             if error_indication:
                 err_str = str(error_indication)
