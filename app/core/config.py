@@ -225,13 +225,19 @@ class Settings(BaseSettings):
         default=25, description="SNMP GETBULK max-repetitions per PDU",
     )
     snmp_concurrency: int = Field(
-        default=50, description="Max concurrent SNMP device collections",
+        default=50,
+        description="Global max concurrent SNMP device walks across ALL jobs. "
+        "Shared semaphore prevents N_jobs × concurrency from overwhelming devices.",
     )
     snmp_walk_timeout: float = Field(
-        default=30.0, description="Overall timeout for a single SNMP walk (seconds)",
+        default=120.0,
+        description="Overall timeout for a single SNMP walk (seconds). "
+        "Large tables (MAC, transceiver) on 48-port devices may need 60-90s.",
     )
     snmp_collector_retries: int = Field(
-        default=2, description="Collector-level retry count on timeout",
+        default=1,
+        description="Collector-level retry count on walk timeout. "
+        "With walk_timeout=120s, 1 retry = max 240s per device.",
     )
     snmp_mock: bool = Field(
         default=False,

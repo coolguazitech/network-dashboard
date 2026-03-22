@@ -16,73 +16,83 @@
 #
 # interval: 觸發頻率（秒）。上一輪未完成時本次跳過（max_instances=1）
 #
+# 分級策略：
+#   - Client 相關 (300s)：影響客戶端狀態顯示，需要較即時
+#   - 指標類 (1800s)：純監控，30 分鐘更新一次可接受
+#   - Ping (15s)：由獨立排程處理，不走標準 SNMP 採集
+#
+# 所有 SNMP job 共用全域 Semaphore（SNMP_CONCURRENCY），
+# 不論幾個 job 同時跑，設備端總併發量都不超過此上限。
+#
 # =============================================================================
 
 fetchers:
   # ---------------------------------------------------------------------------
-  # FNA (5): 所有廠牌共用同一個 endpoint，只需 {ip}
-  # ---------------------------------------------------------------------------
-  get_gbic_details:
-    source: FNA
-    interval: 300
-    description: "光模組 Tx/Rx 功率"
-
-  get_channel_group:
-    source: FNA
-    interval: 300
-    description: "Port-Channel 狀態及成員"
-
-  get_error_count:
-    source: FNA
-    interval: 300
-    description: "Interface 錯誤計數"
-
-  get_static_acl:
-    source: FNA
-    interval: 300
-    description: "Static ACL 綁定"
-
-  get_dynamic_acl:
-    source: FNA
-    interval: 300
-    description: "Dynamic ACL 綁定"
-
-  # ---------------------------------------------------------------------------
-  # DNA (7): 每個 device_type 各自的 endpoint
+  # Client 相關 — 300s (5min)
+  # 影響客戶端介面匹配、ACL 綁定、連線狀態
   # ---------------------------------------------------------------------------
   get_mac_table:
     source: DNA
     interval: 300
-    description: "MAC 位址表"
-
-  get_fan:
-    source: DNA
-    interval: 300
-    description: "風扇狀態"
-
-  get_power:
-    source: DNA
-    interval: 300
-    description: "電源供應器狀態"
-
-  get_version:
-    source: DNA
-    interval: 300
-    description: "韌體版本"
+    description: "MAC 位址表（Client 介面匹配來源）"
 
   get_interface_status:
     source: DNA
     interval: 300
-    description: "Interface 狀態（速率/雙工）"
+    description: "Interface 狀態（速率/雙工，Client 連線狀態）"
+
+  get_static_acl:
+    source: FNA
+    interval: 300
+    description: "Static ACL 綁定（Client 認證狀態）"
+
+  get_dynamic_acl:
+    source: FNA
+    interval: 300
+    description: "Dynamic ACL 綁定（Client 認證狀態）"
+
+  # ---------------------------------------------------------------------------
+  # 指標類 — 1800s (30min)
+  # 純設備健康監控，不影響客戶端狀態
+  # ---------------------------------------------------------------------------
+  get_fan:
+    source: DNA
+    interval: 1800
+    description: "風扇狀態"
+
+  get_power:
+    source: DNA
+    interval: 1800
+    description: "電源供應器狀態"
+
+  get_version:
+    source: DNA
+    interval: 1800
+    description: "韌體版本"
+
+  get_gbic_details:
+    source: FNA
+    interval: 1800
+    description: "光模組 Tx/Rx 功率"
+
+  get_error_count:
+    source: FNA
+    interval: 1800
+    description: "Interface 錯誤計數"
+
+  get_channel_group:
+    source: FNA
+    interval: 1800
+    description: "Port-Channel 狀態及成員"
 
   get_uplink_lldp:
     source: DNA
-    interval: 300
+    interval: 1800
     description: "Uplink 鄰居拓撲 (LLDP)"
 
   get_uplink_cdp:
     source: DNA
-    interval: 300
+    interval: 1800
     description: "Uplink 鄰居拓撲 (CDP，僅 Cisco IOS/NXOS)"
 
   # ---------------------------------------------------------------------------

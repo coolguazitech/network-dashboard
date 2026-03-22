@@ -881,17 +881,14 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
         c for c in job_configs if c["name"] not in _CUSTOM_JOBS
     ]
 
-    # 計算錯開間距：interval ÷ job 數（至少 1s），避免全部同時觸發
-    if standard_jobs:
-        base_interval = standard_jobs[0].get("interval", 300)
-        stagger_step = max(base_interval / len(standard_jobs), 1)
-    else:
-        stagger_step = 0
+    # 錯開首次觸發：每個 job 間隔 5s 啟動，避免全部同時觸發
+    # （混合 interval 下，用固定間距比按 base_interval 計算更穩定）
+    stagger_step = 5
 
     for idx, config in enumerate(standard_jobs):
         scheduler.add_collection_job(
             job_name=config["name"],
-            interval_seconds=config.get("interval", 30),
+            interval_seconds=config.get("interval", 300),
             source=config.get("source", ""),
             initial_delay=idx * stagger_step,
         )

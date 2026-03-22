@@ -83,6 +83,13 @@ class SnmpCollectionService:
             self._engine = AsyncSnmpEngine(config=engine_config)
         self._collectors = _build_collector_map()
         self._api_fallback: Any = None  # lazy init
+        # Global semaphore: bounds total concurrent SNMP walks across ALL jobs.
+        # Without this, N jobs × per-job concurrency overwhelms device SNMP agents.
+        self._global_sem = asyncio.Semaphore(settings.snmp_concurrency)
+        logger.info(
+            "SNMP global concurrency semaphore: max %d concurrent walks",
+            settings.snmp_concurrency,
+        )
 
     def _get_api_fallback(self) -> Any:
         """Lazy-init ApiCollectionService to avoid circular imports."""
@@ -160,7 +167,7 @@ class SnmpCollectionService:
     ) -> dict[str, Any]:
         """Execute SNMP collection with parallel device fetching."""
         t0 = _time.monotonic()
-        sem = asyncio.Semaphore(settings.snmp_concurrency)
+        sem = self._global_sem
 
         # Fresh session cache per collection cycle
         session_cache = SnmpSessionCache(
