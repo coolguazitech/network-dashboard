@@ -37,6 +37,14 @@ from app.snmp.engine import AsyncSnmpEngine, SnmpError, SnmpTarget, SnmpTimeoutE
 from app.snmp.session_cache import SnmpSessionCache  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _clear_class_caches():
+    """Reset class-level caches between tests to prevent leakage."""
+    SnmpSessionCache.clear_all()
+    yield
+    SnmpSessionCache.clear_all()
+
+
 def _make_cache(engine_mock, communities=None):
     return SnmpSessionCache(
         engine=engine_mock,
@@ -214,7 +222,7 @@ async def test_get_bridge_port_map_parses_correctly():
 
 @pytest.mark.asyncio
 async def test_clear_resets_all_caches():
-    """After clear(), all three caches are empty and probes run again."""
+    """clear() resets instance caches; clear_all() resets class-level caches too."""
     engine = MagicMock(spec=AsyncSnmpEngine)
     engine.get = AsyncMock(return_value={"1.3.6.1.2.1.1.2.0": "1.3.6.1.4.1.9.1.1"})
     engine.walk = AsyncMock(
@@ -226,7 +234,7 @@ async def test_clear_resets_all_caches():
     cache = _make_cache(engine)
     ip = "10.0.0.1"
 
-    # Populate all three caches
+    # Populate all caches
     await cache.get_target(ip)
     await cache.get_ifindex_map(ip)
 
@@ -238,13 +246,19 @@ async def test_clear_resets_all_caches():
     )
     await cache.get_bridge_port_map(ip)
 
-    # Verify caches are populated via internal dicts
-    assert ip in cache._community_cache
-    assert ip in cache._ifindex_cache
-    assert ip in cache._bridge_port_cache
+    # Verify caches are populated
+    assert ip in SnmpSessionCache._community_cache  # class-level
+    assert ip in cache._ifindex_cache  # instance-level
+    assert ip in cache._bridge_port_cache  # instance-level
 
+    # clear() only resets instance-level caches
     cache.clear()
-
-    assert cache._community_cache == {}
+    assert ip in SnmpSessionCache._community_cache  # class-level persists
     assert cache._ifindex_cache == {}
     assert cache._bridge_port_cache == {}
+
+    # clear_all() resets class-level caches
+    SnmpSessionCache.clear_all()
+    assert SnmpSessionCache._community_cache == {}
+    assert SnmpSessionCache._negative_cache == {}
+    assert SnmpSessionCache._probe_locks == {}

@@ -144,7 +144,7 @@ async def test_unknown_api_name_falls_back_to_api():
 
 @pytest.mark.asyncio
 async def test_known_snmp_api_uses_collector():
-    """A known SNMP api_name like 'get_fan' must go through _do_collect."""
+    """A known SNMP api_name like 'get_fan' must go through collect_round (coordinator)."""
     fallback = MagicMock()
     fallback.collect = AsyncMock()
 
@@ -153,25 +153,29 @@ async def test_known_snmp_api_uses_collector():
     # Verify get_fan is in the collector map.
     assert "get_fan" in svc._collectors
 
-    expected_result = {
-        "api_name": "get_fan",
+    expected_round_result = {
+        "round_name": "single_get_fan",
         "total": 3,
-        "success": 3,
-        "failed": 0,
-        "errors": [],
+        "ok": 3,
+        "unreachable": 0,
+        "partial": 0,
+        "elapsed": 1.0,
+        "per_collector": {},
     }
 
-    with patch.object(svc, "_do_collect", new_callable=AsyncMock, return_value=expected_result) as mock_do:
+    with patch.object(svc, "collect_round", new_callable=AsyncMock, return_value=expected_round_result) as mock_round:
         result = await svc.collect(
             api_name="get_fan",
             source="test",
             maintenance_id="M-004",
         )
 
-    # _do_collect was called
-    mock_do.assert_awaited_once()
-    call_kwargs = mock_do.call_args
-    assert call_kwargs.kwargs["api_name"] == "get_fan" or call_kwargs[1]["api_name"] == "get_fan"
+        # collect_round was called (via coordinator)
+        mock_round.assert_awaited_once_with(
+            round_name="single_get_fan",
+            collector_names=["get_fan"],
+            maintenance_id="M-004",
+        )
 
     # API fallback was NOT called
     fallback.collect.assert_not_awaited()
@@ -190,13 +194,13 @@ def test_scheduler_api_mode():
     from app.services.scheduler import SchedulerService
 
     with patch("app.core.config.settings") as mock_settings, \
-         patch("app.services.scheduler.ApiCollectionService") as MockApiSvc:
+         patch("app.services.data_collection.ApiCollectionService") as MockApiSvc:
         mock_settings.collection_mode = "api"
         MockApiSvc.return_value = MagicMock(spec=ApiCollectionService)
 
         svc = SchedulerService()
 
-        # The collection_service should be the ApiCollectionService instance
+        # The collection_service should be an ApiCollectionService instance
         MockApiSvc.assert_called_once()
         assert svc.collection_service is MockApiSvc.return_value
 
