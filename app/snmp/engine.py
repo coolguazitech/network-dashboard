@@ -21,6 +21,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Hard cap for per-PDU wait_for timeout (seconds).
+# Even if SNMP_TIMEOUT is set very high, a single PDU should never
+# block the event loop for more than this.
+_MAX_PDU_WAIT: float = 30.0
+
 
 class SnmpError(Exception):
     """Base SNMP error."""
@@ -53,39 +58,47 @@ class SnmpEngineConfig:
     walk_timeout: float = 120.0
 
 
+def _pdu_timeout(target: SnmpTarget) -> float:
+    """Compute per-PDU hard timeout, capped at _MAX_PDU_WAIT."""
+    natural = target.timeout * (target.retries + 1) + 2
+    return min(natural, _MAX_PDU_WAIT)
+
+
 class AsyncSnmpEngine:
     """
     Thin async wrapper around pysnmp-lextudio v6.x asyncio API.
 
-    Thread-safe: uses a single shared pysnmp SnmpEngine instance.
-    Auto-recovers by recreating the internal engine after accumulated errors.
+    Each get()/walk() call creates its own short-lived PySnmpEngine
+    so that concurrent operations never share transport dispatcher
+    state. This eliminates cross-contamination when a request hangs
+    and must be cancelled.
     """
 
-    _MAX_ERRORS_BEFORE_RESET = 3
-
     def __init__(self, config: SnmpEngineConfig | None = None) -> None:
-        from pysnmp.hlapi.asyncio import SnmpEngine as PySnmpEngine
+        # Only validate that pysnmp is importable at init time
+        from pysnmp.hlapi.asyncio import SnmpEngine as _PySnmpEngine  # noqa: F401
 
         self._config = config or SnmpEngineConfig()
-        self._engine = PySnmpEngine()
-        self._error_count = 0
 
-    def _reset_engine(self) -> None:
-        """Recreate internal pysnmp engine after corruption."""
+    @staticmethod
+    def _new_engine() -> Any:
+        """Create a fresh, isolated PySnmpEngine instance."""
         from pysnmp.hlapi.asyncio import SnmpEngine as PySnmpEngine
 
-        old = self._engine
+        return PySnmpEngine()
+
+    @staticmethod
+    def _close_engine(engine: Any) -> None:
+        """Best-effort cleanup of a PySnmpEngine's transport dispatcher."""
         try:
-            if hasattr(old, "transportDispatcher"):
-                old.transportDispatcher.closeDispatcher()
+            if hasattr(engine, "transportDispatcher"):
+                engine.transportDispatcher.closeDispatcher()
         except Exception:
             pass
-        self._engine = PySnmpEngine()
-        self._error_count = 0
-        logger.warning("SNMP engine reset (recreated after %d errors)", self._MAX_ERRORS_BEFORE_RESET)
 
-    def _make_transport(self, target: SnmpTarget) -> Any:
-        """Create UDP transport for target (synchronous in v6)."""
+    @staticmethod
+    def _make_transport(target: SnmpTarget) -> Any:
+        """Create UDP transport for target."""
         from pysnmp.hlapi.asyncio import UdpTransportTarget
 
         return UdpTransportTarget(
@@ -115,32 +128,32 @@ class AsyncSnmpEngine:
             getCmd,
         )
 
+        engine = self._new_engine()
         transport = self._make_transport(target)
         object_types = [
             ObjectType(ObjectIdentity(oid)) for oid in oids
         ]
-
-        per_pdu_timeout = target.timeout * (target.retries + 1) + 5
+        pdu_timeout = _pdu_timeout(target)
 
         try:
             error_indication, error_status, error_index, var_binds = (
                 await asyncio.wait_for(
                     getCmd(
-                        self._engine,
+                        engine,
                         CommunityData(target.community),
                         transport,
                         ContextData(),
                         *object_types,
                     ),
-                    timeout=per_pdu_timeout,
+                    timeout=pdu_timeout,
                 )
             )
         except asyncio.TimeoutError:
             logger.warning(
-                "getCmd hung for %s (>%.0fs), resetting engine",
-                target.ip, per_pdu_timeout,
+                "getCmd hung for %s (>%.0fs)",
+                target.ip, pdu_timeout,
             )
-            self._reset_engine()
+            self._close_engine(engine)
             raise SnmpTimeoutError(
                 f"SNMP GET hung: {target.ip} OIDs={oids}"
             )
@@ -148,33 +161,32 @@ class AsyncSnmpEngine:
         if error_indication:
             err_str = str(error_indication)
             if "timeout" in err_str.lower() or "request" in err_str.lower():
-                self._error_count += 1
-                if self._error_count >= self._MAX_ERRORS_BEFORE_RESET:
-                    self._reset_engine()
+                self._close_engine(engine)
                 raise SnmpTimeoutError(
                     f"SNMP GET timeout: {target.ip} OIDs={oids}"
                 )
+            self._close_engine(engine)
             raise SnmpError(f"SNMP GET error: {err_str}")
 
         if error_status:
+            self._close_engine(engine)
             raise SnmpError(
                 f"SNMP GET error status: {error_status.prettyPrint()} "
                 f"at {var_binds[int(error_index) - 1][0] if error_index else '?'}"
             )
 
-        self._error_count = 0
         result: dict[str, Any] = {}
         for oid, val in var_binds:
             oid_str = str(oid)
             val_str = val.prettyPrint() if hasattr(val, "prettyPrint") else str(val)
 
-            # Check for noSuchObject / noSuchInstance / endOfMibView
             val_class = val.__class__.__name__
             if val_class in ("NoSuchObject", "NoSuchInstance", "EndOfMibView"):
-                continue  # skip, don't raise — caller handles missing data
+                continue
 
             result[oid_str] = val_str
 
+        self._close_engine(engine)
         return result
 
     async def walk(
@@ -186,9 +198,8 @@ class AsyncSnmpEngine:
         """
         Full SNMP walk of a subtree using GETBULK.
 
-        Uses an internal deadline instead of asyncio.wait_for to avoid
-        cancelling the underlying pysnmp coroutine mid-flight, which can
-        corrupt the shared SnmpEngine transport dispatcher state.
+        Each walk creates its own PySnmpEngine so concurrent walks
+        never interfere with each other.
 
         Returns:
             List of (oid_str, value_str) tuples within the subtree.
@@ -197,23 +208,6 @@ class AsyncSnmpEngine:
             SnmpTimeoutError: if any GETBULK times out or walk exceeds deadline.
             SnmpError: on other errors.
         """
-        try:
-            result = await self._walk_impl(target, oid_prefix, max_repetitions)
-            self._error_count = 0
-            return result
-        except SnmpTimeoutError:
-            self._error_count += 1
-            if self._error_count >= self._MAX_ERRORS_BEFORE_RESET:
-                self._reset_engine()
-            raise
-
-    async def _walk_impl(
-        self,
-        target: SnmpTarget,
-        oid_prefix: str,
-        max_repetitions: int | None,
-    ) -> list[tuple[str, str]]:
-        """Internal walk implementation with deadline-based timeout."""
         from pysnmp.hlapi.asyncio import (
             CommunityData,
             ContextData,
@@ -222,107 +216,99 @@ class AsyncSnmpEngine:
             bulkCmd,
         )
 
+        engine = self._new_engine()
         max_rep = max_repetitions or self._config.max_repetitions
         transport = self._make_transport(target)
         results: list[tuple[str, str]] = []
         prefix = oid_prefix.rstrip(".")
         deadline = _time.monotonic() + self._config.walk_timeout
+        pdu_timeout = _pdu_timeout(target)
 
-        # Start walking from the prefix
         current_oid = ObjectIdentity(prefix)
         community = CommunityData(target.community)
         context = ContextData()
 
-        # Per-PDU hard timeout: pysnmp should respond within
-        # timeout * (retries+1), but if it hangs (dispatcher bug),
-        # wait_for will cancel it and we reset the engine.
-        per_pdu_timeout = target.timeout * (target.retries + 1) + 5
-
-        while True:
-            # Check deadline before each GETBULK request
-            if _time.monotonic() > deadline:
-                raise SnmpTimeoutError(
-                    f"SNMP WALK deadline exceeded "
-                    f"({self._config.walk_timeout}s): "
-                    f"{target.ip} prefix={prefix} "
-                    f"({len(results)} OIDs collected before timeout)"
-                )
-
-            try:
-                error_indication, error_status, error_index, var_bind_table = (
-                    await asyncio.wait_for(
-                        bulkCmd(
-                            self._engine,
-                            community,
-                            transport,
-                            context,
-                            0,  # non-repeaters
-                            max_rep,
-                            ObjectType(current_oid),
-                        ),
-                        timeout=per_pdu_timeout,
-                    )
-                )
-            except asyncio.TimeoutError:
-                # bulkCmd hung — engine transport dispatcher is likely
-                # corrupted by the cancellation, reset immediately.
-                logger.warning(
-                    "bulkCmd hung for %s (>%.0fs), resetting engine",
-                    target.ip, per_pdu_timeout,
-                )
-                self._reset_engine()
-                raise SnmpTimeoutError(
-                    f"SNMP bulkCmd hung: {target.ip} prefix={prefix} "
-                    f"({len(results)} OIDs collected before hang)"
-                )
-
-            if error_indication:
-                err_str = str(error_indication)
-                if "timeout" in err_str.lower():
+        try:
+            while True:
+                if _time.monotonic() > deadline:
                     raise SnmpTimeoutError(
-                        f"SNMP WALK timeout: {target.ip} prefix={prefix}"
+                        f"SNMP WALK deadline exceeded "
+                        f"({self._config.walk_timeout}s): "
+                        f"{target.ip} prefix={prefix} "
+                        f"({len(results)} OIDs collected before timeout)"
                     )
-                raise SnmpError(f"SNMP WALK error: {err_str}")
 
-            if error_status:
-                raise SnmpError(
-                    f"SNMP WALK error status: {error_status.prettyPrint()}"
-                )
+                try:
+                    error_indication, error_status, error_index, var_bind_table = (
+                        await asyncio.wait_for(
+                            bulkCmd(
+                                engine,
+                                community,
+                                transport,
+                                context,
+                                0,  # non-repeaters
+                                max_rep,
+                                ObjectType(current_oid),
+                            ),
+                            timeout=pdu_timeout,
+                        )
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "bulkCmd hung for %s (>%.0fs)",
+                        target.ip, pdu_timeout,
+                    )
+                    raise SnmpTimeoutError(
+                        f"SNMP bulkCmd hung: {target.ip} prefix={prefix} "
+                        f"({len(results)} OIDs collected before hang)"
+                    )
 
-            if not var_bind_table:
-                break
+                if error_indication:
+                    err_str = str(error_indication)
+                    if "timeout" in err_str.lower():
+                        raise SnmpTimeoutError(
+                            f"SNMP WALK timeout: {target.ip} prefix={prefix}"
+                        )
+                    raise SnmpError(f"SNMP WALK error: {err_str}")
 
-            out_of_scope = False
-            for var_bind_row in var_bind_table:
-                # bulkCmd returns 2-D table: each row is a list of ObjectType
-                if not var_bind_row:
-                    out_of_scope = True
+                if error_status:
+                    raise SnmpError(
+                        f"SNMP WALK error status: {error_status.prettyPrint()}"
+                    )
+
+                if not var_bind_table:
                     break
-                oid, val = var_bind_row[0]
-                oid_str = str(oid)
 
-                # Check if we've walked past our subtree
-                if not oid_str.startswith(prefix + "."):
-                    out_of_scope = True
+                out_of_scope = False
+                for var_bind_row in var_bind_table:
+                    if not var_bind_row:
+                        out_of_scope = True
+                        break
+                    oid, val = var_bind_row[0]
+                    oid_str = str(oid)
+
+                    if not oid_str.startswith(prefix + "."):
+                        out_of_scope = True
+                        break
+
+                    val_class = val.__class__.__name__
+                    if val_class in (
+                        "NoSuchObject", "NoSuchInstance", "EndOfMibView",
+                    ):
+                        out_of_scope = True
+                        break
+
+                    val_str = (
+                        val.prettyPrint()
+                        if hasattr(val, "prettyPrint")
+                        else str(val)
+                    )
+                    results.append((oid_str, val_str))
+                    current_oid = ObjectIdentity(oid_str)
+
+                if out_of_scope or not var_bind_table:
                     break
-
-                # Skip special values
-                val_class = val.__class__.__name__
-                if val_class in (
-                    "NoSuchObject", "NoSuchInstance", "EndOfMibView",
-                ):
-                    out_of_scope = True
-                    break
-
-                val_str = (
-                    val.prettyPrint()
-                    if hasattr(val, "prettyPrint")
-                    else str(val)
-                )
-                results.append((oid_str, val_str))
-                current_oid = ObjectIdentity(oid_str)
-
-            if out_of_scope or not var_bind_table:
-                break
+        finally:
+            self._close_engine(engine)
 
         return results
