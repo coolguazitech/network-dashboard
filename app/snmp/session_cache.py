@@ -32,9 +32,11 @@ _SYS_OBJECT_ID = "1.3.6.1.2.1.1.2.0"
 _IF_NAME_OID = "1.3.6.1.2.1.31.1.1.1.1"  # IF-MIB::ifName
 _DOT1D_BASE_PORT_IF_INDEX = "1.3.6.1.2.1.17.1.4.1.2"  # BRIDGE-MIB
 
-# Community probe uses shorter timeout than actual walks.
-# A single sysObjectID GET should reply in <1s if SNMP is working.
-_PROBE_TIMEOUT: float = 3.0
+# Community probe uses aggressive timeout.
+# A single sysObjectID GET should reply in <500ms if SNMP is working.
+# LibreNMS default: timeout=1s, retries=1.
+# Our per-PDU hard cap: 2*(1+1)+2 = 6s (was 3*(1+1)+2 = 8s).
+_PROBE_TIMEOUT: float = 2.0
 _PROBE_RETRIES: int = 1
 
 

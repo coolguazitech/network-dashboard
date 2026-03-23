@@ -216,10 +216,15 @@ class Settings(BaseSettings):
     )
     snmp_port: int = Field(default=161, description="SNMP target port")
     snmp_timeout: float = Field(
-        default=8.0, description="SNMP PDU timeout in seconds",
+        default=3.0,
+        description="SNMP PDU timeout in seconds. "
+        "LibreNMS uses 1s. Most responsive devices reply in <500ms. "
+        "Combined with retries, per-PDU hard cap = timeout*(retries+1)+2.",
     )
     snmp_retries: int = Field(
-        default=2, description="SNMP PDU retry count (pysnmp transport layer)",
+        default=1,
+        description="SNMP PDU retry count. With timeout=3s, retries=1: "
+        "per-PDU hard cap = 3*(1+1)+2 = 8s (was 26s with 8s/2 retries).",
     )
     snmp_max_repetitions: int = Field(
         default=25, description="SNMP GETBULK max-repetitions per PDU",
@@ -230,14 +235,15 @@ class Settings(BaseSettings):
         "Shared semaphore prevents N_jobs × concurrency from overwhelming devices.",
     )
     snmp_walk_timeout: float = Field(
-        default=120.0,
+        default=60.0,
         description="Overall timeout for a single SNMP walk (seconds). "
-        "Large tables (MAC, transceiver) on 48-port devices may need 60-90s.",
+        "Large tables (MAC on 48-port) typically complete in 5-15s. "
+        "60s is generous; 120s was too long for unreachable devices.",
     )
     snmp_collector_retries: int = Field(
         default=1,
         description="Collector-level retry count on walk timeout. "
-        "With walk_timeout=120s, 1 retry = max 240s per device.",
+        "With walk_timeout=60s, 1 retry = max 120s per collector.",
     )
     snmp_mock: bool = Field(
         default=False,

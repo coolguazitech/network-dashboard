@@ -103,9 +103,18 @@ class ApiCollectionService:
     ) -> dict[str, Any]:
         """Execute collection with parallel device fetching (retryable on deadlock)."""
         t0 = _time.monotonic()
-        sem = asyncio.Semaphore(20)
+        sem = asyncio.Semaphore(10)  # was 20; reduced to avoid overwhelming FNA
 
-        async with httpx.AsyncClient(verify=False) as http:
+        # Explicit connection pool limits prevent httpx from queuing too many
+        # requests, which causes FNA to drop connections (RemoteProtocolError).
+        limits = httpx.Limits(
+            max_connections=15,
+            max_keepalive_connections=5,
+            keepalive_expiry=30,
+        )
+        async with httpx.AsyncClient(
+            verify=False, limits=limits, timeout=30.0,
+        ) as http:
             # 1. Load target devices (shared read-only query)
             async with get_session_context() as session:
                 stmt = select(MaintenanceDeviceList).where(

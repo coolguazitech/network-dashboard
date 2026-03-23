@@ -208,6 +208,12 @@ class CollectionCoordinator:
 
         return round_result
 
+    # Per-device hard timeout inside semaphore.
+    # Even if individual PDUs timeout properly, a device with 10 collectors
+    # could block a slot for 10 × 8s = 80s. This cap ensures the slot is
+    # freed in bounded time regardless of what happens inside.
+    _DEVICE_HARD_TIMEOUT: float = 90.0  # seconds; fast_round(2)≈16s, full_round(8)≈64s
+
     async def _collect_device(
         self,
         device_info: dict[str, str | None],
@@ -223,57 +229,48 @@ class CollectionCoordinator:
         2. Probe community ONCE via session_cache.get_target()
         3. Run each collector sequentially (sharing the same target)
         4. Write all results to DB in a single session
+
+        Hard timeout: entire SNMP phase (probe + all collectors) is wrapped
+        in asyncio.wait_for() so one slow device can never block a semaphore
+        slot indefinitely.
         """
         hostname = device_info["hostname"] or ""
         ip = device_info["ip"] or ""
         vendor = device_info["vendor"]
         device_type = DeviceType(vendor or "HPE")
 
-        # Phase 1 & 2: SNMP work inside semaphore
         collector_outcomes: list[tuple[str, str, str | None, list[BaseModel]]] = []
         device_unreachable = False
         all_ok = True
 
         async with self._semaphore:
-            # Phase 1: Community probe — one attempt decides the device's fate
             try:
-                target = await session_cache.get_target(ip)
-            except SnmpTimeoutError:
-                # Device unreachable — mark ALL collectors, skip walks
+                collector_outcomes, device_unreachable, all_ok = (
+                    await asyncio.wait_for(
+                        self._snmp_phase(
+                            ip=ip,
+                            hostname=hostname,
+                            device_type=device_type,
+                            collectors=collectors,
+                            session_cache=session_cache,
+                        ),
+                        timeout=self._DEVICE_HARD_TIMEOUT,
+                    )
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Device %s (%s) exceeded hard timeout (%.0fs), "
+                    "marking all collectors as timeout",
+                    hostname, ip, self._DEVICE_HARD_TIMEOUT,
+                )
                 device_unreachable = True
+                all_ok = False
                 collector_outcomes = [
-                    (c.api_name, "unreachable", f"SNMP unreachable: {ip}", [])
+                    (c.api_name, "timeout",
+                     f"Device hard timeout ({self._DEVICE_HARD_TIMEOUT:.0f}s): {ip}",
+                     [])
                     for c in collectors
                 ]
-
-            # Phase 2: Run each collector sequentially (sharing target)
-            if not device_unreachable:
-                for collector in collectors:
-                    try:
-                        raw_text, parsed_items = await collector.collect_with_retry(
-                            target=target,
-                            device_type=device_type,
-                            session_cache=session_cache,
-                            engine=self._engine,
-                            max_retries=settings.snmp_collector_retries,
-                        )
-                        collector_outcomes.append(
-                            (collector.api_name, "ok", None, parsed_items),
-                        )
-                    except SnmpTimeoutError as e:
-                        collector_outcomes.append(
-                            (collector.api_name, "timeout", str(e), []),
-                        )
-                        all_ok = False
-                    except Exception as e:
-                        logger.error(
-                            "Collector %s failed for %s: %s",
-                            collector.api_name, hostname, e,
-                        )
-                        collector_outcomes.append(
-                            (collector.api_name, "error", str(e), []),
-                        )
-                        all_ok = False
 
         # Phase 3: DB write — OUTSIDE semaphore to free slot faster
         await self._save_device_results(
@@ -302,6 +299,64 @@ class CollectionCoordinator:
                 for api_name, outcome, _, _ in collector_outcomes
             },
         )
+
+    async def _snmp_phase(
+        self,
+        ip: str,
+        hostname: str,
+        device_type: DeviceType,
+        collectors: list[BaseSnmpCollector],
+        session_cache: SnmpSessionCache,
+    ) -> tuple[list[tuple[str, str, str | None, list[BaseModel]]], bool, bool]:
+        """
+        SNMP probe + all collectors for one device.
+
+        Separated from _collect_device so it can be wrapped in wait_for().
+        Returns: (collector_outcomes, device_unreachable, all_ok)
+        """
+        collector_outcomes: list[tuple[str, str, str | None, list[BaseModel]]] = []
+
+        # Phase 1: Community probe
+        try:
+            target = await session_cache.get_target(ip)
+        except SnmpTimeoutError:
+            return (
+                [(c.api_name, "unreachable", f"SNMP unreachable: {ip}", [])
+                 for c in collectors],
+                True,   # device_unreachable
+                False,  # all_ok
+            )
+
+        # Phase 2: Run each collector sequentially (sharing target)
+        all_ok = True
+        for collector in collectors:
+            try:
+                raw_text, parsed_items = await collector.collect_with_retry(
+                    target=target,
+                    device_type=device_type,
+                    session_cache=session_cache,
+                    engine=self._engine,
+                    max_retries=settings.snmp_collector_retries,
+                )
+                collector_outcomes.append(
+                    (collector.api_name, "ok", None, parsed_items),
+                )
+            except SnmpTimeoutError as e:
+                collector_outcomes.append(
+                    (collector.api_name, "timeout", str(e), []),
+                )
+                all_ok = False
+            except Exception as e:
+                logger.error(
+                    "Collector %s failed for %s: %s",
+                    collector.api_name, hostname, e,
+                )
+                collector_outcomes.append(
+                    (collector.api_name, "error", str(e), []),
+                )
+                all_ok = False
+
+        return collector_outcomes, False, all_ok
 
     async def _save_device_results(
         self,

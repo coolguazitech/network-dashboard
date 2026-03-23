@@ -1,7 +1,13 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.0 (2026-03-22)
+> **版本**: v2.19.1 (2026-03-23)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.19.1 變更摘要**:
+> - **[效能] SNMP timeout 大幅降低**：snmp_timeout 8s→3s, retries 2→1, probe 3s→2s（per-PDU 從 26s 降到 8s，不通設備不再卡 semaphore slot）
+> - **[效能] Per-device hard timeout**：每台設備整體 SNMP 階段上限 90s，超時直接 cancel 釋放 slot
+> - **[效能] walk_timeout 120s→60s**：正常 walk 5-15s 完成，60s 已很寬裕
+> - **[效能] ACL 併發降低 20→10**，加 httpx 連線池限制（防 FNA RemoteProtocolError）
 >
 > **v2.19.0 變更摘要**:
 > - **[架構重構] Device-Centric Collection Rounds**：SNMP 採集從舊的 job-centric（12 個獨立 job 各自遍歷 400 台設備）重構為 device-centric（2 個輪次，每台設備只探測一次 community 後依序跑所有 collectors）
@@ -164,7 +170,7 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.19.0` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.19.1` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
 | `coolguazi/netora-mock-server:v2.19.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
@@ -792,19 +798,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.19.0 \
+    -t coolguazi/network-dashboard-base:v2.19.1 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.19.0
+    coolguazi/network-dashboard-base:v2.19.1
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.19.0
+docker push coolguazi/network-dashboard-base:v2.19.1
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.19.0 | gzip > netora-app-v2.9.0.tar.gz
+docker save coolguazi/network-dashboard-base:v2.19.1 | gzip > netora-app-v2.9.0.tar.gz
 ```
 
 #### 在公司環境（無外網）
