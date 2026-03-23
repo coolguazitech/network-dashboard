@@ -348,7 +348,14 @@ SNMP_MOCK=false
 # SNMP 社群字串（逗號分隔，依序嘗試）
 SNMP_COMMUNITIES=<你的community>,public
 SNMP_PORT=161
-SNMP_TIMEOUT=5
+
+# SNMP 效能參數（v2.19.1 建議值）
+SNMP_TIMEOUT=3                # per-PDU timeout，3×(1+1)+2=8s
+SNMP_RETRIES=1                # PDU retry，搭配 negative cache 快速跳過不通設備
+SNMP_CONCURRENCY=50           # 全域 semaphore slot 數
+SNMP_WALK_TIMEOUT=60          # 單次 walk deadline
+SNMP_COLLECTOR_RETRIES=1      # collector 層 retry
+SNMP_MAX_REPETITIONS=25       # GETBULK max-repetitions
 ```
 
 啟動（不需要 `--profile mock`）：
@@ -2176,16 +2183,23 @@ data:
   APP_DEBUG: "false"
   ENABLE_SCHEDULER: "true"
 
-  # ── SNMP（v2.19.0 device-centric rounds） ──
-  # v2.19.0 架構：2 個 SNMP rounds + ACL legacy jobs
+  # ── SNMP（v2.19.1 device-centric rounds） ──
+  # v2.19.1 架構：2 個 SNMP rounds + ACL legacy jobs
   #   fast_round (300s): mac_table + interface_status（每台設備 probe 1 次 + walk 2 次）
   #   full_round (1800s): fan, power, version, gbic, error_count, channel_group, lldp, cdp
-  #   ACL (300s): get_static_acl + get_dynamic_acl（REST API passthrough）
+  #   ACL (300s): get_static_acl + get_dynamic_acl（REST API passthrough, sem=10）
+  #
+  # 超時層級（由內到外）：
+  #   1. Per-PDU:    timeout×(retries+1)+2 = 3×2+2 = 8s（硬上限 _MAX_PDU_WAIT=30s）
+  #   2. Walk:       60s deadline（正常 5-15s 完成）
+  #   3. Collector:  walk × (collector_retries+1) ≈ 120s
+  #   4. Device:     _DEVICE_HARD_TIMEOUT = 90s（整台設備 SNMP 階段上限）
+  #   5. Negative:   probe 失敗 → 5 分鐘不再嘗試
+  SNMP_TIMEOUT: "3"                 # 單一 PDU timeout (秒)。3×(1+1)+2=8s per-PDU
+  SNMP_RETRIES: "1"                 # PDU 層 retry（pysnmp transport）
   SNMP_CONCURRENCY: "50"            # 全域 semaphore，一個 slot = 一台設備正在被採集
-  SNMP_WALK_TIMEOUT: "120"          # 單次 walk deadline (秒)。大型 table 需 60-90s
-  SNMP_TIMEOUT: "8"                 # 單一 PDU timeout (秒)。8×3+2=26s < _MAX_PDU_WAIT(30s)
-  SNMP_RETRIES: "2"                 # PDU 層 retry（pysnmp transport）
-  SNMP_COLLECTOR_RETRIES: "1"       # walk timeout 後 collector 層 retry
+  SNMP_WALK_TIMEOUT: "60"           # 單次 walk deadline (秒)。大型 table 5-15s，60s 已很寬裕
+  SNMP_COLLECTOR_RETRIES: "1"       # walk timeout 後 collector 層 retry。1 次 = 最多 2 輪 walk
   SNMP_MAX_REPETITIONS: "25"        # GETBULK 每 PDU 回傳 OID 數
 
   # ── Ping ──
