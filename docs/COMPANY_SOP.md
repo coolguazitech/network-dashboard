@@ -1,7 +1,15 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.2 (2026-03-24)
+> **版本**: v2.19.3 (2026-03-24)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.19.3 變更摘要**:
+> - **[Critical] pysnmp engine 延遲清理**：timeout 後不再立即 closeDispatcher()，改為延遲 3 秒讓 uvloop pending callback 先 drain，修復 `AbstractTransportDispatcher._cbFun` 崩潰
+> - **[Critical] 不再覆蓋成功資料**：SNMP 採集失敗時只記錄 error，不會用空 batch 覆蓋之前成功的資料（修復「驗收成功數字下降」問題）
+> - **[效能] SNMP_CONCURRENCY 50→20**：50 個同時 pysnmp engine（各一個 UDP socket）超過系統承受上限，降到 20 穩定運行
+> - **[效能] DEVICE_HARD_TIMEOUT 90s→60s**：搭配降低的 concurrency，更快釋放 semaphore slot
+> - **[排程] full_round 1800s→600s**：原 30 分鐘太久，首次失敗要等半小時才重試 → 現 10 分鐘
+> - **[排程] fast_round/ACL 120s→180s**：配合 concurrency=20，200 台設備需 ~150s 完成，留 30s buffer
 >
 > **v2.19.2 變更摘要**:
 > - **[效能] GNMSPING timeout 60s→15s**：原 60s 導致 ping job 執行超過 15s 間隔 → 被 skip → 燈號不正確
@@ -74,7 +82,7 @@
 > **v2.14.0 變更摘要**:
 > - **Ping 效能優化**：`concurrent_tasks` 10→100、`count` 2→1、`timeout` 2s→1s、`chunk_size` 300→500，2000 IPs 預估從 ~50s 降至 ~8s
 > - **Ping 間隔加速**：device_ping / client_ping 從 30s 縮至 15s，燈號更即時
-> - **SNMP 採集加速**：`snmp_concurrency` 10→50，400 台設備每 job 從 ~200s 降至 ~40s
+> - **SNMP 採集加速**：`snmp_concurrency` 10→50（v2.19.3 降回 20，50 會導致 pysnmp 崩潰），400 台設備每 job 從 ~200s 降至 ~40s
 > - **採集間隔縮短**：所有 SNMP/FNA 採集從 600s 降至 300s，client_collection 同步降至 300s
 > - **測試覆蓋**：1374 tests 全部通過
 >
@@ -355,54 +363,57 @@ SNMP_MOCK=false
 SNMP_COMMUNITIES=<你的community>,public
 SNMP_PORT=161
 
-# SNMP 效能參數（v2.19.2 建議值）
+# SNMP 效能參數（v2.19.3 建議值）
 SNMP_TIMEOUT=3                # per-PDU timeout，3×(1+1)+2=8s
 SNMP_RETRIES=1                # PDU retry，搭配 negative cache 快速跳過不通設備
-SNMP_CONCURRENCY=50           # 全域 semaphore slot 數
+SNMP_CONCURRENCY=20           # 全域 semaphore slot（v2.19.1 的 50 會建太多 UDP socket 導致 pysnmp 崩潰）
 SNMP_WALK_TIMEOUT=60          # 單次 walk deadline
 SNMP_COLLECTOR_RETRIES=1      # collector 層 retry
 SNMP_MAX_REPETITIONS=25       # GETBULK max-repetitions
 SNMP_NEGATIVE_TTL=180         # 不通設備冷卻期（秒），避免與 fast_round 同步過期
 ```
 
-> **v2.19.2 參數調校說明**（歲修期間大量設備不可達時的最佳化）：
+> **v2.19.3 參數調校說明**（50+ 台設備 + 不可達設備時的穩定性修復）：
 >
-> | 參數 | v2.19.1 值 | v2.19.2 建議值 | 改善效果 |
+> | 參數 | v2.19.2 值 | v2.19.3 建議值 | 改善效果 |
 > |------|-----------|---------------|---------|
-> | `GNMSPING__TIMEOUT` | 60s | **15s** | ping job 不再超時被 skip，燈號準確 |
-> | `scheduler.yaml` fast_round | 300s | **120s** | 設備恢復後 2 分鐘內更新（原 5 分鐘） |
-> | `scheduler.yaml` ACL | 300s | **120s** | 客戶端認證狀態更快反映 |
-> | `SNMP_NEGATIVE_TTL` | 300s（硬編碼） | **180s（可設定）** | 不通設備跳過 3 分鐘後重試（原與 fast_round 同步導致每輪重試） |
+> | `SNMP_CONCURRENCY` | 50 | **20** | 防止 50 個 pysnmp engine 同時開啟導致 transport 崩潰 |
+> | `scheduler.yaml` fast_round | 120s | **180s** | 配合 concurrency=20，200 台需 ~150s 完成 |
+> | `scheduler.yaml` full_round | 1800s | **600s** | 首次失敗 10 分鐘後重試（原 30 分鐘），fan/power 更快出現 |
+> | `DEVICE_HARD_TIMEOUT` | 90s | **60s** | 更快釋放 semaphore slot |
 >
-> **為什麼 ping 燈號會錯**：GNMSPING timeout=60s × 5 tenant_group = 最差 300s，但 ping job 間隔只有 15s，
-> APScheduler `max_instances=1` 導致下一輪被跳過 → ping 資料長時間不更新 → 應該綠燈卻顯示紅燈。
+> **為什麼 50 台就卡死**：每台並行設備建立獨立 pysnmp `SnmpEngine`（含 UDP socket），
+> 原 `SNMP_CONCURRENCY=50` 表示同時 50 個 engine。pysnmp 的 `AsyncioDispatcher` 在高併發下會出現
+> `AbstractTransportDispatcher._cbFun` 回調衝突，導致整個 event loop 停擺。
 >
-> **為什麼不通設備仍然拖慢速度**：v2.19.1 的 negative cache TTL=300s 與 fast_round interval=300s 同步過期，
-> 每次開始新一輪時 negative cache 剛好失效，不通設備又要重新花 6-8s probe 才能判定失敗。
-> 將 negative cache 延長（或 fast_round 縮短到 120s）可打破同步。
+> **為什麼成功數字會下降**：v2.19.2 在 SNMP 失敗時會用空 `parsed_items=[]` 覆蓋之前成功的資料。
+> v2.19.3 修復：失敗時只記錄 error，不覆蓋已有的成功資料。
+>
+> **為什麼 fan/power 要 20 分鐘**：full_round 間隔 1800s（30 分鐘），首次嘗試若因系統初始化不穩定而失敗，
+> 要等 30 分鐘才有下一輪。降到 600s 後最慢 10 分鐘就能看到。
 
-#### `config/scheduler.yaml` 建議值（v2.19.2）
+#### `config/scheduler.yaml` 建議值（v2.19.3）
 
 > `config/scheduler.yaml` 控制各採集器的排程間隔。Image 內已包含預設值，
 > 部署時可用 volume mount 覆蓋（`./config/scheduler.yaml:/app/config/scheduler.yaml`）。
 
 ```yaml
 fetchers:
-  # Client 相關 — 120s (2min)，歸入 fast_round
-  get_mac_table:        { source: DNA, interval: 120 }
-  get_interface_status: { source: DNA, interval: 120 }
-  get_static_acl:       { source: FNA, interval: 120 }
-  get_dynamic_acl:      { source: FNA, interval: 120 }
+  # Client 相關 — 180s (3min)，歸入 fast_round
+  get_mac_table:        { source: DNA, interval: 180 }
+  get_interface_status: { source: DNA, interval: 180 }
+  get_static_acl:       { source: FNA, interval: 180 }
+  get_dynamic_acl:      { source: FNA, interval: 180 }
 
-  # 指標類 — 1800s (30min)，歸入 full_round
-  get_fan:              { source: DNA, interval: 1800 }
-  get_power:            { source: DNA, interval: 1800 }
-  get_version:          { source: DNA, interval: 1800 }
-  get_gbic_details:     { source: FNA, interval: 1800 }
-  get_error_count:      { source: FNA, interval: 1800 }
-  get_channel_group:    { source: FNA, interval: 1800 }
-  get_uplink_lldp:      { source: DNA, interval: 1800 }
-  get_uplink_cdp:       { source: DNA, interval: 1800 }
+  # 指標類 — 600s (10min)，歸入 full_round
+  get_fan:              { source: DNA, interval: 600 }
+  get_power:            { source: DNA, interval: 600 }
+  get_version:          { source: DNA, interval: 600 }
+  get_gbic_details:     { source: FNA, interval: 600 }
+  get_error_count:      { source: FNA, interval: 600 }
+  get_channel_group:    { source: FNA, interval: 600 }
+  get_uplink_lldp:      { source: DNA, interval: 600 }
+  get_uplink_cdp:       { source: DNA, interval: 600 }
 
   # Ping — 15s（獨立排程）
   gnms_ping:            { source: GNMSPING, interval: 15 }
@@ -410,8 +421,8 @@ fetchers:
 
 > | 排程 | 間隔 | 說明 |
 > |------|------|------|
-> | `fast_round` | 120s | 取 Client 相關 collectors 的最小 interval |
-> | `full_round` | 1800s | 取指標類 collectors 的最大 interval |
+> | `fast_round` | 180s | 取 Client 相關 collectors 的最小 interval；200 台/concurrency(20)×15s ≈ 150s |
+> | `full_round` | 600s | 取指標類 collectors 的最大 interval；200 台/concurrency(20)×45s ≈ 450s |
 > | `device_ping` | 15s | 設備 ICMP Ping（獨立排程） |
 > | `client_ping` | 15s | 客戶端 ICMP Ping（獨立排程） |
 > | `client_collection` | 300s | 組裝 SNMP + Ping 結果成 Case |
@@ -1590,7 +1601,7 @@ app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
       │
       ├─ 載入活躍歲修的設備清單
       │
-      └─ 對每台設備平行執行（全域 Semaphore，所有 job 共用 SNMP_CONCURRENCY=50）：
+      └─ 對每台設備平行執行（全域 Semaphore，所有 job 共用 SNMP_CONCURRENCY=20）：
           │
           ├─ session_cache.get_target(ip)      ← app/snmp/session_cache.py
           │   └─ 逐一嘗試 community → engine.get(sysObjectID.0)
@@ -2256,7 +2267,7 @@ data:
   #   5. Negative:   probe 失敗 → 5 分鐘不再嘗試
   SNMP_TIMEOUT: "3"                 # 單一 PDU timeout (秒)。3×(1+1)+2=8s per-PDU
   SNMP_RETRIES: "1"                 # PDU 層 retry（pysnmp transport）
-  SNMP_CONCURRENCY: "50"            # 全域 semaphore，一個 slot = 一台設備正在被採集
+  SNMP_CONCURRENCY: "20"            # 全域 semaphore，一個 slot = 一台設備正在被採集
   SNMP_WALK_TIMEOUT: "60"           # 單次 walk deadline (秒)。大型 table 5-15s，60s 已很寬裕
   SNMP_COLLECTOR_RETRIES: "1"       # walk timeout 後 collector 層 retry。1 次 = 最多 2 輪 walk
   SNMP_MAX_REPETITIONS: "25"        # GETBULK 每 PDU 回傳 OID 數

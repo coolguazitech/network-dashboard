@@ -212,7 +212,7 @@ class CollectionCoordinator:
     # Even if individual PDUs timeout properly, a device with 10 collectors
     # could block a slot for 10 × 8s = 80s. This cap ensures the slot is
     # freed in bounded time regardless of what happens inside.
-    _DEVICE_HARD_TIMEOUT: float = 90.0  # seconds; fast_round(2)≈16s, full_round(8)≈64s
+    _DEVICE_HARD_TIMEOUT: float = 60.0  # seconds; fast_round(2)≈16s, full_round(8)≈48s
 
     async def _collect_device(
         self,
@@ -388,13 +388,9 @@ class CollectionCoordinator:
                                 session, maintenance_id, api_name, hostname,
                             )
                         else:
-                            # Save empty batch so UI shows status
-                            await typed_repo.save_batch(
-                                switch_hostname=hostname,
-                                raw_data=f"[SNMP_{status.upper()}] {error_msg}",
-                                parsed_items=[],
-                                maintenance_id=maintenance_id,
-                            )
+                            # Do NOT overwrite existing successful data with
+                            # empty failure records — previously collected data
+                            # remains valid.  Only track the error.
                             await _upsert_collection_error(
                                 session, maintenance_id,
                                 api_name, hostname, error_msg or status,

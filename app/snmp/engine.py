@@ -39,6 +39,14 @@ class SnmpNoSuchObjectError(SnmpError):
     """Requested OID does not exist on the device."""
 
 
+# Seconds to wait before closing a timed-out engine.
+# When wait_for() cancels a pysnmp getCmd/bulkCmd, the underlying UDP
+# transport still has pending callbacks in uvloop.  Closing the dispatcher
+# immediately causes AbstractTransportDispatcher._cbFun exceptions.
+# Deferring cleanup lets pending callbacks drain first.
+_DEFERRED_CLOSE_DELAY: float = 3.0
+
+
 @dataclass
 class SnmpTarget:
     """Connection parameters for a single SNMP target."""
@@ -97,6 +105,25 @@ class AsyncSnmpEngine:
             pass
 
     @staticmethod
+    def _deferred_close_engine(engine: Any) -> None:
+        """Schedule engine cleanup after a delay.
+
+        Used after wait_for() cancels a hung PDU — pending uvloop callbacks
+        need time to drain before we tear down the transport dispatcher.
+        Avoids AbstractTransportDispatcher._cbFun exceptions.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            loop.call_later(
+                _DEFERRED_CLOSE_DELAY,
+                AsyncSnmpEngine._close_engine,
+                engine,
+            )
+        except Exception:
+            # Fallback: close immediately if event loop unavailable
+            AsyncSnmpEngine._close_engine(engine)
+
+    @staticmethod
     def _make_transport(target: SnmpTarget) -> Any:
         """Create UDP transport for target."""
         from pysnmp.hlapi.asyncio import UdpTransportTarget
@@ -153,7 +180,8 @@ class AsyncSnmpEngine:
                 "getCmd hung for %s (>%.0fs)",
                 target.ip, pdu_timeout,
             )
-            self._close_engine(engine)
+            # Deferred close: let pending uvloop callbacks drain first
+            self._deferred_close_engine(engine)
             raise SnmpTimeoutError(
                 f"SNMP GET hung: {target.ip} OIDs={oids}"
             )
@@ -223,6 +251,7 @@ class AsyncSnmpEngine:
         prefix = oid_prefix.rstrip(".")
         deadline = _time.monotonic() + self._config.walk_timeout
         pdu_timeout = _pdu_timeout(target)
+        _pdu_hung = False  # track whether a PDU-level timeout occurred
 
         current_oid = ObjectIdentity(prefix)
         community = CommunityData(target.community)
@@ -254,6 +283,7 @@ class AsyncSnmpEngine:
                         )
                     )
                 except asyncio.TimeoutError:
+                    _pdu_hung = True
                     logger.warning(
                         "bulkCmd hung for %s (>%.0fs)",
                         target.ip, pdu_timeout,
@@ -309,6 +339,10 @@ class AsyncSnmpEngine:
                 if out_of_scope or not var_bind_table:
                     break
         finally:
-            self._close_engine(engine)
+            if _pdu_hung:
+                # Deferred close: let pending uvloop callbacks drain first
+                self._deferred_close_engine(engine)
+            else:
+                self._close_engine(engine)
 
         return results

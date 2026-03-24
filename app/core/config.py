@@ -230,9 +230,11 @@ class Settings(BaseSettings):
         default=25, description="SNMP GETBULK max-repetitions per PDU",
     )
     snmp_concurrency: int = Field(
-        default=50,
+        default=20,
         description="Global max concurrent SNMP device walks across ALL jobs. "
-        "Shared semaphore prevents N_jobs × concurrency from overwhelming devices.",
+        "Each concurrent device creates a pysnmp engine (UDP socket). "
+        "50 was too many — caused AbstractTransportDispatcher._cbFun errors. "
+        "20 balances throughput vs pysnmp stability.",
     )
     snmp_walk_timeout: float = Field(
         default=60.0,
