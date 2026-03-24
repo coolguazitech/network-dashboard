@@ -5,7 +5,7 @@
 # v2.19.0 架構：Device-Centric Collection Rounds
 #
 # SNMP 模式下使用兩個「輪次」取代舊的 12 個獨立 job：
-#   - fast_round (300s): mac_table + interface_status（影響客戶端狀態）
+#   - fast_round (120s): mac_table + interface_status（影響客戶端狀態）
 #   - full_round (1800s): 所有 10 個 SNMP collectors
 #
 # 每個輪次遍歷設備一次，每台設備只探測一次 community，
@@ -23,27 +23,27 @@
 
 fetchers:
   # ---------------------------------------------------------------------------
-  # Client 相關 — 300s (5min)
+  # Client 相關 — 120s (2min)
   # 歸入 fast_round（影響客戶端介面匹配、連線狀態）
   # ---------------------------------------------------------------------------
   get_mac_table:
     source: DNA
-    interval: 300
+    interval: 120
     description: "MAC 位址表（Client 介面匹配來源）"
 
   get_interface_status:
     source: DNA
-    interval: 300
+    interval: 120
     description: "Interface 狀態（速率/雙工，Client 連線狀態）"
 
   get_static_acl:
     source: FNA
-    interval: 300
+    interval: 120
     description: "Static ACL 綁定（Client 認證狀態）"
 
   get_dynamic_acl:
     source: FNA
-    interval: 300
+    interval: 120
     description: "Dynamic ACL 綁定（Client 認證狀態）"
 
   # ---------------------------------------------------------------------------

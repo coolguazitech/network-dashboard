@@ -59,7 +59,7 @@ class SnmpSessionCache:
     _community_cache: ClassVar[dict[str, str]] = {}
     _negative_cache: ClassVar[dict[str, float]] = {}  # ip -> expiry monotonic
     _probe_locks: ClassVar[dict[str, asyncio.Lock]] = {}  # per-IP probe dedup
-    NEGATIVE_TTL: ClassVar[float] = 300.0  # 5 min cooldown for SNMP-unreachable
+    NEGATIVE_TTL: ClassVar[float] = 180.0  # default; overridden by settings.snmp_negative_ttl
 
     def __init__(
         self,
@@ -77,6 +77,13 @@ class SnmpSessionCache:
         # Instance-level caches (per collection cycle)
         self._ifindex_cache: dict[str, dict[int, str]] = {}
         self._bridge_port_cache: dict[str, dict[int, int]] = {}
+
+        # Apply settings override for negative cache TTL
+        try:
+            from app.core.config import settings
+            SnmpSessionCache.NEGATIVE_TTL = settings.snmp_negative_ttl
+        except Exception:
+            pass  # keep default
 
     async def get_target(self, ip: str) -> SnmpTarget:
         """

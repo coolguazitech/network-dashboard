@@ -245,6 +245,12 @@ class Settings(BaseSettings):
         description="Collector-level retry count on walk timeout. "
         "With walk_timeout=60s, 1 retry = max 120s per collector.",
     )
+    snmp_negative_ttl: float = Field(
+        default=180.0,
+        description="Negative cache TTL (seconds) for SNMP-unreachable devices. "
+        "During this period, unreachable devices are skipped without probing. "
+        "Was 300s (same as fast_round), now 180s to allow faster recovery.",
+    )
     snmp_mock: bool = Field(
         default=False,
         description="Use mock SNMP engine (no real devices needed)",

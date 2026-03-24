@@ -1,7 +1,13 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.1 (2026-03-23)
+> **版本**: v2.19.2 (2026-03-24)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.19.2 變更摘要**:
+> - **[效能] GNMSPING timeout 60s→15s**：原 60s 導致 ping job 執行超過 15s 間隔 → 被 skip → 燈號不正確
+> - **[效能] fast_round 間隔 300s→120s**：客戶端相關採集更頻繁，設備恢復後更快更新狀態
+> - **[效能] Negative cache TTL 300s→180s（可設定）**：新增 `SNMP_NEGATIVE_TTL` 環境變數，不再與 fast_round 同步過期導致每輪重試不通設備
+> - **[排程] ACL 採集間隔 300s→120s**：與 fast_round 同步，加快客戶端認證狀態更新
 >
 > **v2.19.1 變更摘要**:
 > - **[效能] SNMP timeout 大幅降低**：snmp_timeout 8s→3s, retries 2→1, probe 3s→2s（per-PDU 從 26s 降到 8s，不通設備不再卡 semaphore slot）
@@ -263,7 +269,7 @@ FETCHER_SOURCE__DNA__BASE_URL=http://<DNA伺服器IP>:<port>
 FETCHER_SOURCE__DNA__TIMEOUT=30
 
 # ===== GNMS Ping（必改，POST + JSON body，每個 tenant_group 各自的 base URL）=====
-GNMSPING__TIMEOUT=60
+GNMSPING__TIMEOUT=15                           # 原 60s 導致 ping job 超時被 skip → 燈號錯誤
 GNMSPING__ENDPOINT=/api/v1/ping
 GNMSPING__TOKEN=<GNMSPING token（所有 tenant 共用）>
 GNMSPING__BASE_URLS__F18=http://<GNMSPING-F18伺服器IP>:<port>
@@ -349,14 +355,31 @@ SNMP_MOCK=false
 SNMP_COMMUNITIES=<你的community>,public
 SNMP_PORT=161
 
-# SNMP 效能參數（v2.19.1 建議值）
+# SNMP 效能參數（v2.19.2 建議值）
 SNMP_TIMEOUT=3                # per-PDU timeout，3×(1+1)+2=8s
 SNMP_RETRIES=1                # PDU retry，搭配 negative cache 快速跳過不通設備
 SNMP_CONCURRENCY=50           # 全域 semaphore slot 數
 SNMP_WALK_TIMEOUT=60          # 單次 walk deadline
 SNMP_COLLECTOR_RETRIES=1      # collector 層 retry
 SNMP_MAX_REPETITIONS=25       # GETBULK max-repetitions
+SNMP_NEGATIVE_TTL=180         # 不通設備冷卻期（秒），避免與 fast_round 同步過期
 ```
+
+> **v2.19.2 參數調校說明**（歲修期間大量設備不可達時的最佳化）：
+>
+> | 參數 | v2.19.1 值 | v2.19.2 建議值 | 改善效果 |
+> |------|-----------|---------------|---------|
+> | `GNMSPING__TIMEOUT` | 60s | **15s** | ping job 不再超時被 skip，燈號準確 |
+> | `scheduler.yaml` fast_round | 300s | **120s** | 設備恢復後 2 分鐘內更新（原 5 分鐘） |
+> | `scheduler.yaml` ACL | 300s | **120s** | 客戶端認證狀態更快反映 |
+> | `SNMP_NEGATIVE_TTL` | 300s（硬編碼） | **180s（可設定）** | 不通設備跳過 3 分鐘後重試（原與 fast_round 同步導致每輪重試） |
+>
+> **為什麼 ping 燈號會錯**：GNMSPING timeout=60s × 5 tenant_group = 最差 300s，但 ping job 間隔只有 15s，
+> APScheduler `max_instances=1` 導致下一輪被跳過 → ping 資料長時間不更新 → 應該綠燈卻顯示紅燈。
+>
+> **為什麼不通設備仍然拖慢速度**：v2.19.1 的 negative cache TTL=300s 與 fast_round interval=300s 同步過期，
+> 每次開始新一輪時 negative cache 剛好失效，不通設備又要重新花 6-8s probe 才能判定失敗。
+> 將 negative cache 延長（或 fast_round 縮短到 120s）可打破同步。
 
 啟動（不需要 `--profile mock`）：
 
