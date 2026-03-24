@@ -381,6 +381,42 @@ SNMP_NEGATIVE_TTL=180         # 不通設備冷卻期（秒），避免與 fast_
 > 每次開始新一輪時 negative cache 剛好失效，不通設備又要重新花 6-8s probe 才能判定失敗。
 > 將 negative cache 延長（或 fast_round 縮短到 120s）可打破同步。
 
+#### `config/scheduler.yaml` 建議值（v2.19.2）
+
+> `config/scheduler.yaml` 控制各採集器的排程間隔。Image 內已包含預設值，
+> 部署時可用 volume mount 覆蓋（`./config/scheduler.yaml:/app/config/scheduler.yaml`）。
+
+```yaml
+fetchers:
+  # Client 相關 — 120s (2min)，歸入 fast_round
+  get_mac_table:        { source: DNA, interval: 120 }
+  get_interface_status: { source: DNA, interval: 120 }
+  get_static_acl:       { source: FNA, interval: 120 }
+  get_dynamic_acl:      { source: FNA, interval: 120 }
+
+  # 指標類 — 1800s (30min)，歸入 full_round
+  get_fan:              { source: DNA, interval: 1800 }
+  get_power:            { source: DNA, interval: 1800 }
+  get_version:          { source: DNA, interval: 1800 }
+  get_gbic_details:     { source: FNA, interval: 1800 }
+  get_error_count:      { source: FNA, interval: 1800 }
+  get_channel_group:    { source: FNA, interval: 1800 }
+  get_uplink_lldp:      { source: DNA, interval: 1800 }
+  get_uplink_cdp:       { source: DNA, interval: 1800 }
+
+  # Ping — 15s（獨立排程）
+  gnms_ping:            { source: GNMSPING, interval: 15 }
+```
+
+> | 排程 | 間隔 | 說明 |
+> |------|------|------|
+> | `fast_round` | 120s | 取 Client 相關 collectors 的最小 interval |
+> | `full_round` | 1800s | 取指標類 collectors 的最大 interval |
+> | `device_ping` | 15s | 設備 ICMP Ping（獨立排程） |
+> | `client_ping` | 15s | 客戶端 ICMP Ping（獨立排程） |
+> | `client_collection` | 300s | 組裝 SNMP + Ping 結果成 Case |
+> | `retention` | 30min | 清理過期資料 |
+
 啟動（不需要 `--profile mock`）：
 
 ```bash
