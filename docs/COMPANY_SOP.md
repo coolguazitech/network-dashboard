@@ -1,7 +1,14 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.3 (2026-03-24)
+> **版本**: v2.19.4 (2026-03-24)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.19.4 變更摘要**:
+> - **[Root Fix] SubprocessSnmpEngine**：用 `asyncio.create_subprocess_exec("snmpget"/"snmpbulkwalk")` 取代 pysnmp，每個 SNMP 操作獨立進程，徹底消除 pysnmp `AbstractTransportDispatcher._cbFun` 崩潰和 event loop 卡死
+> - **[Root Fix] 進程隔離**：50+ 台設備併發不再崩潰（每個 subprocess 獨立 PID/socket，OS 輕鬆處理），timeout 時 `proc.kill()` 立即乾淨回收
+> - **[效能] Negative cache fast-path**：不可達設備在取 semaphore **之前**就跳過，不佔併發 slot，180s 後自動重試
+> - **[效能] SNMP_CONCURRENCY 20→50**：subprocess 引擎安全支援高併發
+> - **[設定] 新增 `SNMP_ENGINE` 環境變數**：`subprocess`（預設，推薦）或 `pysnmp`（legacy fallback）
 >
 > **v2.19.3 變更摘要**:
 > - **[Critical] pysnmp engine 延遲清理**：timeout 後不再立即 closeDispatcher()，改為延遲 3 秒讓 uvloop pending callback 先 drain，修復 `AbstractTransportDispatcher._cbFun` 崩潰
@@ -82,7 +89,7 @@
 > **v2.14.0 變更摘要**:
 > - **Ping 效能優化**：`concurrent_tasks` 10→100、`count` 2→1、`timeout` 2s→1s、`chunk_size` 300→500，2000 IPs 預估從 ~50s 降至 ~8s
 > - **Ping 間隔加速**：device_ping / client_ping 從 30s 縮至 15s，燈號更即時
-> - **SNMP 採集加速**：`snmp_concurrency` 10→50（v2.19.3 降回 20，50 會導致 pysnmp 崩潰），400 台設備每 job 從 ~200s 降至 ~40s
+> - **SNMP 採集加速**：`snmp_concurrency` 10→50（v2.19.4 subprocess 引擎安全支援 50+），400 台設備每 job 從 ~200s 降至 ~40s
 > - **採集間隔縮短**：所有 SNMP/FNA 採集從 600s 降至 300s，client_collection 同步降至 300s
 > - **測試覆蓋**：1374 tests 全部通過
 >
@@ -184,7 +191,7 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.19.1` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.19.4` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
 | `coolguazi/netora-mock-server:v2.19.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
@@ -363,36 +370,41 @@ SNMP_MOCK=false
 SNMP_COMMUNITIES=<你的community>,public
 SNMP_PORT=161
 
-# SNMP 效能參數（v2.19.3 建議值）
+# SNMP 效能參數（v2.19.4 建議值）
+SNMP_ENGINE=subprocess        # subprocess（net-snmp CLI，推薦）或 pysnmp（legacy）
 SNMP_TIMEOUT=3                # per-PDU timeout，3×(1+1)+2=8s
 SNMP_RETRIES=1                # PDU retry，搭配 negative cache 快速跳過不通設備
-SNMP_CONCURRENCY=20           # 全域 semaphore slot（v2.19.1 的 50 會建太多 UDP socket 導致 pysnmp 崩潰）
-SNMP_WALK_TIMEOUT=60          # 單次 walk deadline
+SNMP_CONCURRENCY=50           # 全域 semaphore slot（subprocess 進程隔離，50+ 安全）
+SNMP_WALK_TIMEOUT=30          # 單次 walk deadline（需 < hard_timeout 讓多 collector 有預算）
 SNMP_COLLECTOR_RETRIES=1      # collector 層 retry
 SNMP_MAX_REPETITIONS=25       # GETBULK max-repetitions
 SNMP_NEGATIVE_TTL=180         # 不通設備冷卻期（秒），避免與 fast_round 同步過期
 ```
 
-> **v2.19.3 參數調校說明**（50+ 台設備 + 不可達設備時的穩定性修復）：
+> **v2.19.4 參數調校說明**（Root Fix: subprocess 引擎取代 pysnmp，徹底消除併發崩潰）：
 >
-> | 參數 | v2.19.2 值 | v2.19.3 建議值 | 改善效果 |
+> | 參數 | v2.19.3 值 | v2.19.4 建議值 | 改善效果 |
 > |------|-----------|---------------|---------|
-> | `SNMP_CONCURRENCY` | 50 | **20** | 防止 50 個 pysnmp engine 同時開啟導致 transport 崩潰 |
-> | `scheduler.yaml` fast_round | 120s | **180s** | 配合 concurrency=20，200 台需 ~150s 完成 |
-> | `scheduler.yaml` full_round | 1800s | **600s** | 首次失敗 10 分鐘後重試（原 30 分鐘），fan/power 更快出現 |
-> | `DEVICE_HARD_TIMEOUT` | 90s | **60s** | 更快釋放 semaphore slot |
+> | `SNMP_ENGINE` | _(無)_ | **subprocess** | net-snmp CLI 取代 pysnmp，進程隔離不再崩潰 |
+> | `SNMP_CONCURRENCY` | 20 | **50** | subprocess 每個操作獨立 PID/socket，50+ 安全 |
+> | `SNMP_WALK_TIMEOUT` | 60 | **30** | 需 < per-collector budget(15s×N)，避免一個慢 walk 吃掉所有預算 |
+> | `DEVICE_HARD_TIMEOUT` | 60s (固定) | **動態** | `max(45, N×15+15)`: fast_round(2)=45s, full_round(8)=135s |
 >
-> **為什麼 50 台就卡死**：每台並行設備建立獨立 pysnmp `SnmpEngine`（含 UDP socket），
-> 原 `SNMP_CONCURRENCY=50` 表示同時 50 個 engine。pysnmp 的 `AsyncioDispatcher` 在高併發下會出現
-> `AbstractTransportDispatcher._cbFun` 回調衝突，導致整個 event loop 停擺。
+> **為什麼 subprocess 是根解**：pysnmp 在高併發下 `AsyncioDispatcher._cbFun` 回調衝突導致 event loop 停擺。
+> subprocess 引擎每個 SNMP 操作用 `asyncio.create_subprocess_exec()` 啟動獨立進程，
+> 完全進程隔離（獨立 PID/socket），timeout 時 `proc.kill()` 立即乾淨回收。
+> OS 輕鬆處理 200+ 併發進程，不存在 callback 競爭問題。
 >
-> **為什麼成功數字會下降**：v2.19.2 在 SNMP 失敗時會用空 `parsed_items=[]` 覆蓋之前成功的資料。
-> v2.19.3 修復：失敗時只記錄 error，不覆蓋已有的成功資料。
+> **不可達設備三層防護**：
+> 1. Negative cache fast-path — 已知不通設備在取 semaphore **之前**跳過（0ms），不佔併發 slot
+> 2. subprocess timeout → `proc.kill()` — 首次探測不通時立即乾淨回收，不汙染 event loop
+> 3. Hard timeout 兜底 — `asyncio.wait_for()` 包住整個 SNMP phase，永不卡死 semaphore slot
 >
-> **為什麼 fan/power 要 20 分鐘**：full_round 間隔 1800s（30 分鐘），首次嘗試若因系統初始化不穩定而失敗，
-> 要等 30 分鐘才有下一輪。降到 600s 後最慢 10 分鐘就能看到。
+> **為什麼 walk_timeout 從 60s 降到 30s**：hard_timeout = `max(45, N×15+15)`，
+> full_round(8 collectors) = 135s。若 walk_timeout=60s，一個慢 walk 就吃掉近半預算。
+> 30s 已很寬裕（正常 walk 5-15s），且確保多個 collector 有足夠預算。
 
-#### `config/scheduler.yaml` 建議值（v2.19.3）
+#### `config/scheduler.yaml` 建議值（v2.19.4）
 
 > `config/scheduler.yaml` 控制各採集器的排程間隔。Image 內已包含預設值，
 > 部署時可用 volume mount 覆蓋（`./config/scheduler.yaml:/app/config/scheduler.yaml`）。
@@ -421,8 +433,8 @@ fetchers:
 
 > | 排程 | 間隔 | 說明 |
 > |------|------|------|
-> | `fast_round` | 180s | 取 Client 相關 collectors 的最小 interval；200 台/concurrency(20)×15s ≈ 150s |
-> | `full_round` | 600s | 取指標類 collectors 的最大 interval；200 台/concurrency(20)×45s ≈ 450s |
+> | `fast_round` | 180s | 取 Client 相關 collectors 的最小 interval；200 台/concurrency(50)×15s ≈ 60s |
+> | `full_round` | 600s | 取指標類 collectors 的最大 interval；200 台/concurrency(50)×45s ≈ 180s |
 > | `device_ping` | 15s | 設備 ICMP Ping（獨立排程） |
 > | `client_ping` | 15s | 客戶端 ICMP Ping（獨立排程） |
 > | `client_collection` | 300s | 組裝 SNMP + Ping 結果成 Case |
@@ -875,19 +887,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.19.1 \
+    -t coolguazi/network-dashboard-base:v2.19.4 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.19.1
+    coolguazi/network-dashboard-base:v2.19.4
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.19.1
+docker push coolguazi/network-dashboard-base:v2.19.4
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.19.1 | gzip > netora-app-v2.9.0.tar.gz
+docker save coolguazi/network-dashboard-base:v2.19.4 | gzip > netora-app-v2.9.0.tar.gz
 ```
 
 #### 在公司環境（無外網）

@@ -15,7 +15,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.snmp.collector_base import BaseSnmpCollector
-from app.snmp.engine import AsyncSnmpEngine, SnmpEngineConfig
+from app.snmp.engine import SnmpEngineConfig
 
 logger = logging.getLogger(__name__)
 
@@ -89,16 +89,22 @@ class SnmpCollectionService:
     """
 
     def __init__(self) -> None:
+        engine_config = SnmpEngineConfig(
+            max_repetitions=settings.snmp_max_repetitions,
+            walk_timeout=settings.snmp_walk_timeout,
+        )
         if settings.snmp_mock:
             from app.snmp.mock_engine import MockSnmpEngine
             self._engine: Any = MockSnmpEngine()
             logger.info("SNMP collection using MOCK engine (no real devices)")
+        elif settings.snmp_engine == "subprocess":
+            from app.snmp.subprocess_engine import SubprocessSnmpEngine
+            self._engine = SubprocessSnmpEngine(config=engine_config)
+            logger.info("SNMP collection using SUBPROCESS engine (net-snmp CLI)")
         else:
-            engine_config = SnmpEngineConfig(
-                max_repetitions=settings.snmp_max_repetitions,
-                walk_timeout=settings.snmp_walk_timeout,
-            )
+            from app.snmp.engine import AsyncSnmpEngine
             self._engine = AsyncSnmpEngine(config=engine_config)
+            logger.info("SNMP collection using PYSNMP engine (legacy)")
         self._collectors = _build_collector_map()
         self._api_fallback: Any = None  # lazy init
         # Global semaphore: bounds total concurrent SNMP device walks
@@ -109,6 +115,16 @@ class SnmpCollectionService:
             "SNMP global concurrency semaphore: max %d concurrent device walks",
             settings.snmp_concurrency,
         )
+        # Sanity check: walk_timeout should be well under per-collector budget
+        # so that hard_timeout can accommodate all collectors in a round.
+        from app.snmp.collection_coordinator import CollectionCoordinator
+        if settings.snmp_walk_timeout > CollectionCoordinator._PER_COLLECTOR_BUDGET:
+            logger.warning(
+                "SNMP_WALK_TIMEOUT (%.0fs) > per-collector budget (%.0fs). "
+                "Slow walks may cause hard timeout before all collectors finish.",
+                settings.snmp_walk_timeout,
+                CollectionCoordinator._PER_COLLECTOR_BUDGET,
+            )
 
     def _get_coordinator(self) -> Any:
         """Lazy-init CollectionCoordinator."""

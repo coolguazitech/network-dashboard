@@ -105,6 +105,7 @@ def _mock_session_cache(*, unreachable_ips: set[str] | None = None):
         return SnmpTarget(ip=ip, community="public", port=161, timeout=3.0, retries=1)
 
     cache.get_target = AsyncMock(side_effect=fake_get_target)
+    cache.is_negative_cached = MagicMock(return_value=False)
     return cache
 
 
@@ -225,9 +226,13 @@ async def test_slow_device_hits_hard_timeout():
         collectors={"slow_collector": slow, "fake_collector": fast},
         semaphore=sem,
     )
-    # Override hard timeout to something short for testing
-    original_timeout = CollectionCoordinator._DEVICE_HARD_TIMEOUT
-    CollectionCoordinator._DEVICE_HARD_TIMEOUT = 0.5  # 500ms
+    # Override hard timeout constants to something short for testing
+    orig_min = CollectionCoordinator._HARD_TIMEOUT_MIN
+    orig_budget = CollectionCoordinator._PER_COLLECTOR_BUDGET
+    orig_probe = CollectionCoordinator._HARD_TIMEOUT_PROBE
+    CollectionCoordinator._HARD_TIMEOUT_MIN = 0.5
+    CollectionCoordinator._PER_COLLECTOR_BUDGET = 0.1
+    CollectionCoordinator._HARD_TIMEOUT_PROBE = 0.1
 
     cache = _mock_session_cache()
 
@@ -272,7 +277,9 @@ async def test_slow_device_hits_hard_timeout():
         assert elapsed < 3.0, f"Took {elapsed:.1f}s — slow device blocked others"
 
     finally:
-        CollectionCoordinator._DEVICE_HARD_TIMEOUT = original_timeout
+        CollectionCoordinator._HARD_TIMEOUT_MIN = orig_min
+        CollectionCoordinator._PER_COLLECTOR_BUDGET = orig_budget
+        CollectionCoordinator._HARD_TIMEOUT_PROBE = orig_probe
 
 
 # =========================================================================
@@ -523,8 +530,13 @@ async def test_hard_timeout_with_8_collectors():
         semaphore=sem,
     )
 
-    original_timeout = CollectionCoordinator._DEVICE_HARD_TIMEOUT
-    CollectionCoordinator._DEVICE_HARD_TIMEOUT = 2.0  # 2 seconds
+    # Override: 8 collectors × 0.25s + 0.0 = 2.0s hard timeout
+    orig_min = CollectionCoordinator._HARD_TIMEOUT_MIN
+    orig_budget = CollectionCoordinator._PER_COLLECTOR_BUDGET
+    orig_probe = CollectionCoordinator._HARD_TIMEOUT_PROBE
+    CollectionCoordinator._HARD_TIMEOUT_MIN = 1.0
+    CollectionCoordinator._PER_COLLECTOR_BUDGET = 0.25
+    CollectionCoordinator._HARD_TIMEOUT_PROBE = 0.0
 
     cache = _mock_session_cache()
     device = _make_device("10.0.0.1")
@@ -541,10 +553,12 @@ async def test_hard_timeout_with_8_collectors():
             elapsed = _time.monotonic() - t0
 
         assert result.status == "unreachable", f"Expected unreachable (timeout), got {result.status}"
-        # Should complete near the hard timeout, not 80s
-        assert elapsed < 5.0, f"Took {elapsed:.1f}s, hard timeout should have kicked in at 2s"
+        # Should complete near the hard timeout (~2s), not 80s
+        assert elapsed < 5.0, f"Took {elapsed:.1f}s, hard timeout should have kicked in at ~2s"
         # Semaphore should be released
         assert sem._value == 5
 
     finally:
-        CollectionCoordinator._DEVICE_HARD_TIMEOUT = original_timeout
+        CollectionCoordinator._HARD_TIMEOUT_MIN = orig_min
+        CollectionCoordinator._PER_COLLECTOR_BUDGET = orig_budget
+        CollectionCoordinator._HARD_TIMEOUT_PROBE = orig_probe

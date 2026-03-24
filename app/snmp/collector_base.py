@@ -15,7 +15,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.core.enums import DeviceType
-from app.snmp.engine import AsyncSnmpEngine, SnmpTarget, SnmpTimeoutError
+from app.snmp.engine import SnmpTarget, SnmpTimeoutError
 from app.snmp.session_cache import SnmpSessionCache
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ class BaseSnmpCollector(ABC):
         target: SnmpTarget,
         device_type: DeviceType,
         session_cache: SnmpSessionCache,
-        engine: AsyncSnmpEngine,
+        engine: Any,
     ) -> tuple[str, list[BaseModel]]:
         """
         Collect data from a single device via SNMP.
@@ -55,7 +55,7 @@ class BaseSnmpCollector(ABC):
         target: SnmpTarget,
         device_type: DeviceType,
         session_cache: SnmpSessionCache,
-        engine: AsyncSnmpEngine,
+        engine: Any,
         max_retries: int = 2,
     ) -> tuple[str, list[BaseModel]]:
         """

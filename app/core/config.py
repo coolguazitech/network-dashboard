@@ -229,23 +229,28 @@ class Settings(BaseSettings):
     snmp_max_repetitions: int = Field(
         default=25, description="SNMP GETBULK max-repetitions per PDU",
     )
+    snmp_engine: str = Field(
+        default="subprocess",
+        description="SNMP engine backend: 'subprocess' (net-snmp CLI, recommended) "
+        "or 'pysnmp' (legacy, limited concurrency).",
+    )
     snmp_concurrency: int = Field(
-        default=20,
+        default=50,
         description="Global max concurrent SNMP device walks across ALL jobs. "
-        "Each concurrent device creates a pysnmp engine (UDP socket). "
-        "50 was too many — caused AbstractTransportDispatcher._cbFun errors. "
-        "20 balances throughput vs pysnmp stability.",
+        "subprocess engine: 50+ is safe (process-isolated). "
+        "pysnmp engine: keep <=20 (shared event loop, callback races).",
     )
     snmp_walk_timeout: float = Field(
-        default=60.0,
+        default=30.0,
         description="Overall timeout for a single SNMP walk (seconds). "
         "Large tables (MAC on 48-port) typically complete in 5-15s. "
-        "60s is generous; 120s was too long for unreachable devices.",
+        "30s is generous; must be < per-device hard timeout to allow "
+        "multiple collectors to complete within the hard timeout budget.",
     )
     snmp_collector_retries: int = Field(
         default=1,
         description="Collector-level retry count on walk timeout. "
-        "With walk_timeout=60s, 1 retry = max 120s per collector.",
+        "With walk_timeout=30s, 1 retry = max 60s per collector.",
     )
     snmp_negative_ttl: float = Field(
         default=180.0,

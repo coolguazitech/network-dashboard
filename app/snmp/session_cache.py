@@ -13,10 +13,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from app.snmp.engine import (
-    AsyncSnmpEngine,
     SnmpError,
     SnmpTarget,
     SnmpTimeoutError,
@@ -63,7 +62,7 @@ class SnmpSessionCache:
 
     def __init__(
         self,
-        engine: AsyncSnmpEngine,
+        engine: Any,
         communities: list[str],
         port: int = 161,
         timeout: float = 5.0,
@@ -245,6 +244,15 @@ class SnmpSessionCache:
             "Built bridge port map for %s: %d ports", ip, len(bridge_map),
         )
         return bridge_map
+
+    def is_negative_cached(self, ip: str) -> bool:
+        """Check if IP is in negative cache (no lock, no side effects).
+
+        Used by CollectionCoordinator to skip known-unreachable devices
+        BEFORE acquiring the semaphore, so they don't waste concurrency slots.
+        """
+        expiry = self._negative_cache.get(ip)
+        return expiry is not None and _time.monotonic() < expiry
 
     def clear(self) -> None:
         """Clear instance-level caches (call at start of each collection cycle).

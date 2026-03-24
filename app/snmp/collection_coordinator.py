@@ -209,10 +209,12 @@ class CollectionCoordinator:
         return round_result
 
     # Per-device hard timeout inside semaphore.
-    # Even if individual PDUs timeout properly, a device with 10 collectors
-    # could block a slot for 10 × 8s = 80s. This cap ensures the slot is
-    # freed in bounded time regardless of what happens inside.
-    _DEVICE_HARD_TIMEOUT: float = 60.0  # seconds; fast_round(2)≈16s, full_round(8)≈48s
+    # Must be large enough for ALL collectors to complete sequentially,
+    # but small enough to free slots in bounded time.
+    # Formula: num_collectors × per_collector_budget + probe_overhead
+    _PER_COLLECTOR_BUDGET: float = 15.0  # seconds; normal walk 5-15s
+    _HARD_TIMEOUT_MIN: float = 45.0     # floor for fast_round (2 collectors)
+    _HARD_TIMEOUT_PROBE: float = 15.0   # overhead for community probe + buffer
 
     async def _collect_device(
         self,
@@ -239,9 +241,42 @@ class CollectionCoordinator:
         vendor = device_info["vendor"]
         device_type = DeviceType(vendor or "HPE")
 
+        # Fast-path: skip known-unreachable devices BEFORE acquiring semaphore.
+        # This prevents unreachable devices from wasting concurrency slots.
+        if session_cache.is_negative_cached(ip):
+            logger.debug(
+                "Skipping negative-cached device %s (%s)", hostname, ip,
+            )
+            collector_outcomes = [
+                (c.api_name, "unreachable",
+                 f"SNMP unreachable (negative cached): {ip}", [])
+                for c in collectors
+            ]
+            await self._save_device_results(
+                hostname=hostname,
+                maintenance_id=maintenance_id,
+                collector_outcomes=collector_outcomes,
+            )
+            return DeviceResult(
+                hostname=hostname,
+                ip=ip,
+                status="unreachable",
+                collector_results={
+                    c.api_name: "unreachable" for c in collectors
+                },
+            )
+
         collector_outcomes: list[tuple[str, str, str | None, list[BaseModel]]] = []
         device_unreachable = False
         all_ok = True
+
+        # Dynamic hard timeout: scales with number of collectors
+        # fast_round(2): max(45, 2×15+15) = 45s
+        # full_round(8): max(45, 8×15+15) = 135s
+        hard_timeout = max(
+            self._HARD_TIMEOUT_MIN,
+            len(collectors) * self._PER_COLLECTOR_BUDGET + self._HARD_TIMEOUT_PROBE,
+        )
 
         async with self._semaphore:
             try:
@@ -254,20 +289,20 @@ class CollectionCoordinator:
                             collectors=collectors,
                             session_cache=session_cache,
                         ),
-                        timeout=self._DEVICE_HARD_TIMEOUT,
+                        timeout=hard_timeout,
                     )
                 )
             except asyncio.TimeoutError:
                 logger.warning(
                     "Device %s (%s) exceeded hard timeout (%.0fs), "
                     "marking all collectors as timeout",
-                    hostname, ip, self._DEVICE_HARD_TIMEOUT,
+                    hostname, ip, hard_timeout,
                 )
                 device_unreachable = True
                 all_ok = False
                 collector_outcomes = [
                     (c.api_name, "timeout",
-                     f"Device hard timeout ({self._DEVICE_HARD_TIMEOUT:.0f}s): {ip}",
+                     f"Device hard timeout ({hard_timeout:.0f}s): {ip}",
                      [])
                     for c in collectors
                 ]
