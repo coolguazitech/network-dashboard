@@ -195,7 +195,7 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.19.4` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.19.5` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
 | `coolguazi/netora-mock-server:v2.19.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
@@ -891,19 +891,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.19.4 \
+    -t coolguazi/network-dashboard-base:v2.19.5 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.19.4
+    coolguazi/network-dashboard-base:v2.19.5
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.19.4
+docker push coolguazi/network-dashboard-base:v2.19.5
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.19.4 | gzip > netora-app-v2.9.0.tar.gz
+docker save coolguazi/network-dashboard-base:v2.19.5 | gzip > netora-app-v2.9.0.tar.gz
 ```
 
 #### 在公司環境（無外網）
