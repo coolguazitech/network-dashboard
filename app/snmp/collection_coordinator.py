@@ -149,19 +149,61 @@ class CollectionCoordinator:
             retries=settings.snmp_retries,
         )
 
-        # Collect all devices concurrently, bounded by global semaphore
-        device_results = await asyncio.gather(
-            *[
-                self._collect_device(
-                    device_info=dev,
-                    collectors=collectors,
-                    session_cache=session_cache,
-                    maintenance_id=maintenance_id,
-                )
-                for dev in device_infos
-            ],
-            return_exceptions=True,
-        )
+        # Two-phase collection: known-reachable devices first, then unknown.
+        # This ensures reachable device data reaches the DB within seconds,
+        # without waiting for unreachable device probes to time out.
+        #
+        # Phase 1 (cached): community_cache hit → no probe, ~1-2s total
+        # Phase 2 (probe):  negative_cache skip (0ms) + unknown probe (~12s/device)
+        known_devs = []
+        probe_devs = []
+        for dev in device_infos:
+            ip = dev["ip"] or ""
+            if session_cache.is_community_known(ip):
+                known_devs.append(dev)
+            else:
+                probe_devs.append(dev)
+
+        if known_devs and probe_devs:
+            logger.info(
+                "Round '%s': %d cached (fast) + %d need probe",
+                round_name, len(known_devs), len(probe_devs),
+            )
+
+        # Phase 1: Known-reachable devices — no probe, data in DB immediately
+        device_results: list[DeviceResult | Exception] = []
+        if known_devs:
+            phase1 = await asyncio.gather(
+                *[
+                    self._collect_device(
+                        device_info=dev,
+                        collectors=collectors,
+                        session_cache=session_cache,
+                        maintenance_id=maintenance_id,
+                    )
+                    for dev in known_devs
+                ],
+                return_exceptions=True,
+            )
+            device_results.extend(phase1)
+
+        # Phase 2: Unknown + negative-cached devices
+        # Negative-cached devices hit fast-path (0ms, before semaphore).
+        # Unknown devices go through community probe (~12s if unreachable).
+        if probe_devs:
+            phase2 = await asyncio.gather(
+                *[
+                    self._collect_device(
+                        device_info=dev,
+                        collectors=collectors,
+                        session_cache=session_cache,
+                        maintenance_id=maintenance_id,
+                    )
+                    for dev in probe_devs
+                ],
+                return_exceptions=True,
+            )
+            device_results.extend(phase2)
 
         # Aggregate results
         round_result = RoundResult(

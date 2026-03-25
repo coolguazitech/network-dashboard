@@ -58,7 +58,7 @@ class SnmpSessionCache:
     _community_cache: ClassVar[dict[str, str]] = {}
     _negative_cache: ClassVar[dict[str, float]] = {}  # ip -> expiry monotonic
     _probe_locks: ClassVar[dict[str, asyncio.Lock]] = {}  # per-IP probe dedup
-    NEGATIVE_TTL: ClassVar[float] = 180.0  # default; overridden by settings.snmp_negative_ttl
+    NEGATIVE_TTL: ClassVar[float] = 600.0  # default; overridden by settings.snmp_negative_ttl
 
     def __init__(
         self,
@@ -244,6 +244,16 @@ class SnmpSessionCache:
             "Built bridge port map for %s: %d ports", ip, len(bridge_map),
         )
         return bridge_map
+
+    @classmethod
+    def is_community_known(cls, ip: str) -> bool:
+        """Check if IP has a known-good community (no probe needed).
+
+        Used by CollectionCoordinator to prioritize known-reachable devices
+        so their data reaches the DB first, without waiting for unreachable
+        device probes to time out.
+        """
+        return ip in cls._community_cache
 
     def is_negative_cached(self, ip: str) -> bool:
         """Check if IP is in negative cache (no lock, no side effects).

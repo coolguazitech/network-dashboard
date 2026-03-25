@@ -106,6 +106,7 @@ def _mock_session_cache(*, unreachable_ips: set[str] | None = None):
 
     cache.get_target = AsyncMock(side_effect=fake_get_target)
     cache.is_negative_cached = MagicMock(return_value=False)
+    cache.is_community_known = MagicMock(return_value=False)
     return cache
 
 
@@ -562,3 +563,164 @@ async def test_hard_timeout_with_8_collectors():
         CollectionCoordinator._HARD_TIMEOUT_MIN = orig_min
         CollectionCoordinator._PER_COLLECTOR_BUDGET = orig_budget
         CollectionCoordinator._HARD_TIMEOUT_PROBE = orig_probe
+
+
+# =========================================================================
+# Test 10: Two-phase collection — cached devices complete before probe phase
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_two_phase_cached_devices_complete_first():
+    """Known-reachable devices (phase 1) should finish before probe phase.
+
+    Simulates: 30 unreachable + 20 reachable. The 20 reachable devices
+    have community cache hits and complete in phase 1 without waiting
+    for the 30 unreachable devices to probe/timeout in phase 2.
+
+    Verification: track DB write order — reachable devices should appear
+    in save calls before unreachable ones.
+    """
+    sem = asyncio.Semaphore(20)
+    collector = FakeCollector(delay=0.01)
+    engine = MagicMock(spec=AsyncSnmpEngine)
+
+    coord = CollectionCoordinator(
+        engine=engine,
+        collectors={"fake_collector": collector},
+        semaphore=sem,
+    )
+
+    reachable_ips = {f"10.0.0.{i}" for i in range(20)}
+    unreachable_ips = {f"10.0.1.{i}" for i in range(30)}
+    all_devices = (
+        [_make_device(ip) for ip in sorted(unreachable_ips)]
+        + [_make_device(ip) for ip in sorted(reachable_ips)]
+    )
+
+    cache = _mock_session_cache(unreachable_ips=unreachable_ips)
+    cache.is_community_known = MagicMock(
+        side_effect=lambda ip: ip in reachable_ips,
+    )
+
+    # Track the order hostnames are saved
+    save_order: list[str] = []
+    original_save = coord._save_device_results
+
+    async def tracking_save(hostname, maintenance_id, collector_outcomes):
+        save_order.append(hostname)
+
+    with patch.object(
+        CollectionCoordinator, "_save_device_results",
+        side_effect=tracking_save,
+    ):
+        # Mock DB query to return our device list
+        with patch(
+            "app.snmp.collection_coordinator.get_session_context",
+        ) as mock_ctx, patch(
+            "app.snmp.collection_coordinator.SnmpSessionCache",
+            return_value=cache,
+        ):
+            # Build mock DB result
+            mock_devices = []
+            for dev in all_devices:
+                m = MagicMock()
+                m.new_hostname = dev["hostname"]
+                m.new_ip_address = dev["ip"]
+                m.new_vendor = dev["vendor"]
+                mock_devices.append(m)
+
+            mock_session = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = mock_devices
+            mock_session.execute = AsyncMock(return_value=mock_result)
+
+            mock_cm = AsyncMock()
+            mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cm.__aexit__ = AsyncMock(return_value=False)
+            mock_ctx.return_value = mock_cm
+
+            result = await coord.run_round(
+                round_name="two_phase_test",
+                collector_names=["fake_collector"],
+                maintenance_id="M-TEST",
+            )
+
+    assert result.total_devices == 50
+    assert result.ok == 20
+    assert result.unreachable == 30
+
+    # Key assertion: ALL reachable device saves appear before
+    # ALL unreachable device saves (phase 1 completes before phase 2)
+    reachable_hostnames = {f"SW-{ip}" for ip in reachable_ips}
+    first_unreachable_idx = None
+    last_reachable_idx = None
+    for i, hostname in enumerate(save_order):
+        if hostname in reachable_hostnames:
+            last_reachable_idx = i
+        elif first_unreachable_idx is None:
+            first_unreachable_idx = i
+
+    if last_reachable_idx is not None and first_unreachable_idx is not None:
+        assert last_reachable_idx < first_unreachable_idx, (
+            f"Phase 1 (reachable) should complete before phase 2 (unreachable). "
+            f"Last reachable save at index {last_reachable_idx}, "
+            f"first unreachable save at index {first_unreachable_idx}"
+        )
+
+
+# =========================================================================
+# Test 11: Cold start — all devices go to phase 2
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_cold_start_all_devices_in_phase2():
+    """On cold start, no community cache → all devices go to phase 2."""
+    sem = asyncio.Semaphore(20)
+    collector = FakeCollector(delay=0.01)
+    engine = MagicMock(spec=AsyncSnmpEngine)
+
+    coord = CollectionCoordinator(
+        engine=engine,
+        collectors={"fake_collector": collector},
+        semaphore=sem,
+    )
+
+    all_devices = [_make_device(f"10.0.0.{i}") for i in range(10)]
+    cache = _mock_session_cache()
+    cache.is_community_known = MagicMock(return_value=False)
+
+    with _mock_save():
+        with patch(
+            "app.snmp.collection_coordinator.get_session_context",
+        ) as mock_ctx, patch(
+            "app.snmp.collection_coordinator.SnmpSessionCache",
+            return_value=cache,
+        ):
+            mock_devices = []
+            for dev in all_devices:
+                m = MagicMock()
+                m.new_hostname = dev["hostname"]
+                m.new_ip_address = dev["ip"]
+                m.new_vendor = dev["vendor"]
+                mock_devices.append(m)
+
+            mock_session = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = mock_devices
+            mock_session.execute = AsyncMock(return_value=mock_result)
+
+            mock_cm = AsyncMock()
+            mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cm.__aexit__ = AsyncMock(return_value=False)
+            mock_ctx.return_value = mock_cm
+
+            result = await coord.run_round(
+                round_name="cold_start",
+                collector_names=["fake_collector"],
+                maintenance_id="M-TEST",
+            )
+
+    assert result.total_devices == 10
+    assert result.ok == 10

@@ -253,10 +253,12 @@ class Settings(BaseSettings):
         "With walk_timeout=30s, 1 retry = max 60s per collector.",
     )
     snmp_negative_ttl: float = Field(
-        default=180.0,
+        default=600.0,
         description="Negative cache TTL (seconds) for SNMP-unreachable devices. "
         "During this period, unreachable devices are skipped without probing. "
-        "Was 300s (same as fast_round), now 180s to allow faster recovery.",
+        "600s = skip ~3 fast_rounds before re-probing. For maintenance scenarios "
+        "where most devices are unreachable, longer TTL avoids wasting ~96s/round "
+        "re-probing 380+ known-down devices.",
     )
     snmp_mock: bool = Field(
         default=False,
