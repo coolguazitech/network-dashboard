@@ -1977,15 +1977,28 @@ docker-compose -f docker-compose.production.yml up -d
 | 元件 | 類型 | Replicas | CPU req/limit | MEM req/limit | PVC |
 |------|------|----------|---------------|---------------|-----|
 | **netora-api** | Deployment | 2-3 | 200m / 1000m | 256Mi / 512Mi | — |
-| **netora-scheduler** | Deployment | **1** | 500m / 2000m | 512Mi / 2Gi | — |
+| **netora-scheduler** | Deployment | **1** | 500m / 2000m | 1Gi / 4Gi | — |
 | **mariadb** | StatefulSet | 1 | 500m / 2000m | 512Mi / 2Gi | 20Gi (SSD) |
 | **seaweedfs** | StatefulSet | 1 | 100m / 500m | 256Mi / 1Gi | 10Gi |
 | **phpmyadmin** | Deployment | 1 | 50m / 500m | 128Mi / 256Mi | — |
 
+> **v2.19.6 Scheduler 資源需求變更（Collector 並行化）**：
+>
+> v2.19.6 起每台設備的 8 個 collector 並行執行（`asyncio.gather`），峰值 subprocess 數量 = `SNMP_CONCURRENCY × 8`。
+> 每個 `snmpbulkwalk` subprocess 約 5MB RSS，需要相應調整 Scheduler memory：
+>
+> | SNMP_CONCURRENCY | 峰值 subprocess | 峰值額外 RAM | 建議 Scheduler MEM limit | full_round 預估時間 (400 台) |
+> |---|---|---|---|---|
+> | 50（預設） | 400 | ~2GB | **4Gi** | ~2 min |
+> | 30（保守） | 240 | ~1.2GB | **3Gi** | ~3.5 min |
+> | 20（省資源） | 160 | ~800MB | **2Gi** | ~5 min |
+>
+> CPU 影響小（subprocess 為 I/O bound），CPU limit 維持 2000m 即可。
+
 > **設備規模換算**：
 > - 200-500 台：上表配置
-> - 500-1000 台：Scheduler CPU 1000m/4000m、MEM 1Gi/4Gi、DB PVC 50Gi
-> - 1000+ 台：Scheduler CPU 2000m/4000m、MEM 2Gi/8Gi、DB PVC 100Gi
+> - 500-1000 台：Scheduler CPU 1000m/4000m、MEM 2Gi/8Gi、DB PVC 50Gi
+> - 1000+ 台：Scheduler CPU 2000m/4000m、MEM 4Gi/8Gi、DB PVC 100Gi
 > - API 不用調，加 replica 即可
 
 ### E.2 Manifest 範例
@@ -2095,10 +2108,10 @@ spec:
         resources:
           requests:
             cpu: "500m"
-            memory: "512Mi"
+            memory: "1Gi"
           limits:
             cpu: "2000m"
-            memory: "2Gi"
+            memory: "4Gi"       # v2.19.6: 並行 collector, 峰值 CONCURRENCY×8 subprocess
         readinessProbe:
           httpGet:
             path: /health
