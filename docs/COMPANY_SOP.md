@@ -1,7 +1,11 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.6 (2026-03-26)
+> **版本**: v2.19.7 (2026-03-26)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.19.7 變更摘要**:
+> - **[Bugfix] Alembic 遷移防禦**：`arp_sources` 相關遷移（`367a4017ffee`, `d7e0f1a2b3c4`）加入 table/column 存在性檢查，修復 `arp_sources` 表已被移除但遷移仍嘗試操作導致 `ProgrammingError (1146)` 啟動失敗
+> - **[Bugfix] snmp_engine 向後相容**：`SnmpCollectionService` 使用 `getattr(settings, 'snmp_engine', 'subprocess')` 存取，修復舊 Settings 類缺少此欄位時的 `AttributeError`
 >
 > **v2.19.6 變更摘要**:
 > - **[效能] Collector 並行化**：每台設備的 8 個 collector 從串行改為 `asyncio.gather` 並行執行，每台設備時間從 ~80s 降到 ~12s（slowest collector），full_round 總時間從 ~10 min 降到 ~2 min
@@ -199,7 +203,7 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.19.6` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.19.7` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
 | `coolguazi/netora-mock-server:v2.19.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
@@ -895,19 +899,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.19.6 \
+    -t coolguazi/network-dashboard-base:v2.19.7 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.19.6
+    coolguazi/network-dashboard-base:v2.19.7
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.19.6
+docker push coolguazi/network-dashboard-base:v2.19.7
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.19.6 | gzip > netora-app-v2.9.0.tar.gz
+docker save coolguazi/network-dashboard-base:v2.19.7 | gzip > netora-app-v2.9.0.tar.gz
 ```
 
 #### 在公司環境（無外網）
