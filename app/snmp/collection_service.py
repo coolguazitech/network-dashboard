@@ -97,7 +97,7 @@ class SnmpCollectionService:
             from app.snmp.mock_engine import MockSnmpEngine
             self._engine: Any = MockSnmpEngine()
             logger.info("SNMP collection using MOCK engine (no real devices)")
-        elif settings.snmp_engine == "subprocess":
+        elif getattr(settings, "snmp_engine", "subprocess") == "subprocess":
             from app.snmp.subprocess_engine import SubprocessSnmpEngine
             self._engine = SubprocessSnmpEngine(config=engine_config)
             logger.info("SNMP collection using SUBPROCESS engine (net-snmp CLI)")

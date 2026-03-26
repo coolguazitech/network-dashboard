@@ -18,7 +18,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add unique constraint for maintenance_id + hostname
+    # Add unique constraint for maintenance_id + hostname (skip if table doesn't exist)
+    conn = op.get_bind()
+    import sqlalchemy as sa
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name = 'arp_sources'")
+    )
+    if result.scalar() == 0:
+        return  # table doesn't exist, nothing to do
     op.create_unique_constraint(
         'uk_arp_source',
         'arp_sources',
@@ -27,6 +35,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    conn = op.get_bind()
+    import sqlalchemy as sa
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name = 'arp_sources'")
+    )
+    if result.scalar() == 0:
+        return
     op.drop_constraint(
         'uk_arp_source',
         'arp_sources',
