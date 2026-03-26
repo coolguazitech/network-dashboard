@@ -115,15 +115,19 @@ class SnmpCollectionService:
             "SNMP global concurrency semaphore: max %d concurrent device walks",
             settings.snmp_concurrency,
         )
-        # Sanity check: walk_timeout should be well under per-collector budget
-        # so that hard_timeout can accommodate all collectors in a round.
+        # Sanity check: walk_timeout should be under hard timeout floor.
+        # With parallel collectors, hard_timeout = max(45, 15+15) = 45s.
         from app.snmp.collection_coordinator import CollectionCoordinator
-        if settings.snmp_walk_timeout > CollectionCoordinator._PER_COLLECTOR_BUDGET:
+        effective_hard = max(
+            CollectionCoordinator._HARD_TIMEOUT_MIN,
+            CollectionCoordinator._PER_COLLECTOR_BUDGET + CollectionCoordinator._HARD_TIMEOUT_PROBE,
+        )
+        if settings.snmp_walk_timeout > effective_hard:
             logger.warning(
-                "SNMP_WALK_TIMEOUT (%.0fs) > per-collector budget (%.0fs). "
-                "Slow walks may cause hard timeout before all collectors finish.",
+                "SNMP_WALK_TIMEOUT (%.0fs) > hard timeout (%.0fs). "
+                "Walks may be killed by hard timeout.",
                 settings.snmp_walk_timeout,
-                CollectionCoordinator._PER_COLLECTOR_BUDGET,
+                effective_hard,
             )
 
     def _get_coordinator(self) -> Any:

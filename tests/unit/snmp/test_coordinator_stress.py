@@ -531,7 +531,7 @@ async def test_hard_timeout_with_8_collectors():
         semaphore=sem,
     )
 
-    # Override: 8 collectors × 0.25s + 0.0 = 2.0s hard timeout
+    # Override: max(1.0, 0.25 + 0.0) = 1.0s hard timeout
     orig_min = CollectionCoordinator._HARD_TIMEOUT_MIN
     orig_budget = CollectionCoordinator._PER_COLLECTOR_BUDGET
     orig_probe = CollectionCoordinator._HARD_TIMEOUT_PROBE
@@ -724,3 +724,98 @@ async def test_cold_start_all_devices_in_phase2():
 
     assert result.total_devices == 10
     assert result.ok == 10
+
+
+# =========================================================================
+# Test 12: Parallel collectors — 8 collectors run concurrently per device
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_parallel_collectors_faster_than_sequential():
+    """8 collectors per device should run in parallel, not sequentially.
+
+    Each collector takes 0.2s. Sequential would take 8×0.2 = 1.6s per device.
+    Parallel should take ~0.2s per device. With 5 devices / sem=5,
+    total should be ~0.2-0.4s, not ~1.6s.
+    """
+    sem = asyncio.Semaphore(5)
+    engine = MagicMock(spec=AsyncSnmpEngine)
+
+    collectors = []
+    for i in range(8):
+        c = FakeCollector(delay=0.2)
+        c.api_name = f"collector_{i}"
+        collectors.append(c)
+
+    coord = CollectionCoordinator(
+        engine=engine,
+        collectors={c.api_name: c for c in collectors},
+        semaphore=sem,
+    )
+    cache = _mock_session_cache()
+    devices = [_make_device(f"10.0.0.{i}") for i in range(5)]
+
+    with _mock_save():
+        t0 = _time.monotonic()
+        results = await asyncio.gather(
+            *[
+                coord._collect_device(
+                    device_info=dev,
+                    collectors=collectors,
+                    session_cache=cache,
+                    maintenance_id="M-TEST",
+                )
+                for dev in devices
+            ],
+            return_exceptions=True,
+        )
+        elapsed = _time.monotonic() - t0
+
+    device_results = [r for r in results if isinstance(r, DeviceResult)]
+    assert all(r.status == "ok" for r in device_results)
+    assert len(device_results) == 5
+
+    # Sequential would take 5 devices × 8 collectors × 0.2s / 5 concurrency = 1.6s
+    # Parallel should take ~0.2-0.5s (all 8 collectors run at once per device)
+    assert elapsed < 1.0, (
+        f"Took {elapsed:.2f}s — collectors may still be running sequentially. "
+        f"Expected < 1.0s with parallel execution."
+    )
+
+
+# =========================================================================
+# Test 13: Parallel collectors — one failure doesn't affect others
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_parallel_collectors_partial_failure():
+    """When one collector fails in parallel, others still succeed."""
+    sem = asyncio.Semaphore(5)
+    engine = MagicMock(spec=AsyncSnmpEngine)
+
+    ok_collector = FakeCollector(delay=0.01, fail=False)
+    ok_collector.api_name = "ok_collector"
+    fail_collector = FakeCollector(delay=0.01, fail=True)
+    fail_collector.api_name = "fail_collector"
+
+    coord = CollectionCoordinator(
+        engine=engine,
+        collectors={"ok_collector": ok_collector, "fail_collector": fail_collector},
+        semaphore=sem,
+    )
+    cache = _mock_session_cache()
+    device = _make_device("10.0.0.1")
+
+    with _mock_save():
+        result = await coord._collect_device(
+            device_info=device,
+            collectors=[ok_collector, fail_collector],
+            session_cache=cache,
+            maintenance_id="M-TEST",
+        )
+
+    assert result.status == "partial"
+    assert result.collector_results["ok_collector"] == "ok"
+    assert result.collector_results["fail_collector"] == "timeout"

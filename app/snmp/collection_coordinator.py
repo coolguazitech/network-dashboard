@@ -251,11 +251,10 @@ class CollectionCoordinator:
         return round_result
 
     # Per-device hard timeout inside semaphore.
-    # Must be large enough for ALL collectors to complete sequentially,
-    # but small enough to free slots in bounded time.
-    # Formula: num_collectors × per_collector_budget + probe_overhead
-    _PER_COLLECTOR_BUDGET: float = 15.0  # seconds; normal walk 5-15s
-    _HARD_TIMEOUT_MIN: float = 45.0     # floor for fast_round (2 collectors)
+    # With parallel collectors, per-device time ≈ max(single_walk) + probe,
+    # not sum(all_walks). Budget is generous to avoid false timeouts.
+    _PER_COLLECTOR_BUDGET: float = 15.0  # seconds; kept for startup warning
+    _HARD_TIMEOUT_MIN: float = 45.0     # floor for any round
     _HARD_TIMEOUT_PROBE: float = 15.0   # overhead for community probe + buffer
 
     async def _collect_device(
@@ -312,12 +311,13 @@ class CollectionCoordinator:
         device_unreachable = False
         all_ok = True
 
-        # Dynamic hard timeout: scales with number of collectors
-        # fast_round(2): max(45, 2×15+15) = 45s
-        # full_round(8): max(45, 8×15+15) = 135s
+        # Dynamic hard timeout: with parallel collectors, timeout only needs
+        # to cover the SLOWEST collector (not sum), plus probe overhead.
+        # fast_round(2): max(45, 15+15) = 45s
+        # full_round(8): max(45, 15+15) = 45s  (same — parallel!)
         hard_timeout = max(
             self._HARD_TIMEOUT_MIN,
-            len(collectors) * self._PER_COLLECTOR_BUDGET + self._HARD_TIMEOUT_PROBE,
+            self._PER_COLLECTOR_BUDGET + self._HARD_TIMEOUT_PROBE,
         )
 
         async with self._semaphore:
@@ -404,9 +404,10 @@ class CollectionCoordinator:
                 False,  # all_ok
             )
 
-        # Phase 2: Run each collector sequentially (sharing target)
-        all_ok = True
-        for collector in collectors:
+        # Phase 2: Run all collectors in PARALLEL (each is an independent
+        # subprocess, so no shared state or GIL contention).
+        # This reduces per-device time from N×walk_time to max(walk_time).
+        async def _run_one(collector: BaseSnmpCollector) -> tuple[str, str, str | None, list[BaseModel]]:
             try:
                 raw_text, parsed_items = await collector.collect_with_retry(
                     target=target,
@@ -415,23 +416,19 @@ class CollectionCoordinator:
                     engine=self._engine,
                     max_retries=settings.snmp_collector_retries,
                 )
-                collector_outcomes.append(
-                    (collector.api_name, "ok", None, parsed_items),
-                )
+                return (collector.api_name, "ok", None, parsed_items)
             except SnmpTimeoutError as e:
-                collector_outcomes.append(
-                    (collector.api_name, "timeout", str(e), []),
-                )
-                all_ok = False
+                return (collector.api_name, "timeout", str(e), [])
             except Exception as e:
                 logger.error(
                     "Collector %s failed for %s: %s",
                     collector.api_name, hostname, e,
                 )
-                collector_outcomes.append(
-                    (collector.api_name, "error", str(e), []),
-                )
-                all_ok = False
+                return (collector.api_name, "error", str(e), [])
+
+        results = await asyncio.gather(*[_run_one(c) for c in collectors])
+        collector_outcomes = list(results)
+        all_ok = all(status == "ok" for _, status, _, _ in collector_outcomes)
 
         return collector_outcomes, False, all_ok
 
