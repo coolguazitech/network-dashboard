@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.endpoints.auth import get_current_user, require_write
 from app.db.base import get_async_session as get_session
 from app.services.system_log import write_log
+from app.core.interfaces import normalize_interface_name
 from app.db.models import (
     UplinkExpectation,
     VersionExpectation,
@@ -140,9 +141,9 @@ async def create_uplink_expectation(
 ) -> dict[str, Any]:
     """新增 Uplink 期望。"""
     hostname = data.hostname.strip()
-    local_interface = data.local_interface.strip()
+    local_interface = normalize_interface_name(data.local_interface.strip())
     expected_neighbor = data.expected_neighbor.strip()
-    expected_interface = data.expected_interface.strip() if data.expected_interface else None
+    expected_interface = normalize_interface_name(data.expected_interface.strip()) if data.expected_interface else None
 
     # 當鄰居是自己時，本地介面與鄰居介面必須不同
     if hostname == expected_neighbor:
@@ -262,7 +263,7 @@ async def update_uplink_expectation(
         else item.hostname
     )
     new_local_interface = (
-        data.local_interface.strip()
+        normalize_interface_name(data.local_interface.strip())
         if data.local_interface is not None
         else item.local_interface
     )
@@ -274,7 +275,7 @@ async def update_uplink_expectation(
 
     # 計算更新後的鄰居介面
     new_neighbor_int_for_self_check = (
-        data.expected_interface.strip()
+        normalize_interface_name(data.expected_interface.strip())
         if data.expected_interface is not None and data.expected_interface
         else item.expected_interface
     )
@@ -357,11 +358,11 @@ async def update_uplink_expectation(
     if data.hostname is not None:
         item.hostname = data.hostname.strip()
     if data.local_interface is not None:
-        item.local_interface = data.local_interface.strip()
+        item.local_interface = normalize_interface_name(data.local_interface.strip())
     if data.expected_neighbor is not None:
         item.expected_neighbor = data.expected_neighbor.strip()
     if data.expected_interface is not None:
-        item.expected_interface = data.expected_interface.strip() if data.expected_interface else None
+        item.expected_interface = normalize_interface_name(data.expected_interface.strip()) if data.expected_interface else None
     if data.description is not None:
         item.description = data.description.strip() if data.description else None
     
@@ -540,9 +541,9 @@ async def import_uplink_csv(
     for row_num, row in enumerate(reader, start=2):
         try:
             hostname = row.get("hostname", "").strip()
-            local_interface = row.get("local_interface", "").strip()
+            local_interface = normalize_interface_name(row.get("local_interface", "").strip())
             expected_neighbor = row.get("expected_neighbor", "").strip()
-            expected_interface = row.get("expected_interface", "").strip()
+            expected_interface = normalize_interface_name(row.get("expected_interface", "").strip())
             description = row.get("description", "").strip() or None
 
             if not hostname or not local_interface or not expected_neighbor or not expected_interface:
@@ -1045,7 +1046,7 @@ async def create_port_channel_expectation(
 ) -> dict[str, Any]:
     """新增 Port-Channel 期望。"""
     hostname = data.hostname.strip()
-    port_channel = data.port_channel.strip()
+    port_channel = normalize_interface_name(data.port_channel.strip())
 
     # 檢查是否已存在相同的 hostname + port_channel
     stmt = select(PortChannelExpectation).where(
@@ -1062,9 +1063,9 @@ async def create_port_channel_expectation(
             detail=f"已存在相同的 Port-Channel 期望: {hostname}:{port_channel}"
         )
     
-    # 標準化成員介面格式（移除空白、排序以確保順序無關的唯一性）
+    # 標準化成員介面格式（normalize + 排序以確保順序無關的唯一性）
     members = ";".join(sorted(
-        m.strip()
+        normalize_interface_name(m.strip())
         for m in data.member_interfaces.split(";")
         if m.strip()
     ))
@@ -1122,7 +1123,7 @@ async def update_port_channel_expectation(
         data.hostname.strip() if data.hostname is not None else item.hostname
     )
     new_port_channel = (
-        data.port_channel.strip()
+        normalize_interface_name(data.port_channel.strip())
         if data.port_channel is not None
         else item.port_channel
     )
@@ -1146,10 +1147,10 @@ async def update_port_channel_expectation(
     if data.hostname is not None:
         item.hostname = data.hostname.strip()
     if data.port_channel is not None:
-        item.port_channel = data.port_channel.strip()
+        item.port_channel = normalize_interface_name(data.port_channel.strip())
     if data.member_interfaces is not None:
         members = ";".join(sorted(
-            m.strip()
+            normalize_interface_name(m.strip())
             for m in data.member_interfaces.split(";")
             if m.strip()
         ))
@@ -1328,7 +1329,7 @@ async def import_port_channel_csv(
     for row_num, row in enumerate(reader, start=2):
         try:
             hostname = row.get("hostname", "").strip()
-            port_channel = row.get("port_channel", "").strip()
+            port_channel = normalize_interface_name(row.get("port_channel", "").strip())
             member_interfaces = row.get("member_interfaces", "").strip()
             description = row.get("description", "").strip() or None
 
@@ -1336,9 +1337,9 @@ async def import_port_channel_csv(
                 errors.append(f"Row {row_num}: 必填欄位不完整")
                 continue
 
-            # 標準化成員介面格式（排序以確保順序無關的唯一性）
+            # 標準化成員介面格式（normalize + 排序以確保順序無關的唯一性）
             members = ";".join(sorted(
-                m.strip()
+                normalize_interface_name(m.strip())
                 for m in member_interfaces.split(";")
                 if m.strip()
             ))

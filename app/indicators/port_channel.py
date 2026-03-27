@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import LinkStatus
+from app.core.interfaces import normalize_interface_name
 from app.db.models import PortChannelRecord, PortChannelExpectation
 from app.indicators.base import (
     BaseIndicator,
@@ -219,8 +220,8 @@ class PortChannelIndicator(BaseIndicator):
         actual: PortChannelRecord,
     ) -> set[str]:
         """Return expected members that are absent from the actual record."""
-        expected = {m.strip() for m in exp.member_interfaces.split(";") if m.strip()}
-        present = set(actual.members) if actual.members else set()
+        expected = {normalize_interface_name(m.strip()) for m in exp.member_interfaces.split(";") if m.strip()}
+        present = {normalize_interface_name(m) for m in actual.members} if actual.members else set()
         return expected - present
 
     @staticmethod
@@ -269,12 +270,10 @@ class PortChannelIndicator(BaseIndicator):
 
     # ── shared helpers ──────────────────────────────────────────────
 
-    def _normalize_name(self, name: str) -> str:
-        """Normalize interface name for comparison."""
-        name = name.lower()
-        name = name.replace("port-channel", "po")
-        name = name.replace("bridge-aggregation", "bagg")
-        return name
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        """Normalize interface name for comparison using system-wide rules."""
+        return normalize_interface_name(name)
 
     @staticmethod
     def _calc_percent(passed: int, total: int) -> float:
