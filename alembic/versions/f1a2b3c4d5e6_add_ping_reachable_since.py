@@ -20,6 +20,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'cases' "
+                "AND column_name = 'ping_reachable_since'")
+    )
+    if result.scalar() > 0:
+        return  # column already exists
     op.add_column(
         "cases",
         sa.Column("ping_reachable_since", sa.DateTime(), nullable=True),

@@ -19,6 +19,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name = 'interface_status_records'")
+    )
+    if result.scalar() > 0:
+        return  # table already exists
     op.create_table(
         'interface_status_records',
         sa.Column('id', sa.Integer, primary_key=True, autoincrement=True),

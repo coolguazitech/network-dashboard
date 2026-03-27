@@ -20,6 +20,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'maintenance_mac_list' "
+                "AND column_name = 'default_assignee'")
+    )
+    if result.scalar() > 0:
+        return  # column already exists
     op.add_column(
         'maintenance_mac_list',
         sa.Column('default_assignee', sa.String(100), nullable=True),

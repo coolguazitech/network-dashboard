@@ -8,6 +8,7 @@ Create Date: 2026-02-03
 from typing import Sequence, Union
 
 from alembic import op
+import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -19,6 +20,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # Add unique constraint for maintenance_id + hostname
+    conn = op.get_bind()
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.table_constraints "
+                "WHERE table_schema = DATABASE() AND table_name = 'version_expectations' "
+                "AND constraint_name = 'uk_version_expectation'")
+    )
+    if result.scalar() > 0:
+        return  # constraint already exists
     op.create_unique_constraint(
         'uk_version_expectation',
         'version_expectations',

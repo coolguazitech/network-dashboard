@@ -19,8 +19,22 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add old_is_reachable and old_last_check_at columns to maintenance_device_list."""
-    op.add_column('maintenance_device_list', sa.Column('old_is_reachable', sa.Boolean(), nullable=True))
-    op.add_column('maintenance_device_list', sa.Column('old_last_check_at', sa.DateTime(), nullable=True))
+    conn = op.get_bind()
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'maintenance_device_list' "
+                "AND column_name = 'old_is_reachable'")
+    )
+    if result.scalar() == 0:
+        op.add_column('maintenance_device_list', sa.Column('old_is_reachable', sa.Boolean(), nullable=True))
+
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'maintenance_device_list' "
+                "AND column_name = 'old_last_check_at'")
+    )
+    if result.scalar() == 0:
+        op.add_column('maintenance_device_list', sa.Column('old_last_check_at', sa.DateTime(), nullable=True))
 
 
 def downgrade() -> None:

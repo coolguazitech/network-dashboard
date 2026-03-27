@@ -20,11 +20,28 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "cases",
-        sa.Column("change_flags", sa.JSON(), nullable=True),
+    conn = op.get_bind()
+
+    # Add change_flags column if not exists
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'cases' "
+                "AND column_name = 'change_flags'")
     )
-    op.drop_column("cases", "ping_recovered_at")
+    if result.scalar() == 0:
+        op.add_column(
+            "cases",
+            sa.Column("change_flags", sa.JSON(), nullable=True),
+        )
+
+    # Drop ping_recovered_at column if it exists
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'cases' "
+                "AND column_name = 'ping_recovered_at'")
+    )
+    if result.scalar() > 0:
+        op.drop_column("cases", "ping_recovered_at")
 
 
 def downgrade() -> None:

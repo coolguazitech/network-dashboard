@@ -19,36 +19,50 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        'cases',
-        sa.Column('id', sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column('maintenance_id', sa.String(100), nullable=False, index=True),
-        sa.Column('mac_address', sa.String(17), nullable=False, index=True),
-        sa.Column(
-            'status',
-            sa.Enum(
-                'UNASSIGNED', 'ASSIGNED', 'IN_PROGRESS', 'DISCUSSING', 'RESOLVED',
-                name='casestatus',
-            ),
-            nullable=False,
-            server_default='ASSIGNED',
-        ),
-        sa.Column('assignee', sa.String(100), nullable=True),
-        sa.Column('summary', sa.String(500), nullable=True),
-        sa.Column('last_ping_reachable', sa.Boolean, nullable=True),
-        sa.Column('created_at', sa.DateTime, server_default=sa.func.now()),
-        sa.Column('updated_at', sa.DateTime, server_default=sa.func.now(), onupdate=sa.func.now()),
-        sa.UniqueConstraint('maintenance_id', 'mac_address', name='uk_case_maintenance_mac'),
-    )
+    conn = op.get_bind()
 
-    op.create_table(
-        'case_notes',
-        sa.Column('id', sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column('case_id', sa.Integer, sa.ForeignKey('cases.id', ondelete='CASCADE'), nullable=False, index=True),
-        sa.Column('author', sa.String(100), nullable=False),
-        sa.Column('content', sa.Text, nullable=False),
-        sa.Column('created_at', sa.DateTime, server_default=sa.func.now()),
+    # Create cases table only if not exists
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name = 'cases'")
     )
+    if result.scalar() == 0:
+        op.create_table(
+            'cases',
+            sa.Column('id', sa.Integer, primary_key=True, autoincrement=True),
+            sa.Column('maintenance_id', sa.String(100), nullable=False, index=True),
+            sa.Column('mac_address', sa.String(17), nullable=False, index=True),
+            sa.Column(
+                'status',
+                sa.Enum(
+                    'UNASSIGNED', 'ASSIGNED', 'IN_PROGRESS', 'DISCUSSING', 'RESOLVED',
+                    name='casestatus',
+                ),
+                nullable=False,
+                server_default='ASSIGNED',
+            ),
+            sa.Column('assignee', sa.String(100), nullable=True),
+            sa.Column('summary', sa.String(500), nullable=True),
+            sa.Column('last_ping_reachable', sa.Boolean, nullable=True),
+            sa.Column('created_at', sa.DateTime, server_default=sa.func.now()),
+            sa.Column('updated_at', sa.DateTime, server_default=sa.func.now(), onupdate=sa.func.now()),
+            sa.UniqueConstraint('maintenance_id', 'mac_address', name='uk_case_maintenance_mac'),
+        )
+
+    # Create case_notes table only if not exists
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name = 'case_notes'")
+    )
+    if result.scalar() == 0:
+        op.create_table(
+            'case_notes',
+            sa.Column('id', sa.Integer, primary_key=True, autoincrement=True),
+            sa.Column('case_id', sa.Integer, sa.ForeignKey('cases.id', ondelete='CASCADE'), nullable=False, index=True),
+            sa.Column('author', sa.String(100), nullable=False),
+            sa.Column('content', sa.Text, nullable=False),
+            sa.Column('created_at', sa.DateTime, server_default=sa.func.now()),
+        )
 
 
 def downgrade() -> None:

@@ -20,11 +20,23 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    conn = op.get_bind()
+
     # Make contacts.category_id nullable and change FK ondelete to SET NULL
     op.alter_column('contacts', 'category_id',
                existing_type=mysql.INTEGER(display_width=11),
                nullable=True)
-    op.drop_constraint('fk_contacts_category_id_contact_categories', 'contacts', type_='foreignkey')
+
+    # Drop old FK only if it exists
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.table_constraints "
+                "WHERE table_schema = DATABASE() AND table_name = 'contacts' "
+                "AND constraint_name = 'fk_contacts_category_id_contact_categories'")
+    )
+    if result.scalar() > 0:
+        op.drop_constraint('fk_contacts_category_id_contact_categories', 'contacts', type_='foreignkey')
+
+    # Re-create FK with SET NULL (drop first if it was re-created above scenario)
     op.create_foreign_key('fk_contacts_category_id_contact_categories', 'contacts', 'contact_categories', ['category_id'], ['id'], ondelete='SET NULL')
 
 

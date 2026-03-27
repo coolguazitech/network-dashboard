@@ -22,6 +22,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+
     # First, update any NULL expected_interface to 'UNKNOWN'
     op.execute(
         "UPDATE uplink_expectations SET expected_interface = 'UNKNOWN' "
@@ -36,12 +38,18 @@ def upgrade() -> None:
         nullable=False
     )
 
-    # Add unique constraint
-    op.create_unique_constraint(
-        'uk_uplink_expectation',
-        'uplink_expectations',
-        ['maintenance_id', 'hostname', 'local_interface']
+    # Add unique constraint (only if not already present)
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.table_constraints "
+                "WHERE table_schema = DATABASE() AND table_name = 'uplink_expectations' "
+                "AND constraint_name = 'uk_uplink_expectation'")
     )
+    if result.scalar() == 0:
+        op.create_unique_constraint(
+            'uk_uplink_expectation',
+            'uplink_expectations',
+            ['maintenance_id', 'hostname', 'local_interface']
+        )
 
 
 def downgrade() -> None:

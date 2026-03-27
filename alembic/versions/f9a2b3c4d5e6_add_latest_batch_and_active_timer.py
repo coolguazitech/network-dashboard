@@ -21,34 +21,54 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1. 建立 latest_collection_batches 表
-    op.create_table(
-        'latest_collection_batches',
-        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column('maintenance_id', sa.String(length=100), nullable=False),
-        sa.Column('collection_type', sa.String(length=100), nullable=False),
-        sa.Column('switch_hostname', sa.String(length=255), nullable=False),
-        sa.Column('batch_id', sa.Integer(), nullable=False),
-        sa.Column('data_hash', sa.String(length=16), nullable=False),
-        sa.Column('collected_at', sa.DateTime(), nullable=False),
-        sa.Column('last_checked_at', sa.DateTime(), nullable=False),
-        sa.PrimaryKeyConstraint('id'),
-        sa.ForeignKeyConstraint(['batch_id'], ['collection_batches.id'], ondelete='CASCADE'),
-        sa.UniqueConstraint(
-            'maintenance_id', 'collection_type', 'switch_hostname',
-            name='uk_latest_batch',
-        ),
+    conn = op.get_bind()
+
+    # 1. 建立 latest_collection_batches 表 (only if not exists)
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name = 'latest_collection_batches'")
     )
-    op.create_index('ix_latest_collection_batches_maintenance_id', 'latest_collection_batches', ['maintenance_id'])
-    op.create_index('ix_latest_collection_batches_batch_id', 'latest_collection_batches', ['batch_id'])
+    if result.scalar() == 0:
+        op.create_table(
+            'latest_collection_batches',
+            sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+            sa.Column('maintenance_id', sa.String(length=100), nullable=False),
+            sa.Column('collection_type', sa.String(length=100), nullable=False),
+            sa.Column('switch_hostname', sa.String(length=255), nullable=False),
+            sa.Column('batch_id', sa.Integer(), nullable=False),
+            sa.Column('data_hash', sa.String(length=16), nullable=False),
+            sa.Column('collected_at', sa.DateTime(), nullable=False),
+            sa.Column('last_checked_at', sa.DateTime(), nullable=False),
+            sa.PrimaryKeyConstraint('id'),
+            sa.ForeignKeyConstraint(['batch_id'], ['collection_batches.id'], ondelete='CASCADE'),
+            sa.UniqueConstraint(
+                'maintenance_id', 'collection_type', 'switch_hostname',
+                name='uk_latest_batch',
+            ),
+        )
+        op.create_index('ix_latest_collection_batches_maintenance_id', 'latest_collection_batches', ['maintenance_id'])
+        op.create_index('ix_latest_collection_batches_batch_id', 'latest_collection_batches', ['batch_id'])
 
     # 2. maintenance_configs 新增累計活躍計時器欄位
-    op.add_column('maintenance_configs', sa.Column(
-        'active_seconds_accumulated', sa.Integer(), nullable=False, server_default='0',
-    ))
-    op.add_column('maintenance_configs', sa.Column(
-        'last_activated_at', sa.DateTime(), nullable=True,
-    ))
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'maintenance_configs' "
+                "AND column_name = 'active_seconds_accumulated'")
+    )
+    if result.scalar() == 0:
+        op.add_column('maintenance_configs', sa.Column(
+            'active_seconds_accumulated', sa.Integer(), nullable=False, server_default='0',
+        ))
+
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'maintenance_configs' "
+                "AND column_name = 'last_activated_at'")
+    )
+    if result.scalar() == 0:
+        op.add_column('maintenance_configs', sa.Column(
+            'last_activated_at', sa.DateTime(), nullable=True,
+        ))
 
 
 def downgrade() -> None:

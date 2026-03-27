@@ -21,8 +21,25 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.drop_column("ping_records", "success_rate")
-    op.drop_column("ping_records", "avg_rtt_ms")
+    conn = op.get_bind()
+
+    # Drop success_rate only if it exists
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'ping_records' "
+                "AND column_name = 'success_rate'")
+    )
+    if result.scalar() > 0:
+        op.drop_column("ping_records", "success_rate")
+
+    # Drop avg_rtt_ms only if it exists
+    result = conn.execute(
+        sa.text("SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'ping_records' "
+                "AND column_name = 'avg_rtt_ms'")
+    )
+    if result.scalar() > 0:
+        op.drop_column("ping_records", "avg_rtt_ms")
 
 
 def downgrade() -> None:
