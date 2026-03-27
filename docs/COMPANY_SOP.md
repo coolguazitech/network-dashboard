@@ -1,9 +1,13 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.8 (2026-03-27)
+> **版本**: v2.19.9 (2026-03-27)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
 >
-> **v2.19.8 變更摘要**:
+> **v2.19.9 變更摘要**:
+> - **[Bugfix] 介面名稱正規化統一**：所有期望值 API（uplink/port-channel 的 create/update/import-csv）在寫入 DB 前統一用 `normalize_interface_name()` 正規化。使用者可填寫全稱（`Port-Channel1`）、縮寫（`Po1`）或任意大小寫（`port-channel1`），系統自動轉為 canonical 短格式與 SNMP 採集資料一致，不再因格式不同導致驗收比對失敗
+> - **[改善] Port-Channel 指標比對強化**：indicator 中的 `_normalize_name()` 改用系統級 `normalize_interface_name()`（70+ 種介面格式），member interface 比對也加入正規化，確保 `GigabitEthernet0/1` 與 `GE0/1` 能正確匹配
+>
+> **v2.19.9 變更摘要**:
 > - **[Critical Fix] 改用 base Dockerfile 建構**：`docker/production/Dockerfile` 基於舊版 v2.5.3 base image，缺少 v2.15.0+ 新增的模組（`app.core.interfaces` 等），導致 `ModuleNotFoundError` 啟動失敗。改用 `docker/base/Dockerfile` 建構完整 image
 > - **[Bugfix] 全部 15 個 Alembic 遷移加入防禦性檢查**：所有 migration 使用 `information_schema` 查詢確認 table/column/constraint 是否存在再操作，修復 `create_all()` 建表後 migration 重複執行的 `Duplicate column` / `Table doesn't exist` 錯誤
 >
@@ -207,7 +211,7 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.19.8` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.19.9` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
 | `coolguazi/netora-mock-server:v2.19.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
@@ -903,19 +907,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.19.8 \
+    -t coolguazi/network-dashboard-base:v2.19.9 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.19.8
+    coolguazi/network-dashboard-base:v2.19.9
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.19.8
+docker push coolguazi/network-dashboard-base:v2.19.9
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.19.8 | gzip > netora-app-v2.9.0.tar.gz
+docker save coolguazi/network-dashboard-base:v2.19.9 | gzip > netora-app-v2.9.0.tar.gz
 ```
 
 #### 在公司環境（無外網）
