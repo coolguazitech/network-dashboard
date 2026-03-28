@@ -1,9 +1,13 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.10 (2026-03-28)
+> **版本**: v2.19.11 (2026-03-28)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
 >
-> **v2.19.10 變更摘要**:
+> **v2.19.11 變更摘要**:
+> - **[Bugfix] 拓樸 link label 移除 hostname 前綴**：ECharts `{c}` formatter 會自動附加 `[source]` / `[target]` 到 edge value，改用 closure function 直接回傳介面名稱，label 只顯示 `WGE1/0/51 ↔ TE1/0/1` 不再有 `[SW-ACCESS-01]` 前綴
+> - **[改善] Link label 水平顯示**：加入 `rotate: 0` 讓 link 上的介面名稱保持水平方向，與 node 名稱方向一致，不再沿著連線旋轉
+>
+> **v2.19.11 變更摘要**:
 > - **[Bugfix] 拓樸 link 去重修復**：`remote_interface` 存入 DB 前未做 normalize（如 `Twenty-FiveGigE1/0/53` vs `WGE1/0/53`），導致同一條實體 link 從兩端各出現一次。加入 `remote_interface` normalize 後去重正確，每條 link 只顯示一次
 > - **[改善] 前端介面名稱縮寫補全**：Topology.vue `shortIf()` 新增 `Twenty-FiveGigE`、`HundredGigE`、`FortyGigE`、`TwentyFiveGigE` 等中間形式的 regex 映射
 >
@@ -215,7 +219,7 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.19.10` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.19.11` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
 | `coolguazi/netora-mock-server:v2.19.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
@@ -911,19 +915,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.19.10 \
+    -t coolguazi/network-dashboard-base:v2.19.11 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.19.10
+    coolguazi/network-dashboard-base:v2.19.11
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.19.10
+docker push coolguazi/network-dashboard-base:v2.19.11
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.19.10 | gzip > netora-app-v2.9.0.tar.gz
+docker save coolguazi/network-dashboard-base:v2.19.11 | gzip > netora-app-v2.9.0.tar.gz
 ```
 
 #### 在公司環境（無外網）
