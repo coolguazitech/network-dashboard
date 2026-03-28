@@ -564,13 +564,13 @@ const chartOption = computed(() => {
 
       return {
         source: p.source, target: p.target,
-        value: labelText,
+        _labelText: labelText,
         _srcIf: p.src_interfaces,
         _tgtIf: p.tgt_interfaces,
         status, is_management: p.is_management,
-        label: {
+        edgeLabel: {
           show: true,
-          formatter: () => labelText,
+          formatter: (params) => params.data._labelText || '',
           fontSize: 14,
           color: '#cbd5e1',
           backgroundColor: 'rgba(15, 23, 42, 0.75)',
