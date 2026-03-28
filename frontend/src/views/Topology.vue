@@ -570,12 +570,13 @@ const chartOption = computed(() => {
         status, is_management: p.is_management,
         label: {
           show: true,
-          formatter: '{c}',
+          formatter: () => labelText,
           fontSize: 14,
           color: '#cbd5e1',
           backgroundColor: 'rgba(15, 23, 42, 0.75)',
           padding: [4, 10],
           borderRadius: 3,
+          rotate: 0,
         },
         lineStyle: {
           color: LINK_COLORS[status] || LINK_COLORS.discovered,
