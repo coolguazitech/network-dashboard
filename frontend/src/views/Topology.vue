@@ -564,19 +564,18 @@ const chartOption = computed(() => {
 
       return {
         source: p.source, target: p.target,
-        _labelText: labelText,
+        value: labelText,
         _srcIf: p.src_interfaces,
         _tgtIf: p.tgt_interfaces,
         status, is_management: p.is_management,
-        edgeLabel: {
+        label: {
           show: true,
-          formatter: (params) => params.data._labelText || '',
+          formatter: '{c}',
           fontSize: 14,
           color: '#cbd5e1',
           backgroundColor: 'rgba(15, 23, 42, 0.75)',
           padding: [4, 10],
           borderRadius: 3,
-          rotate: 0,
         },
         lineStyle: {
           color: LINK_COLORS[status] || LINK_COLORS.discovered,
