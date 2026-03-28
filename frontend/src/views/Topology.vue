@@ -245,14 +245,22 @@ function captureNodePositions() {
 
 // 介面名稱正規化：長格式 → 縮寫
 const _IF_PREFIX = [
-  [/^Twenty-FiveGigabitEthernet/i, 'WGE'], [/^Ten-GigabitEthernet/i, 'XGE'],
-  [/^HundredGigabitEthernet/i, 'Hu'], [/^FortyGigabitEthernet/i, 'Fo'],
-  [/^TenGigabitEthernet/i, 'TE'], [/^GigabitEthernet/i, 'GE'],
-  [/^FastEthernet/i, 'FE'], [/^Bridge-Aggregation/i, 'BAGG'],
-  [/^M-GigabitEthernet/i, 'MGE'], [/^Port-[Cc]hannel/i, 'Po'],
-  [/^Bundle-Ether/i, 'BE'], [/^Management/i, 'Mgmt'],
-  [/^Loopback/i, 'Lo'], [/^Ethernet/i, 'Eth'],
-  [/^Vlan-interface\s*/i, 'Vlan'],
+  // 25G — HPE (hyphen) + Cisco (no hyphen) + abbreviated forms
+  [/^Twenty-FiveGigabitEthernet/i, 'WGE'], [/^Twenty-FiveGigE/i, 'WGE'],
+  [/^TwentyFiveGigabitEthernet/i, 'Twe'], [/^TwentyFiveGigE/i, 'Twe'],
+  // 100G+
+  [/^FourHundredGigE/i, 'FourHu'], [/^TwoHundredGigE/i, 'TwoHu'],
+  [/^HundredGigabitEthernet/i, 'Hu'], [/^HundredGigE/i, 'HGE'],
+  // 10G/40G
+  [/^Ten-GigabitEthernet/i, 'XGE'], [/^FortyGigabitEthernet/i, 'Fo'],
+  [/^FortyGigE/i, 'FGE'], [/^TenGigabitEthernet/i, 'TE'],
+  // 1G and below
+  [/^GigabitEthernet/i, 'GE'], [/^FastEthernet/i, 'FE'],
+  // LAG / management / virtual
+  [/^Bridge-Aggregation/i, 'BAGG'], [/^M-GigabitEthernet/i, 'MGE'],
+  [/^Port-[Cc]hannel/i, 'Po'], [/^Bundle-Ether/i, 'BE'],
+  [/^Management/i, 'Mgmt'], [/^Loopback/i, 'Lo'],
+  [/^Ethernet/i, 'Eth'], [/^Vlan-interface\s*/i, 'Vlan'],
 ]
 function shortIf(name) {
   if (!name) return name

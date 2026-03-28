@@ -181,6 +181,10 @@ class TypedRecordRepository(Generic[RecordT]):
                 data["local_interface"] = normalize_interface_name(
                     data["local_interface"],
                 )
+            if "remote_interface" in data and data["remote_interface"]:
+                data["remote_interface"] = normalize_interface_name(
+                    data["remote_interface"],
+                )
             row = self.model(
                 batch_id=batch.id,
                 switch_hostname=switch_hostname,
