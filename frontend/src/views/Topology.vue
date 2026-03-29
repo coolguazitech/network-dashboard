@@ -565,7 +565,7 @@ const chartOption = computed(() => {
       const srcFirst = hSrc < hTgt || (hSrc === hTgt && l.source < l.target)
       const sorted = srcFirst ? [l.source, l.target] : [l.target, l.source]
       const key = sorted.join('|')
-      if (!pairMap[key]) pairMap[key] = { source: sorted[0], target: sorted[1], interfaces: [], src_interfaces: [], tgt_interfaces: [], statuses: [], is_management: false }
+      if (!pairMap[key]) pairMap[key] = { source: sorted[0], target: sorted[1], interfaces: [], src_interfaces: [], tgt_interfaces: [], per_link_status: [], statuses: [], is_management: false }
       if (l.source === sorted[0]) {
         pairMap[key].src_interfaces.push(l.local_interface)
         pairMap[key].tgt_interfaces.push(l.remote_interface)
@@ -574,6 +574,7 @@ const chartOption = computed(() => {
         pairMap[key].tgt_interfaces.push(l.local_interface)
       }
       pairMap[key].interfaces.push(`${l.local_interface} ↔ ${l.remote_interface}`)
+      pairMap[key].per_link_status.push(l.status)
       pairMap[key].statuses.push(l.status)
       if (l.is_management) pairMap[key].is_management = true
     })
@@ -592,9 +593,14 @@ const chartOption = computed(() => {
         needSwap = (tgtPos[0] - srcPos[0]) < 0
       }
 
+      const _STATUS_TAG = { expected_pass: '✓', expected_fail: '✗ 期望', discovered: '實際' }
+      const hasMultiStatus = new Set(p.per_link_status).size > 1
       const labelText = p.src_interfaces.map((s, i) => {
         const si = shortIf(s), ti = shortIf(p.tgt_interfaces[i]) || '?'
-        return needSwap ? `${ti} ↔ ${si}` : `${si} ↔ ${ti}`
+        const ifPart = needSwap ? `${ti} ↔ ${si}` : `${si} ↔ ${ti}`
+        if (!hasMultiStatus) return ifPart
+        const tag = _STATUS_TAG[p.per_link_status[i]] || ''
+        return tag ? `${ifPart}  [${tag}]` : ifPart
       }).join('\n')
 
       return {

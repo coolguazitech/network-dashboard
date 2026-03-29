@@ -214,6 +214,7 @@ async def get_topology(
 
     # ── 4. 建構鄰居關係 (去重 LLDP+CDP) ──
     seen_links: set[tuple[str, str, str, str]] = set()
+    used_ports: set[tuple[str, str]] = set()  # (hostname, local_if) — 每個 port 只能一條線
     actual_neighbors: dict[str, set[str]] = defaultdict(set)
     raw_links: list[dict] = []
 
@@ -234,7 +235,14 @@ async def get_topology(
 
         if link_key in seen_links:
             continue
+
+        # 物理約束：一個 port 只能接一條線
+        if (src, local_if) in used_ports or (dst, remote_if) in used_ports:
+            continue
+
         seen_links.add(link_key)
+        used_ports.add((src, local_if))
+        used_ports.add((dst, remote_if))
 
         raw_links.append({
             "source": src,
@@ -280,9 +288,15 @@ async def get_topology(
         ))
         stats[status] += 1
 
-    # ── 6. 未匹配的期望 → expected_fail ──
+    # ── 6. 未匹配的期望 → expected_fail（同樣遵守 per-port 物理約束）──
     for exp in expectations:
         if exp.id not in matched_exp_ids:
+            local_port = (exp.hostname, exp.local_interface)
+            remote_port = (exp.expected_neighbor, exp.expected_interface)
+            if local_port in used_ports or remote_port in used_ports:
+                continue
+            used_ports.add(local_port)
+            used_ports.add(remote_port)
             links.append(TopologyLink(
                 source=exp.hostname, target=exp.expected_neighbor,
                 local_interface=exp.local_interface,

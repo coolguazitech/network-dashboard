@@ -1,7 +1,12 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.14 (2026-03-29)
+> **版本**: v2.19.15 (2026-03-29)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.19.15 變更摘要**:
+> - **[Bugfix] 拓樸 per-port 物理約束去重**：一個 port 不可能同時接兩條線，topology API 加入 `used_ports` 集合確保每個 `(hostname, interface)` 只出現一次，消除 LLDP 雙向發現產生的重複 link
+> - **[Bugfix] expected_fail link 同樣遵守 per-port 去重**：未匹配的期望 link 若其 port 已被 discovered link 佔用，不再額外產生虛線，避免同一 port 出現兩條線
+> - **[改善] 拓樸 link 標籤混合狀態註記**：當同一對設備間同時存在「實際發現」和「期望未匹配」的 link 時，label 標註 `[實際]` / `[✗ 期望]` 區分
 >
 > **v2.19.14 變更摘要**:
 > - **[Bugfix] Uplink 唯一約束修正**：migration `i4c5d6e7f8g9` 錯誤地將 `uk_uplink_expectation` 從 `(maintenance_id, hostname, local_interface)` 改為 `(maintenance_id, hostname, expected_neighbor)`，導致同一設備到同一鄰居的多條 uplink（如雙 uplink）CSV 匯入失敗。新增 migration `o0p1q2r3s4t5` 修正回 `local_interface`
