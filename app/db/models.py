@@ -513,7 +513,7 @@ class UplinkExpectation(Base):
     __tablename__ = "uplink_expectations"
     __table_args__ = (
         UniqueConstraint(
-            "maintenance_id", "hostname", "expected_neighbor",
+            "maintenance_id", "hostname", "local_interface",
             name="uk_uplink_expectation",
         ),
     )

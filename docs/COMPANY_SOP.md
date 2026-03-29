@@ -1,7 +1,11 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.13 (2026-03-29)
+> **版本**: v2.19.14 (2026-03-29)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.19.14 變更摘要**:
+> - **[Bugfix] Uplink 唯一約束修正**：migration `i4c5d6e7f8g9` 錯誤地將 `uk_uplink_expectation` 從 `(maintenance_id, hostname, local_interface)` 改為 `(maintenance_id, hostname, expected_neighbor)`，導致同一設備到同一鄰居的多條 uplink（如雙 uplink）CSV 匯入失敗。新增 migration `o0p1q2r3s4t5` 修正回 `local_interface`
+> - **[Bugfix] 拓樸狀態 interface-level 精確比對**：原本拓樸 API 只比對 hostname pair 就標記 `expected_pass`，即使實際 interface 不匹配。修正為逐條比對 `(hostname, local_interface, expected_neighbor, expected_interface)`，不匹配的 interface 正確標記為 `discovered`，未匹配的期望正確標記為 `expected_fail`
 >
 > **v2.19.13 變更摘要**:
 > - **[Bugfix] CSV 匯入範本欄位修正**：Contacts 範本第 2 列缺少 `department` 欄位導致後續欄位全部位移；Device Mapping 範本第 2 列多一個逗號導致 `new_hostname` 以後的欄位全部錯位

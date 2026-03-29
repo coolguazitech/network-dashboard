@@ -206,6 +206,12 @@ async def get_topology(
     for exp in expectations:
         exp_pairs.add(frozenset({exp.hostname, exp.expected_neighbor}))
 
+    # interface-level 精確比對用
+    exp_if_set: set[tuple[str, str, str, str]] = set()
+    for exp in expectations:
+        exp_if_set.add((exp.hostname, exp.local_interface,
+                        exp.expected_neighbor, exp.expected_interface))
+
     # ── 4. 建構鄰居關係 (去重 LLDP+CDP) ──
     seen_links: set[tuple[str, str, str, str]] = set()
     actual_neighbors: dict[str, set[str]] = defaultdict(set)
@@ -237,25 +243,35 @@ async def get_topology(
             "remote_interface": remote_if,
         })
 
-    # ── 5. 判斷連線狀態 + 管理介面 ──
+    # ── 5. 判斷連線狀態 + 管理介面（interface-level 精確比對）──
     links: list[TopologyLink] = []
     stats = {"expected_pass": 0, "expected_fail": 0, "discovered": 0}
+    matched_exp_ids: set[int] = set()
 
     for lnk in raw_links:
         src, dst = lnk["source"], lnk["target"]
         local_if = lnk["local_interface"]
         remote_if = lnk["remote_interface"]
 
-        pair_key = frozenset({src, dst})
         is_mgmt = (
             is_topology_management_link(local_if)
             or is_topology_management_link(remote_if)
         )
 
-        if pair_key in exp_pairs:
-            status = "expected_pass"
-        else:
-            status = "discovered"
+        # interface-level: 正向 (src→dst) 或反向 (dst→src) 比對
+        status = "discovered"
+        if frozenset({src, dst}) in exp_pairs:
+            for exp in exp_lookup.get((src, dst), []):
+                if exp.local_interface == local_if and exp.expected_interface == remote_if:
+                    status = "expected_pass"
+                    matched_exp_ids.add(exp.id)
+                    break
+            if status != "expected_pass":
+                for exp in exp_lookup.get((dst, src), []):
+                    if exp.local_interface == remote_if and exp.expected_interface == local_if:
+                        status = "expected_pass"
+                        matched_exp_ids.add(exp.id)
+                        break
 
         links.append(TopologyLink(
             source=src, target=dst,
@@ -264,20 +280,16 @@ async def get_topology(
         ))
         stats[status] += 1
 
-    # ── 6. 期望中有但實際不存在 → expected_fail ──
-    for (hostname, expected_neighbor), exps in exp_lookup.items():
-        actual_set = actual_neighbors.get(hostname, set())
-        reverse_set = actual_neighbors.get(expected_neighbor, set())
-
-        if expected_neighbor not in actual_set and hostname not in reverse_set:
-            for exp in exps:
-                links.append(TopologyLink(
-                    source=hostname, target=expected_neighbor,
-                    local_interface=exp.local_interface,
-                    remote_interface=exp.expected_interface,
-                    status="expected_fail", is_management=False,
-                ))
-                stats["expected_fail"] += 1
+    # ── 6. 未匹配的期望 → expected_fail ──
+    for exp in expectations:
+        if exp.id not in matched_exp_ids:
+            links.append(TopologyLink(
+                source=exp.hostname, target=exp.expected_neighbor,
+                local_interface=exp.local_interface,
+                remote_interface=exp.expected_interface,
+                status="expected_fail", is_management=False,
+            ))
+            stats["expected_fail"] += 1
 
     # ── 7. 載入指標驗收失敗資料 ──
     device_failures: dict[str, list[str]] = defaultdict(list)
