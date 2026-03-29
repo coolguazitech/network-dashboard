@@ -211,9 +211,11 @@ class SubprocessSnmpEngine:
             if parsed is None:
                 continue
             oid_str, val_str = parsed
-            # Verify OID is within the requested subtree
+            # Verify OID is within the requested subtree.
+            # Use continue (not break): GETBULK may return out-of-scope
+            # OIDs interleaved with valid ones in some agent implementations.
             if not oid_str.startswith(prefix + ".") and oid_str != prefix:
-                break
+                continue
             results.append((oid_str, val_str))
 
         return results

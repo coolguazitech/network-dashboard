@@ -145,7 +145,9 @@ async def export_cases_csv(
         except ValueError:
             pass
     elif not include_resolved:
-        stmt = stmt.where(Case.status != CaseStatus.RESOLVED)
+        stmt = stmt.where(Case.status.notin_([
+            CaseStatus.RESOLVED, CaseStatus.IGNORED,
+        ]))
 
     if assignee:
         stmt = stmt.where(Case.assignee == assignee)

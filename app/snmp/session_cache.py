@@ -32,10 +32,10 @@ _IF_NAME_OID = "1.3.6.1.2.1.31.1.1.1.1"  # IF-MIB::ifName
 _DOT1D_BASE_PORT_IF_INDEX = "1.3.6.1.2.1.17.1.4.1.2"  # BRIDGE-MIB
 
 # Community probe uses aggressive timeout.
-# A single sysObjectID GET should reply in <500ms if SNMP is working.
-# LibreNMS default: timeout=1s, retries=1.
-# Our per-PDU hard cap: 2*(1+1)+2 = 6s (was 3*(1+1)+2 = 8s).
-_PROBE_TIMEOUT: float = 2.0
+# A single sysObjectID GET should reply in <500ms if SNMP is working,
+# but AGG/CORE switches under load may take 2-4s.
+# Per-PDU hard cap: 5*(1+1)+2 = 12s.
+_PROBE_TIMEOUT: float = 5.0
 _PROBE_RETRIES: int = 1
 
 
@@ -58,7 +58,7 @@ class SnmpSessionCache:
     _community_cache: ClassVar[dict[str, str]] = {}
     _negative_cache: ClassVar[dict[str, float]] = {}  # ip -> expiry monotonic
     _probe_locks: ClassVar[dict[str, asyncio.Lock]] = {}  # per-IP probe dedup
-    NEGATIVE_TTL: ClassVar[float] = 600.0  # default; overridden by settings.snmp_negative_ttl
+    NEGATIVE_TTL: ClassVar[float] = 180.0  # default; overridden by settings.snmp_negative_ttl
 
     def __init__(
         self,
@@ -117,9 +117,8 @@ class SnmpSessionCache:
 
         # 3. Per-IP lock — if another coroutine is already probing this IP,
         #    wait for it instead of sending duplicate SNMP probes.
-        if ip not in self._probe_locks:
-            self._probe_locks[ip] = asyncio.Lock()
-        async with self._probe_locks[ip]:
+        lock = self._probe_locks.setdefault(ip, asyncio.Lock())
+        async with lock:
             # Re-check caches after acquiring lock (another coroutine may
             # have populated them while we waited)
             if ip in self._community_cache:
@@ -272,6 +271,10 @@ class SnmpSessionCache:
         """
         self._ifindex_cache.clear()
         self._bridge_port_cache.clear()
+        # Clean up probe locks that are no longer held — prevents unbounded growth
+        self._probe_locks = {
+            ip: lk for ip, lk in self._probe_locks.items() if lk.locked()
+        }
 
     @classmethod
     def clear_all(cls) -> None:

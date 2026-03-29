@@ -172,6 +172,12 @@ class Settings(BaseSettings):
     )
 
     # Scheduling
+    min_round_gap: int = Field(
+        default=10,
+        description="Minimum seconds between collection rounds. "
+        "After a round finishes, wait at least this long before starting the next. "
+        "Keeps the loop from hammering devices when rounds are very fast (few devices).",
+    )
     collection_interval_seconds: int = Field(
         default=120,
         description="Default data collection interval in seconds (fallback if scheduler.yaml omits interval).",

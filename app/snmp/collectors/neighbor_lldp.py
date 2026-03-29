@@ -51,6 +51,17 @@ class NeighborLldpCollector(BaseSnmpCollector):
         return value.startswith(("0x", "0X"))
 
     @staticmethod
+    def _hex_to_mac(value: str) -> str:
+        """Convert hex-encoded string to MAC address format.
+
+        ``0x54778a1ba584`` → ``54:77:8a:1b:a5:84``
+        """
+        raw = value[2:]  # strip 0x
+        if len(raw) == 12:
+            return ":".join(raw[i:i+2] for i in range(0, 12, 2))
+        return value  # return as-is if not a standard MAC length
+
+    @staticmethod
     def _parse_lldp_remote_index(oid_str: str, prefix: str) -> tuple[str, str, str] | None:
         """
         Parse LLDP remote table index from full OID.
@@ -129,16 +140,18 @@ class NeighborLldpCollector(BaseSnmpCollector):
             local_port_num = rem_local_ports.get(key, "")
             local_interface = local_port_map.get(local_port_num, f"port{local_port_num}")
 
-            # Prefer lldpRemPortId, fallback to lldpRemPortDesc.
-            # Skip hex-encoded binary values (e.g. MAC address subtype).
+            # Prefer lldpRemPortId, fallback to lldpRemPortDesc,
+            # last resort: convert hex port ID to MAC format.
             remote_port_id = rem_port_ids.get(key, "")
             remote_port_desc = rem_port_descs.get(key, "")
             if remote_port_id and not self._is_hex_encoded(remote_port_id):
                 remote_interface = remote_port_id
-            else:
+            elif remote_port_desc:
                 remote_interface = remote_port_desc
-
-            if not remote_interface:
+            elif remote_port_id:
+                # Hex-encoded port ID with no port desc — use MAC format
+                remote_interface = self._hex_to_mac(remote_port_id)
+            else:
                 logger.debug(
                     "LLDP: no remote interface for key %s on %s, skipping",
                     key, target.ip,

@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -33,6 +34,15 @@ from app.fetchers.base import FetchContext
 from app.fetchers.registry import fetcher_registry
 from app.parsers import parser_registry
 from app.repositories.typed_records import get_typed_repo
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionTarget:
+    """採集目標 — 新舊設備統一用此結構，不依賴 ORM model。"""
+    hostname: str
+    ip: str
+    vendor: str | None
+    tenant_group: Any  # TenantGroup enum or None
 
 logger = logging.getLogger(__name__)
 
@@ -116,27 +126,52 @@ class ApiCollectionService:
             verify=False, limits=limits, timeout=30.0,
         ) as http:
             # 1. Load target devices (shared read-only query)
+            # 新舊設備完全獨立採集，即使 IP 相同也各自跑一遍，
+            # 確保資料存在正確的 hostname 下。
             async with get_session_context() as session:
                 stmt = select(MaintenanceDeviceList).where(
                     MaintenanceDeviceList.maintenance_id == maintenance_id,
-                    MaintenanceDeviceList.new_hostname != None,  # noqa: E711
-                    MaintenanceDeviceList.new_ip_address != None,  # noqa: E711
                 )
                 result = await session.execute(stmt)
-                devices = result.scalars().all()
-                results["total"] = len(devices)
+                raw_devices = result.scalars().all()
+
+                targets: list[CollectionTarget] = []
+                seen: set[tuple[str, str]] = set()  # (hostname, ip)
+                for d in raw_devices:
+                    if d.new_hostname and d.new_ip_address:
+                        key = (d.new_hostname, d.new_ip_address)
+                        if key not in seen:
+                            seen.add(key)
+                            targets.append(CollectionTarget(
+                                hostname=d.new_hostname,
+                                ip=d.new_ip_address,
+                                vendor=d.new_vendor,
+                                tenant_group=d.tenant_group,
+                            ))
+                    if d.old_hostname and d.old_ip_address:
+                        key = (d.old_hostname, d.old_ip_address)
+                        if key not in seen:
+                            seen.add(key)
+                            targets.append(CollectionTarget(
+                                hostname=d.old_hostname,
+                                ip=d.old_ip_address,
+                                vendor=d.old_vendor,
+                                tenant_group=d.tenant_group,
+                            ))
+
+                results["total"] = len(targets)
 
             # 2. Collect all devices in parallel, each with its own session
-            async def _collect_one(device: MaintenanceDeviceList) -> str:
+            async def _collect_one(target: CollectionTarget) -> str:
                 async with sem:
                     async with get_session_context() as dev_session:
                         typed_repo = get_typed_repo(api_name, dev_session)
                         try:
                             await self._collect_for_target(
-                                hostname=device.new_hostname,
-                                ip_address=device.new_ip_address,
-                                vendor=device.new_vendor,
-                                tenant_group=device.tenant_group,
+                                hostname=target.hostname,
+                                ip_address=target.ip,
+                                vendor=target.vendor,
+                                tenant_group=target.tenant_group,
                                 api_name=api_name,
                                 source=source,
                                 maintenance_id=maintenance_id,
@@ -145,23 +180,23 @@ class ApiCollectionService:
                             )
                             await self._clear_collection_error(
                                 dev_session, maintenance_id,
-                                api_name, device.new_hostname,
+                                api_name, target.hostname,
                             )
                             return "ok"
                         except Exception as e:
                             logger.error(
                                 "Failed %s from %s: %s",
-                                api_name, device.new_hostname, e,
+                                api_name, target.hostname, e,
                             )
                             try:
                                 await self._upsert_collection_error(
                                     dev_session, maintenance_id,
-                                    api_name, device.new_hostname, str(e),
+                                    api_name, target.hostname, str(e),
                                 )
                             except Exception:
                                 logger.error(
                                     "Failed to record CollectionError for %s",
-                                    device.new_hostname,
+                                    target.hostname,
                                 )
                             from app.services.system_log import (
                                 write_log,
@@ -170,14 +205,14 @@ class ApiCollectionService:
                             await write_log(
                                 level="WARNING",
                                 source="service",
-                                summary=f"採集失敗: {device.new_hostname} ({api_name})",
+                                summary=f"採集失敗: {target.hostname} ({api_name})",
                                 detail=format_error_detail(
                                     exc=e,
                                     context={
-                                        "設備": device.new_hostname,
+                                        "設備": target.hostname,
                                         "API": api_name,
                                         "歲修": maintenance_id,
-                                        "廠商": device.new_vendor or "unknown",
+                                        "廠商": target.vendor or "unknown",
                                     },
                                 ),
                                 module="data_collection",
@@ -186,7 +221,7 @@ class ApiCollectionService:
                             # 採集失敗也寫入空 batch，讓 UI 可見「0 筆」狀態
                             try:
                                 await typed_repo.save_batch(
-                                    switch_hostname=device.new_hostname,
+                                    switch_hostname=target.hostname,
                                     raw_data=f"[FETCH_ERROR] {e}",
                                     parsed_items=[],
                                     maintenance_id=maintenance_id,
@@ -194,12 +229,12 @@ class ApiCollectionService:
                             except Exception:
                                 logger.error(
                                     "Failed to save null batch for %s/%s",
-                                    api_name, device.new_hostname,
+                                    api_name, target.hostname,
                                 )
                             return "fail"
 
             outcomes = await asyncio.gather(
-                *[_collect_one(d) for d in devices],
+                *[_collect_one(t) for t in targets],
             )
             results["success"] = outcomes.count("ok")
             results["failed"] = outcomes.count("fail")

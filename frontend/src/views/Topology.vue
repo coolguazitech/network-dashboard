@@ -18,21 +18,6 @@
           <span class="text-xs text-slate-400">管理介面</span>
         </label>
 
-        <!-- 外部設備 toggle -->
-        <label class="flex items-center gap-1.5 cursor-pointer select-none">
-          <span
-            class="relative inline-block w-8 h-[18px] rounded-full transition-colors duration-200"
-            :class="showExternal ? 'bg-cyan-600' : 'bg-slate-600'"
-            @click="showExternal = !showExternal"
-          >
-            <span
-              class="absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white shadow transition-transform duration-200"
-              :class="showExternal ? 'translate-x-[14px]' : 'translate-x-0'"
-            ></span>
-          </span>
-          <span class="text-xs text-slate-400">外部設備</span>
-        </label>
-
         <!-- 僅選取 toggle（鎖定模式才有意義） -->
         <label v-if="pinnedNodes.size > 0" class="flex items-center gap-1.5 cursor-pointer select-none">
           <span
@@ -56,7 +41,7 @@
           class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm transition"
         >清除選取</button>
         <button
-          @click="fetchTopology"
+          @click="fetchTopology(true)"
           :disabled="loading"
           class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition disabled:opacity-50"
         >{{ loading ? '載入中...' : '重新整理' }}</button>
@@ -119,6 +104,38 @@
         </div>
       </div>
 
+      <!-- 搜尋框 -->
+      <div v-if="chartOption" class="absolute top-3 right-3 z-10 flex flex-col items-end gap-1">
+        <div class="flex items-center gap-1.5 bg-slate-900/90 backdrop-blur border border-slate-600/50 rounded-lg px-2.5 py-1.5 shadow-lg">
+          <svg class="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="搜尋 hostname / IP"
+            class="w-44 bg-transparent text-sm text-slate-200 placeholder-slate-500 focus:outline-none"
+            @keydown.enter="applySearch"
+            @keydown.esc="clearSearch"
+          />
+          <button
+            v-if="searchQuery"
+            @click="clearSearch"
+            class="text-slate-500 hover:text-slate-300 transition"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div v-if="searchMatches.length > 0" class="text-[10px] text-cyan-400/70 pr-1">
+          找到 {{ searchMatches.length }} 個節點
+        </div>
+        <div v-else-if="searchQuery && searchQuery.length >= 2" class="text-[10px] text-slate-500 pr-1">
+          無符合結果
+        </div>
+      </div>
+
       <!-- 迷你地圖提示 -->
       <div v-if="chartOption" class="absolute bottom-3 right-3 text-[10px] text-slate-600 select-none pointer-events-none">
         滾輪縮放 · 拖曳平移 · 懸停高亮鄰居 · 點擊選取節點 · 「僅選取」顯示介面詳情
@@ -135,7 +152,7 @@
         </span>
         <span class="flex items-center gap-1.5">
           <span class="w-2.5 h-2.5 rounded-full bg-slate-500 inline-block"></span>
-          <span class="text-slate-300">外部設備</span>
+          <span class="text-slate-300">管理設備</span>
         </span>
         <span class="flex items-center gap-1.5">
           <span class="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span>
@@ -166,8 +183,10 @@
 </template>
 
 <script setup>
-import { ref, computed, inject, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, inject, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick, defineOptions } from 'vue'
 import api from '@/utils/api'
+
+defineOptions({ name: 'TopologyView' })
 
 const selectedMaintenanceId = inject('maintenanceId')
 
@@ -176,10 +195,14 @@ const fetchError = ref(null)
 const topology = ref(null)
 const chartRef = ref(null)
 const showManagement = ref(false)
-const showExternal = ref(false)
+const showExternal = ref(false)     // 保留但不再顯示 UI，預設關閉
 const pinnedNodes = ref(new Set())  // 已鎖定的節點集合（累加探索）
 const pinnedOnly = ref(false)       // 僅顯示選取節點之間的連線
 const userPositions = ref({})       // 使用者拖曳後的節點座標 { name: [x, y] }
+const searchQuery = ref('')         // 搜尋框輸入
+let _currentZoom = 1                // 目前縮放倍率（非 reactive，避免觸發 chart 重建）
+let _roamCenter = null              // 保存 roam 中心點 [x%, y%]
+let _roamZoom = null                // 保存 roam 縮放倍率
 
 // ── 狀態持久化 ──
 const STORAGE_PREFIX = 'topo_state_'
@@ -193,6 +216,11 @@ function saveUiState() {
       pinnedOnly: pinnedOnly.value,
       showManagement: showManagement.value,
       showExternal: showExternal.value,
+      zoom: _currentZoom,
+      roamCenter: _roamCenter,
+      roamZoom: _roamZoom,
+      userPositions: userPositions.value,
+      searchQuery: searchQuery.value,
     }))
   } catch (_) { /* localStorage full */ }
 }
@@ -208,6 +236,11 @@ function loadUiState() {
     if (s.pinnedOnly !== undefined) pinnedOnly.value = s.pinnedOnly
     if (s.showManagement !== undefined) showManagement.value = s.showManagement
     if (s.showExternal !== undefined) showExternal.value = s.showExternal
+    if (s.zoom != null) _currentZoom = s.zoom
+    if (s.roamCenter != null) _roamCenter = s.roamCenter
+    if (s.roamZoom != null) _roamZoom = s.roamZoom
+    if (s.userPositions) userPositions.value = s.userPositions
+    if (s.searchQuery) searchQuery.value = s.searchQuery
   } catch (_) { /* corrupt data */ }
 }
 
@@ -414,18 +447,20 @@ const filteredData = computed(() => {
     linkedNodes.add(l.target)
   })
 
-  let filteredNodes = topology.value.nodes
-  if (!showExternal.value) {
-    filteredNodes = filteredNodes.filter(n => n.in_device_list)
-    const nodeNames = new Set(filteredNodes.map(n => n.name))
-    filteredLinks = filteredLinks.filter(l =>
-      nodeNames.has(l.source) && nodeNames.has(l.target)
-    )
-  } else {
-    filteredNodes = filteredNodes.filter(n =>
-      n.in_device_list || linkedNodes.has(n.name)
-    )
+  // 管理介面連線涉及的節點（開啟管理介面時需包含）
+  const mgmtLinkedNodes = new Set()
+  if (showManagement.value) {
+    topology.value.links.forEach(l => {
+      if (l.is_management) {
+        mgmtLinkedNodes.add(l.source)
+        mgmtLinkedNodes.add(l.target)
+      }
+    })
   }
+
+  let filteredNodes = topology.value.nodes.filter(n =>
+    n.in_device_list || mgmtLinkedNodes.has(n.name)
+  )
 
   const nodeNames = new Set(filteredNodes.map(n => n.name))
   filteredLinks = filteredLinks.filter(l =>
@@ -570,7 +605,7 @@ const chartOption = computed(() => {
         status, is_management: p.is_management,
         label: {
           show: true,
-          formatter: '{c}',
+          formatter: (params) => params.data.value || '',
           fontSize: 14,
           color: '#cbd5e1',
           backgroundColor: 'rgba(15, 23, 42, 0.75)',
@@ -617,7 +652,7 @@ const chartOption = computed(() => {
       formatter: (params) => {
         if (params.dataType === 'node') {
           const d = params.data
-          const type = d.in_device_list ? '設備清單' : '外部設備'
+          const type = d.in_device_list ? '設備清單' : '管理設備'
           let html = `<div style="font-weight:600;margin-bottom:4px;font-size:13px;">${d.name}</div>`
           html += `<div style="color:#94a3b8;">類型: <span style="color:#e2e8f0;">${type}</span></div>`
           html += `<div style="color:#94a3b8;">階層: <span style="color:#e2e8f0;">Level ${d.level}</span></div>`
@@ -645,10 +680,10 @@ const chartOption = computed(() => {
           if (d._srcIf) {
             d._srcIf.forEach((s, i) => {
               const t = d._tgtIf[i] || '?'
-              html += `<div style="color:#e2e8f0;">${s} ↔ ${t}</div>`
+              html += `<div style="color:#e2e8f0;">${shortIf(s)} ↔ ${shortIf(t)}</div>`
             })
           } else if (d.local_interface) {
-            html += `<div style="color:#e2e8f0;">${d.local_interface} ↔ ${d.remote_interface}</div>`
+            html += `<div style="color:#e2e8f0;">${shortIf(d.local_interface)} ↔ ${shortIf(d.remote_interface)}</div>`
           }
           html += `<div style="margin-top:4px;">${statusLabels[d.status] || d.status}</div>`
           if (d.is_management) html += `<div style="color:#f59e0b;margin-top:2px;">管理介面</div>`
@@ -664,11 +699,14 @@ const chartOption = computed(() => {
       type: 'graph',
       layout: 'none',
       roam: true,
+      scaleLimit: { min: 0.3, max: 8 },
+      ...(_roamCenter ? { center: _roamCenter } : {}),
+      ...(_roamZoom ? { zoom: _roamZoom } : {}),
       draggable: !isVeryLarge,
       progressive: isVeryLarge ? 400 : isLarge ? 200 : 0,
       progressiveThreshold: 200,
       label: {
-        show: onlyMode || !isLarge,
+        show: onlyMode || _currentZoom >= 2,
         position: 'bottom',
         fontSize: onlyMode ? 12 : 10,
         color: '#94a3b8',
@@ -686,7 +724,7 @@ const chartOption = computed(() => {
       },
       categories: [
         { name: '設備清單', itemStyle: { color: NODE_COLORS.device_list } },
-        { name: '外部設備', itemStyle: { color: NODE_COLORS.external } },
+        { name: '管理設備', itemStyle: { color: NODE_COLORS.external } },
       ],
       nodes: [...displayNodes.map(n => {
         const pos = hierPositions[n.name]
@@ -713,7 +751,7 @@ const chartOption = computed(() => {
             borderWidth: isPinnedNode ? 2 : isFail ? 1.5 : 0.5,
           },
           label: {
-            show: isDimmed ? false : (onlyMode || !isLarge),
+            show: isDimmed ? false : (onlyMode || isPinnedNode || _currentZoom >= 2),
             fontSize: onlyMode ? 13 : (isPinnedNode ? 12 : 10),
             fontWeight: (onlyMode || isPinnedNode) ? 'bold' : 'normal',
             color: (onlyMode || isPinnedNode) ? '#fff' : '#94a3b8',
@@ -725,12 +763,17 @@ const chartOption = computed(() => {
   }
 })
 
-const fetchTopology = async () => {
+const fetchTopology = async (resetView = false) => {
   if (!selectedMaintenanceId.value) return
 
   loading.value = true
   fetchError.value = null
-  userPositions.value = {}  // 重新整理時清除拖曳位置
+  if (resetView) {
+    userPositions.value = {}
+    _currentZoom = 1
+    _roamCenter = null
+    _roamZoom = null
+  }
   try {
     const response = await api.get(`/topology/${selectedMaintenanceId.value}`)
     topology.value = response.data
@@ -762,9 +805,19 @@ onMounted(() => {
   }
 })
 
+// keep-alive：切走時暫停輪詢，切回時恢復
+onActivated(() => {
+  if (selectedMaintenanceId.value && !_pollTimer) startPolling()
+})
+
+onDeactivated(() => {
+  stopPolling()
+})
+
 onBeforeUnmount(() => {
   saveUiState()
   stopPolling()
+  _zrBound = false
 })
 
 // ── 累加式探索（reactive：pinnedNodes 變化觸發 chartOption 重算） ──
@@ -787,6 +840,28 @@ function resetPins() {
   pinnedNodes.value = new Set()
 }
 
+// ── 搜尋節點 ──
+const searchMatches = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q || q.length < 2 || !topology.value) return []
+  return topology.value.nodes.filter(n =>
+    n.name.toLowerCase().includes(q) ||
+    (n.ip_address && n.ip_address.includes(q))
+  )
+})
+
+function applySearch() {
+  const matches = searchMatches.value
+  if (matches.length === 0) return
+  const next = new Set(pinnedNodes.value)
+  matches.forEach(n => next.add(n.name))
+  pinnedNodes.value = next
+}
+
+function clearSearch() {
+  searchQuery.value = ''
+}
+
 // ── 拖曳偵測：拖曳結束後重新擷取座標，觸發 label 方向修正 ──
 let _dragStart = null
 let _zrBound = false
@@ -807,14 +882,23 @@ function bindDragEvents() {
     }
     _dragStart = null
   })
+  // 監聽 roam 事件：保存位置/縮放（下次 polling 重繪時套用）
+  chart.on('graphroam', () => {
+    const opt = chart.getOption()
+    const s = opt.series?.[0]
+    if (s) {
+      if (s.center) _roamCenter = s.center
+      if (s.zoom) { _roamZoom = s.zoom; _currentZoom = s.zoom }
+      saveUiState()
+    }
+  })
   _zrBound = true
 }
 
 watch(chartOption, async (val) => {
-  if (val && !_zrBound) {
-    await nextTick()
-    bindDragEvents()
-  }
+  if (!val) return
+  await nextTick()
+  if (!_zrBound) bindDragEvents()
 })
 
 // 資料更新時保留選取狀態，只清理不存在的節點

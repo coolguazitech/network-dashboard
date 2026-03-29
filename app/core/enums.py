@@ -87,6 +87,7 @@ class CaseStatus(str, Enum):
     IN_PROGRESS = "IN_PROGRESS"     # 處理中
     DISCUSSING = "DISCUSSING"       # 待討論
     RESOLVED = "RESOLVED"           # 已解決
+    IGNORED = "IGNORED"             # 不處理
 
 
 class MealDeliveryStatus(str, Enum):

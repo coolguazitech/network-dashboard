@@ -1,13 +1,21 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.11 (2026-03-28)
+> **版本**: v2.19.13 (2026-03-29)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
 >
-> **v2.19.11 變更摘要**:
+> **v2.19.13 變更摘要**:
+> - **[Bugfix] CSV 匯入範本欄位修正**：Contacts 範本第 2 列缺少 `department` 欄位導致後續欄位全部位移；Device Mapping 範本第 2 列多一個逗號導致 `new_hostname` 以後的欄位全部錯位
+> - **[Bugfix] Scheduler 採集迴圈崩潰自動重啟**：`_collection_loop` 加入 `add_done_callback`，崩潰後 10 秒自動重啟，不再需要手動重啟容器
+> - **[Bugfix] SNMP probe lock race condition**：`setdefault` 取代 check-then-set，防止兩個 coroutine 同時為同一 IP 建立不同的 Lock。`clear()` 時清理已釋放的 lock 防止無限增長
+> - **[Bugfix] LatestClientRecord unique constraint**：新增 Alembic migration 修正 DB unique constraint 從 `(maintenance_id, mac_address)` 改為 `(maintenance_id, client_id)`，與 ORM model 定義一致
+> - **[Bugfix] hostname_map 重複項**：`dict[str, list]` 改為 `dict[str, set]`，防止同一 IP 出現重複的 `(hostname, tenant_group)` 配對
+> - **[防護] write_log 例外隔離**：Scheduler 中所有 `write_log` 呼叫包裹 try-except，DB log 寫入失敗不再中斷採集迴圈
+> - **[清理] 移除 device_mappings 死代碼**：`client_comparison_service.py` 移除 5 處從未使用的 `MaintenanceDeviceList` DB 查詢，每次比較減少 1 次無用 query
+> - **[功能] 案件 IGNORED 狀態**：新增 `CaseStatus.IGNORED`，允許將不需處理的案件標記為已忽略
+>
+> **v2.19.12 變更摘要**:
 > - **[Bugfix] 拓樸 link label 移除 hostname 前綴**：ECharts `{c}` formatter 會自動附加 `[source]` / `[target]` 到 edge value，改用 closure function 直接回傳介面名稱，label 只顯示 `WGE1/0/51 ↔ TE1/0/1` 不再有 `[SW-ACCESS-01]` 前綴
 > - **[改善] Link label 水平顯示**：加入 `rotate: 0` 讓 link 上的介面名稱保持水平方向，與 node 名稱方向一致，不再沿著連線旋轉
->
-> **v2.19.11 變更摘要**:
 > - **[Bugfix] 拓樸 link 去重修復**：`remote_interface` 存入 DB 前未做 normalize（如 `Twenty-FiveGigE1/0/53` vs `WGE1/0/53`），導致同一條實體 link 從兩端各出現一次。加入 `remote_interface` normalize 後去重正確，每條 link 只顯示一次
 > - **[改善] 前端介面名稱縮寫補全**：Topology.vue `shortIf()` 新增 `Twenty-FiveGigE`、`HundredGigE`、`FortyGigE`、`TwentyFiveGigE` 等中間形式的 regex 映射
 >
@@ -219,7 +227,7 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.19.11` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.19.12` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
 | `coolguazi/netora-mock-server:v2.19.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
@@ -915,19 +923,19 @@ python -m pytest tests/unit/snmp/ -v
 # 3. 重建 image
 docker buildx build --platform linux/amd64 \
     -f docker/base/Dockerfile \
-    -t coolguazi/network-dashboard-base:v2.19.11 \
+    -t coolguazi/network-dashboard-base:v2.19.12 \
     --load .
 
 # 4. CVE 掃描（確認沒有 CRITICAL）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy image --severity CRITICAL \
-    coolguazi/network-dashboard-base:v2.19.11
+    coolguazi/network-dashboard-base:v2.19.12
 
 # 5. 推送
-docker push coolguazi/network-dashboard-base:v2.19.11
+docker push coolguazi/network-dashboard-base:v2.19.12
 
 # 6. 匯出（如果公司不能 pull）
-docker save coolguazi/network-dashboard-base:v2.19.11 | gzip > netora-app-v2.9.0.tar.gz
+docker save coolguazi/network-dashboard-base:v2.19.12 | gzip > netora-app-v2.9.0.tar.gz
 ```
 
 #### 在公司環境（無外網）

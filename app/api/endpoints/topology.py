@@ -344,7 +344,7 @@ async def get_topology(
 
     categories = [
         {"name": "設備清單"},
-        {"name": "外部設備"},
+        {"name": "管理設備"},
     ]
 
     # 階層統計

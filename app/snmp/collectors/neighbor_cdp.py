@@ -96,9 +96,9 @@ class NeighborCdpCollector(BaseSnmpCollector):
 
             local_ifname = ifindex_map.get(if_index)
             if not local_ifname:
-                logger.debug(
-                    "CDP: no ifName for ifIndex %d on %s, skipping",
-                    if_index, target.ip,
+                logger.warning(
+                    "CDP: no ifName for ifIndex %d on %s (map has %d entries), skipping neighbor %s",
+                    if_index, target.ip, len(ifindex_map), remote_hostname,
                 )
                 continue
 

@@ -175,9 +175,9 @@
     <!-- 主內容區 -->
     <main :class="isAuthenticated && route.name !== 'Login' ? 'max-w-7xl mx-auto py-6 sm:px-6 lg:px-8' : ''">
       <router-view v-slot="{ Component }">
-        <Transition name="page" mode="out-in">
+        <keep-alive include="TopologyView">
           <component :is="Component" :key="route.path" />
-        </Transition>
+        </keep-alive>
       </router-view>
     </main>
 

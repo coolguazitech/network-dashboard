@@ -44,7 +44,7 @@ class ClientComparisonService:
         2. 清單中的 MAC 若在 NEW 階段未找到，標記為 undetected (critical)
         3. 資料數量與歲修設定一致
         """
-        from app.db.models import MaintenanceDeviceList, MaintenanceMacList
+        from app.db.models import MaintenanceMacList
         from app.core.enums import ClientDetectionStatus
 
         # 1. 從 MaintenanceMacList 載入 MAC 清單及偵測狀態
@@ -106,17 +106,7 @@ class ClientComparisonService:
             if mac_upper not in new_by_mac:
                 new_by_mac[mac_upper] = record
 
-        # 4. 載入設備對應
-        dev_stmt = select(MaintenanceDeviceList).where(
-            MaintenanceDeviceList.maintenance_id == maintenance_id
-        )
-        dev_result = await session.execute(dev_stmt)
-        device_mappings_list = dev_result.scalars().all()
-        device_mappings: dict[str, str] = {}
-        for dm in device_mappings_list:
-            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
-
-        # 5. 基於 MAC 清單生成比較結果（確保數量一致）
+        # 4. 基於 MAC 清單生成比較結果（確保數量一致）
         comparisons = []
 
         for mac in mac_list:
@@ -155,7 +145,7 @@ class ClientComparisonService:
                 comparison.new_ping_reachable = new_record.ping_reachable
 
             # 使用 _compare_records 處理單邊未偵測情況
-            comparison = self._compare_records(comparison, device_mappings)
+            comparison = self._compare_records(comparison)
             comparisons.append(comparison)
 
         return comparisons
@@ -171,8 +161,6 @@ class ClientComparisonService:
         從 ClientRecord 動態獲取所有 MAC 來生成比較。
         這是為了向後兼容沒有設定 MAC 清單的歲修。
         """
-        from app.db.models import MaintenanceDeviceList
-
         # 查詢 OLD 階段的記錄
         old_stmt = (
             select(ClientRecord)
@@ -217,16 +205,6 @@ class ClientComparisonService:
             if mac_upper not in new_by_mac:
                 new_by_mac[mac_upper] = record
 
-        # 載入設備對應
-        dev_stmt = select(MaintenanceDeviceList).where(
-            MaintenanceDeviceList.maintenance_id == maintenance_id
-        )
-        dev_result = await session.execute(dev_stmt)
-        device_mappings_list = dev_result.scalars().all()
-        device_mappings: dict[str, str] = {}
-        for dm in device_mappings_list:
-            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
-
         # 生成比較結果
         comparisons = []
         all_macs = set(old_by_mac.keys()) | set(new_by_mac.keys())
@@ -261,7 +239,7 @@ class ClientComparisonService:
                 comparison.new_link_status = new_record.link_status
                 comparison.new_ping_reachable = new_record.ping_reachable
 
-            comparison = self._compare_records(comparison, device_mappings)
+            comparison = self._compare_records(comparison)
             comparisons.append(comparison)
 
         return comparisons
@@ -570,20 +548,7 @@ class ClientComparisonService:
         使用 MaintenanceMacList 作為 MAC 清單基準，確保新加入的 MAC
         即使尚未有偵測記錄也會出現在比較結果中。
         """
-        from app.db.models import MaintenanceDeviceList, MaintenanceMacList
-
-        # 載入設備對應（從新的 MaintenanceDeviceList 表格）
-        dev_stmt = select(MaintenanceDeviceList).where(
-            MaintenanceDeviceList.maintenance_id == maintenance_id
-        )
-        dev_result = await session.execute(dev_stmt)
-        device_mappings_list = dev_result.scalars().all()
-
-        # 建立設備對應字典 {old_hostname: new_hostname}（大小寫不敏感）
-        device_mappings: dict[str, str] = {}
-        for dm in device_mappings_list:
-            # 使用小寫 key 以確保比較時大小寫不敏感
-            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
+        from app.db.models import MaintenanceMacList
 
         # 載入 MaintenanceMacList 作為 MAC 清單基準
         mac_list_stmt = select(MaintenanceMacList).where(
@@ -696,8 +661,7 @@ class ClientComparisonService:
                 comparison.new_link_status = after_record.link_status
                 comparison.new_ping_reachable = after_record.ping_reachable
 
-            # 比較差異（傳入設備對應）
-            comparison = self._compare_records(comparison, device_mappings)
+            comparison = self._compare_records(comparison)
             comparisons.append(comparison)
 
         return comparisons
@@ -717,17 +681,7 @@ class ClientComparisonService:
 
         兩者都來自 NEW 階段，用於追蹤歲修過程中設備狀態的變化。
         """
-        from app.db.models import MaintenanceDeviceList, MaintenanceMacList
-
-        # 載入設備對應
-        dev_stmt = select(MaintenanceDeviceList).where(
-            MaintenanceDeviceList.maintenance_id == maintenance_id
-        )
-        dev_result = await session.execute(dev_stmt)
-        device_mappings_list = dev_result.scalars().all()
-        device_mappings: dict[str, str] = {}
-        for dm in device_mappings_list:
-            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
+        from app.db.models import MaintenanceMacList
 
         # 載入 MAC 清單
         mac_list_stmt = select(MaintenanceMacList).where(
@@ -841,8 +795,7 @@ class ClientComparisonService:
                 comparison.new_link_status = current_record.link_status
                 comparison.new_ping_reachable = current_record.ping_reachable
 
-            # 比較差異
-            comparison = self._compare_records(comparison, device_mappings)
+            comparison = self._compare_records(comparison)
             comparisons.append(comparison)
 
         return comparisons
@@ -856,28 +809,19 @@ class ClientComparisonService:
     ) -> dict[datetime, list[ClientComparison]]:
         """批次比較多個 checkpoint vs current。
 
-        相比逐一呼叫 _generate_checkpoint_diff，此方法只執行 4 次 DB 查詢
-        （device_mappings + mac_list + current_records + all_checkpoint_records），
+        相比逐一呼叫 _generate_checkpoint_diff，此方法只執行 3 次 DB 查詢
+        （mac_list + current_records + all_checkpoint_records），
         不受 checkpoint 數量影響。
         """
         import logging
         logger = logging.getLogger(__name__)
 
-        from app.db.models import MaintenanceDeviceList, MaintenanceMacList
+        from app.db.models import MaintenanceMacList
 
         if not checkpoint_times:
             return {}
 
-        # 1. 載入 device_mappings (1 query)
-        dev_stmt = select(MaintenanceDeviceList).where(
-            MaintenanceDeviceList.maintenance_id == maintenance_id
-        )
-        dev_result = await session.execute(dev_stmt)
-        device_mappings: dict[str, str] = {}
-        for dm in dev_result.scalars().all():
-            device_mappings[dm.old_hostname.lower()] = dm.new_hostname
-
-        # 2. 載入 MAC 清單 (1 query)
+        # 1. 載入 MAC 清單 (1 query)
         mac_list_stmt = select(MaintenanceMacList).where(
             MaintenanceMacList.maintenance_id == maintenance_id
         )
@@ -886,7 +830,7 @@ class ClientComparisonService:
 
         mac_list = {m.mac_address.upper() for m in mac_records}
 
-        # 3. 載入 current_records → build current_by_mac (1 query)
+        # 2. 載入 current_records → build current_by_mac (1 query)
         current_stmt = (
             select(ClientRecord)
             .where(
@@ -907,7 +851,7 @@ class ClientComparisonService:
             if mac_upper not in current_by_mac:
                 current_by_mac[mac_upper] = record
 
-        # 4. 載入所有 checkpoint 記錄 (1 query)
+        # 3. 載入所有 checkpoint 記錄 (1 query)
         #    取 collected_at <= max(checkpoint_times)，在 Python 中按 checkpoint 分組
         max_cp = max(checkpoint_times)
         all_cp_stmt = (
@@ -943,7 +887,7 @@ class ClientComparisonService:
             records_by_mac[mac] = asc
             timestamps_by_mac[mac] = [r.collected_at for r in asc]
 
-        # 5. 對每個 checkpoint 生成比較結果
+        # 4. 對每個 checkpoint 生成比較結果
         results: dict[datetime, list[ClientComparison]] = {}
         all_macs = mac_list if mac_list else (
             set(records_by_mac.keys()) | set(current_by_mac.keys())
@@ -992,7 +936,7 @@ class ClientComparisonService:
                     comparison.new_link_status = current_record.link_status
                     comparison.new_ping_reachable = current_record.ping_reachable
 
-                comparison = self._compare_records(comparison, device_mappings)
+                comparison = self._compare_records(comparison)
                 comparisons.append(comparison)
 
             results[cp_time] = comparisons
@@ -1009,7 +953,6 @@ class ClientComparisonService:
     def _compare_records(
         self,
         comparison: ClientComparison,
-        device_mappings: dict[str, str] | None = None,
     ) -> ClientComparison:
         """給定一筆比較記錄，填充差異與備註。
 
@@ -1018,10 +961,6 @@ class ClientComparisonService:
         - OLD有值 → NEW未偵測 → is_changed=True（設備消失）
         - OLD未偵測 → NEW有值 → is_changed=True（新出現設備）
         - 兩邊都有值 → 比較差異
-
-        Args:
-            comparison: 比較記錄
-            device_mappings: 設備對應 {old_hostname: new_hostname}
         """
         # 檢查是否單邊未偵測
         old_detected = self._has_any_data(comparison, 'old')

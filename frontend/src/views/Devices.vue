@@ -1141,7 +1141,7 @@ AA:BB:CC:DD:EE:03,192.168.1.102,AP,,`;
     downloadDeviceTemplate() {
       const csv = `old_hostname,old_ip_address,old_vendor,new_hostname,new_ip_address,new_vendor,tenant_group,description
 OLD-SW-001,10.1.1.1,HPE,NEW-SW-001,10.1.1.101,HPE,F18,新舊設備都填
-,,,,NEW-SW-003,10.1.1.103,Cisco-IOS,F6,只填新設備
+,,,NEW-SW-003,10.1.1.103,Cisco-IOS,F6,只填新設備
 OLD-SW-004,10.1.1.4,Cisco-NXOS,,,,,只填舊設備`;
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');

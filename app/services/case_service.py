@@ -20,10 +20,11 @@ from app.services.system_log import write_log
 
 logger = logging.getLogger(__name__)
 
-# 追蹤的客戶端屬性（用於變化標籤）
+# 追蹤的客戶端屬性（用於變化標籤，按優先級排序）
+# 0=ping, 1=VLAN, 2=ACL, 3=連線狀態, 4=速率/雙工, 5=介面
 TRACKED_ATTRIBUTES = [
-    "speed", "duplex", "link_status", "ping_reachable",
-    "interface_name", "vlan_id", "acl_rules_applied",
+    "ping_reachable", "vlan_id", "acl_rules_applied",
+    "link_status", "speed", "duplex", "interface_name",
 ]
 
 # 屬性中文名稱
@@ -225,8 +226,10 @@ class CaseService:
             except ValueError:
                 pass
         elif not include_resolved:
-            # 預設不顯示已解決案件（除非明確篩選 RESOLVED 狀態）
-            stmt = stmt.where(Case.status != CaseStatus.RESOLVED)
+            # 預設不顯示已解決和不處理案件（除非明確篩選該狀態）
+            stmt = stmt.where(Case.status.notin_([
+                CaseStatus.RESOLVED, CaseStatus.IGNORED,
+            ]))
         if ping_reachable is not None:
             if ping_reachable:
                 stmt = stmt.where(Case.last_ping_reachable == True)  # noqa: E712
@@ -251,28 +254,56 @@ class CaseService:
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await session.execute(count_stmt)).scalar() or 0
 
-        # 排序
-        if status and status == CaseStatus.RESOLVED.value:
-            # 已結案：有屬性變化的排前面，然後按 MAC
-            # COALESCE 處理 NULL change_flags，避免 LIKE NULL 回傳 NULL
-            from sqlalchemy import literal_column
-            stmt = stmt.order_by(
-                case(
-                    (literal_column("COALESCE(CAST(change_flags AS CHAR),'')").like('%true%'), 0),
-                    else_=1,
-                ),
-                Case.mac_address,
-            )
-        else:
-            # 其他：ping 不可達優先，然後按 MAC
-            stmt = stmt.order_by(
-                case(
-                    (Case.last_ping_reachable == None, 0),   # noqa: E711 — NULL 排最前
-                    (Case.last_ping_reachable == False, 1),   # noqa: E712 — 不可達次之
-                    else_=2,                                   # 可達排最後
-                ),
-                Case.mac_address,
-            )
+        # 排序：所有分類統一規則
+        # 1) 有屬性變化的排前面
+        # 2) 變化數量多的排前面
+        # 3) 逐級比較變化屬性（ping → VLAN → ACL → 連線狀態 → 速率 → 雙工 → 介面）
+        # 4) ping 不可達優先
+        # 5) 按 MAC 排序
+        from sqlalchemy import literal_column
+        _cf = literal_column("COALESCE(CAST(change_flags AS CHAR),'')")
+        has_change = case((_cf.like('%true%'), 0), else_=1)
+
+        # 變化數量（用字串長度差異法）
+        _cf_len = func.char_length(_cf)
+        _cf_no_true = func.char_length(func.replace(_cf, 'true', ''))
+        change_count_desc = (_cf_len - _cf_no_true) / 4
+
+        # 逐級比較：每個屬性獨立排序，有變化=0 排前面，無變化=1
+        _chg_ping = literal_column(
+            "IF(JSON_VALUE(change_flags,'$.ping_reachable')=1,0,1)")
+        _chg_vlan = literal_column(
+            "IF(JSON_VALUE(change_flags,'$.vlan_id')=1,0,1)")
+        _chg_acl = literal_column(
+            "IF(JSON_VALUE(change_flags,'$.acl_rules_applied')=1,0,1)")
+        _chg_link = literal_column(
+            "IF(JSON_VALUE(change_flags,'$.link_status')=1,0,1)")
+        _chg_speed = literal_column(
+            "IF(JSON_VALUE(change_flags,'$.speed')=1,0,1)")
+        _chg_duplex = literal_column(
+            "IF(JSON_VALUE(change_flags,'$.duplex')=1,0,1)")
+        _chg_iface = literal_column(
+            "IF(JSON_VALUE(change_flags,'$.interface_name')=1,0,1)")
+
+        ping_priority = case(
+            (Case.last_ping_reachable == None, 0),   # noqa: E711
+            (Case.last_ping_reachable == False, 1),   # noqa: E712
+            else_=2,
+        )
+
+        stmt = stmt.order_by(
+            has_change,                # 有變化排前面
+            change_count_desc.desc(),  # 變化數量多排前面
+            _chg_ping,                 # 0: ping
+            _chg_vlan,                 # 1: VLAN
+            _chg_acl,                  # 2: ACL
+            _chg_link,                 # 3: 連線狀態
+            _chg_speed,                # 4: 速率
+            _chg_duplex,               # 4: 雙工
+            _chg_iface,                # 5: 介面
+            ping_priority,             # ping 不可達優先
+            Case.mac_address,
+        )
 
         # 分頁
         offset = (page - 1) * page_size
@@ -345,11 +376,11 @@ class CaseService:
             )).scalar() or 0
             stats[s.value.lower()] = cnt
 
-        # ping 不可達（排除已解決）
+        # ping 不可達（排除已解決和不處理）
         ping_unreachable = (await session.execute(
             select(func.count(Case.id)).where(
                 Case.maintenance_id == maintenance_id,
-                Case.status != CaseStatus.RESOLVED,
+                Case.status.notin_([CaseStatus.RESOLVED, CaseStatus.IGNORED]),
                 or_(
                     Case.last_ping_reachable == False,  # noqa: E712
                     Case.last_ping_reachable == None,  # noqa: E711
@@ -358,8 +389,8 @@ class CaseService:
         )).scalar() or 0
         stats["ping_unreachable"] = ping_unreachable
 
-        # active = 排除已解決
-        stats["active"] = total - (stats.get("resolved", 0))
+        # active = 排除已解決和不處理
+        stats["active"] = total - (stats.get("resolved", 0)) - (stats.get("ignored", 0))
 
         return stats
 
@@ -831,6 +862,7 @@ class CaseService:
                     CaseStatus.RESOLVED,
                     CaseStatus.IN_PROGRESS,
                     CaseStatus.DISCUSSING,
+                    CaseStatus.IGNORED,
                 ]),
             )
             .values(status=CaseStatus.RESOLVED)

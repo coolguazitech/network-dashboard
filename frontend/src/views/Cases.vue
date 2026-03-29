@@ -15,7 +15,7 @@
             <div class="absolute left-4 -top-[5px] w-0 h-0 border-l-[6px] border-r-[6px] border-b-[6px] border-transparent border-b-amber-50"></div>
             <p class="mb-1 font-semibold">案件管理說明</p>
             <p>系統會對 Client 清單中的 MAC 進行 Ping 檢測，不可達的 MAC 會被建立案件進行追蹤。</p>
-            <p class="mt-1.5">Ping 可達且未在「處理中」或「待討論」的案件會自動結案；Ping 不可達時無法手動標記已結案。</p>
+            <p class="mt-1.5">Ping 可達且未在「處理中」、「待討論」或「不處理」的案件會自動結案；Ping 不可達時無法手動標記已結案。</p>
           </div>
         </div>
         <span v-if="stats.active" class="text-xs text-slate-500">
@@ -68,7 +68,7 @@
       </button>
 
       <!-- 統計指標 -->
-      <div class="grid grid-cols-4 gap-3 mb-4">
+      <div class="grid grid-cols-5 gap-3 mb-4">
         <!-- 狀態分布 -->
         <button
           v-for="(stat, si) in statusBreakdown"
@@ -93,6 +93,19 @@
         >
           <div class="text-2xl font-bold tabular-nums text-emerald-400" style="text-shadow: 0 0 20px rgba(52,211,153,0.3)">{{ stats.resolved || 0 }}</div>
           <div class="text-xs text-slate-400 mt-1">已結案</div>
+        </button>
+
+        <!-- 不處理 -->
+        <button
+          @click="applyStatFilter('IGNORED')"
+          class="card-stagger relative bg-slate-800/70 backdrop-blur-sm border rounded-xl p-3 text-center cursor-pointer transition-all duration-300 hover:-translate-y-0.5"
+          :style="{ animationDelay: (statusBreakdown.length + 1) * 80 + 'ms' }"
+          :class="activeStatFilter === 'IGNORED'
+            ? 'border-gray-500/60 ring-1 ring-gray-500/30 shadow-lg shadow-gray-500/10'
+            : 'border-gray-500/15 hover:border-gray-500/30 hover:shadow-lg hover:shadow-gray-500/5'"
+        >
+          <div class="text-2xl font-bold tabular-nums text-gray-400" style="text-shadow: 0 0 20px rgba(156,163,175,0.3)">{{ stats.ignored || 0 }}</div>
+          <div class="text-xs text-slate-400 mt-1">不處理</div>
         </button>
       </div>
 
@@ -230,12 +243,21 @@
                   @click.stop="reopenCase(c)"
                   class="px-2.5 py-0.5 text-sm rounded font-semibold bg-amber-500/80 hover:bg-amber-500 text-white transition-all case-reopen-btn whitespace-nowrap"
                 >
-                  重啟
+                  繼續處理
+                </button>
+
+                <!-- 繼續處理按鈕（不處理案件） -->
+                <button
+                  v-if="isMyIgnoredCase(c)"
+                  @click.stop="resumeCase(c)"
+                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-amber-500/80 hover:bg-amber-500 text-white transition-all whitespace-nowrap"
+                >
+                  繼續處理
                 </button>
 
                 <!-- 狀態文字（無按鈕時顯示） -->
                 <span
-                  v-if="!isMyPendingCase(c) && !isMyResolvedCase(c)"
+                  v-if="!isMyPendingCase(c) && !isMyResolvedCase(c) && !isMyIgnoredCase(c)"
                   class="text-sm font-medium whitespace-nowrap"
                   :class="statusTextClass(c.status)"
                 >{{ statusLabel(c.status) }}</span>
@@ -311,20 +333,33 @@
                   </div>
                 </div>
 
-                <!-- 採集異常 banner -->
+                <!-- 採集異常 banner（折疊式） -->
                 <div v-if="caseDetail.collection_errors?.length"
-                     class="bg-purple-900/20 border border-purple-500/30 rounded-lg px-4 py-3">
-                  <div class="flex items-center gap-2 text-purple-300 text-sm font-medium mb-1">
-                    <span>⚠</span>
-                    <span>採集異常</span>
-                  </div>
-                  <div class="text-purple-400/80 text-xs space-y-0.5">
-                    <div v-for="err in caseDetail.collection_errors" :key="err.collection_type + err.switch_hostname">
-                      {{ err.collection_type }} ({{ err.switch_hostname }})
-                      <span class="text-purple-500/60 ml-1">{{ err.occurred_at ? formatTime(err.occurred_at) : '' }}</span>
+                     class="bg-purple-900/20 border border-purple-500/30 rounded-lg">
+                  <button
+                    class="w-full flex items-center justify-between px-4 py-2.5 text-left"
+                    @click="collectionErrorsExpanded = !collectionErrorsExpanded"
+                  >
+                    <div class="flex items-center gap-2 text-purple-300 text-sm font-medium">
+                      <span>⚠</span>
+                      <span>採集異常</span>
+                      <span class="text-purple-500/60 text-xs font-normal">({{ caseDetail.collection_errors.length }} 筆)</span>
                     </div>
+                    <svg class="w-4 h-4 text-purple-400 transition-transform duration-200"
+                         :class="collectionErrorsExpanded ? 'rotate-180' : ''"
+                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  <div v-show="collectionErrorsExpanded" class="px-4 pb-3">
+                    <div class="text-purple-400/80 text-xs space-y-0.5">
+                      <div v-for="err in caseDetail.collection_errors" :key="err.collection_type + err.switch_hostname">
+                        {{ err.collection_type }} ({{ err.switch_hostname }})
+                        <span class="text-purple-500/60 ml-1">{{ err.occurred_at ? formatTime(err.occurred_at) : '' }}</span>
+                      </div>
+                    </div>
+                    <div class="text-purple-500/60 text-xs mt-1">上述 API 採集失敗，部分欄位可能不完整</div>
                   </div>
-                  <div class="text-purple-500/60 text-xs mt-1">上述 API 採集失敗，部分欄位可能不完整</div>
                 </div>
 
                 <!-- 最新快照 -->
@@ -677,6 +712,7 @@ const STATUS_CONFIG = {
   IN_PROGRESS: { label: '處理中', class: 'bg-amber-500/15 text-amber-300' },
   DISCUSSING: { label: '待討論', class: 'bg-purple-500/15 text-purple-300' },
   RESOLVED: { label: '已結案', class: 'bg-emerald-500/15 text-emerald-300' },
+  IGNORED: { label: '不處理', class: 'bg-gray-500/15 text-gray-300' },
 }
 
 export default {
@@ -706,6 +742,7 @@ export default {
       expandedId: null,
       detailLoading: false,
       caseDetail: null,
+      collectionErrorsExpanded: false,
       // 編輯
       editSummary: '',
       editStatus: '',
@@ -759,6 +796,7 @@ export default {
         { value: 'IN_PROGRESS', label: '處理中' },
         { value: 'DISCUSSING', label: '待討論' },
         { value: 'RESOLVED', label: '已結案' },
+        { value: 'IGNORED', label: '不處理' },
       ]
     },
     pingFilterOptions() {
@@ -773,6 +811,7 @@ export default {
         IN_PROGRESS: { label: '繼續處理', activeClass: 'bg-amber-500/30 text-amber-200 font-medium' },
         DISCUSSING: { label: '需討論', activeClass: 'bg-purple-500/30 text-purple-200 font-medium' },
         RESOLVED: { label: '結案', activeClass: 'bg-green-500/30 text-green-200 font-medium' },
+        IGNORED: { label: '不處理', activeClass: 'bg-gray-500/30 text-gray-200 font-medium' },
       }
     },
     statusBreakdown() {
@@ -878,7 +917,7 @@ export default {
         params.include_resolved = true
       } else if (this.filterStatus) {
         params.status = this.filterStatus
-        if (this.filterStatus === 'RESOLVED') {
+        if (this.filterStatus === 'RESOLVED' || this.filterStatus === 'IGNORED') {
           params.include_resolved = true
         }
       }
@@ -994,6 +1033,7 @@ export default {
       this.expandedId = caseId
       this.detailLoading = true
       this.caseDetail = null
+      this.collectionErrorsExpanded = false
       this.newNote = ''
       this.pendingImages = []
       this.editingNoteId = null
@@ -1059,6 +1099,10 @@ export default {
       return c.status === 'RESOLVED' && c.assignee === this.currentDisplayName
     },
 
+    isMyIgnoredCase(c) {
+      return c.status === 'IGNORED' && c.assignee === this.currentDisplayName
+    },
+
     async acceptCase(c) {
       const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
       if (ok) this.showMessage('已接受案件，案件將移至「處理中」', 'success')
@@ -1066,20 +1110,37 @@ export default {
 
     async reopenCase(c) {
       const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
-      if (ok) this.showMessage('案件已重啟，案件將移至「處理中」', 'success')
+      if (ok) this.showMessage('案件繼續處理，案件將移至「處理中」', 'success')
+    },
+
+    async resumeCase(c) {
+      const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
+      if (ok) this.showMessage('案件已恢復處理，案件將移至「處理中」', 'success')
     },
 
     getStatusActionsForCase(c) {
       const opts = this.statusOptions
+      if (c.status === 'IGNORED') {
+        return [
+          { value: 'IN_PROGRESS', ...opts.IN_PROGRESS },
+        ]
+      }
+      if (c.status === 'RESOLVED') {
+        return [
+          { value: 'IN_PROGRESS', ...opts.IN_PROGRESS },
+        ]
+      }
       if (c.status === 'DISCUSSING') {
         return [
           { value: 'IN_PROGRESS', ...opts.IN_PROGRESS },
           { value: 'RESOLVED', ...opts.RESOLVED },
+          { value: 'IGNORED', ...opts.IGNORED },
         ]
       }
       return [
         { value: 'DISCUSSING', ...opts.DISCUSSING },
         { value: 'RESOLVED', ...opts.RESOLVED },
+        { value: 'IGNORED', ...opts.IGNORED },
       ]
     },
 
@@ -1418,6 +1479,7 @@ export default {
         IN_PROGRESS: 'border-l-amber-400/70',
         DISCUSSING: 'border-l-purple-400/70',
         RESOLVED: 'border-l-emerald-400/70',
+        IGNORED: 'border-l-gray-400/70',
       }
       return map[status] || 'border-l-slate-500/60'
     },
@@ -1428,6 +1490,7 @@ export default {
         IN_PROGRESS: 'text-amber-300/80',
         DISCUSSING: 'text-purple-300/80',
         RESOLVED: 'text-emerald-300/80',
+        IGNORED: 'text-gray-300/80',
       }
       return map[status] || 'text-slate-400'
     },

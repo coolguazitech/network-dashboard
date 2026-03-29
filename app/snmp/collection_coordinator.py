@@ -112,25 +112,42 @@ class CollectionCoordinator:
         # Let session_cache negative cache handle unreachable devices.
         # This eliminates the chicken-and-egg problem where first ping
         # hasn't run yet so is_reachable is NULL and SNMP skips everything.
+        #
+        # 新舊設備各自獨立採集：新設備用 new_* 欄位、舊設備用 old_* 欄位，
+        # 各自 probe community、各自跑 collectors，互不干涉。
         async with get_session_context() as session:
             from sqlalchemy import select
 
             stmt = select(MaintenanceDeviceList).where(
                 MaintenanceDeviceList.maintenance_id == maintenance_id,
-                MaintenanceDeviceList.new_hostname != None,  # noqa: E711
-                MaintenanceDeviceList.new_ip_address != None,  # noqa: E711
             )
             result = await session.execute(stmt)
             devices = result.scalars().all()
             # Snapshot device info while session is open
-            device_infos = [
-                {
-                    "hostname": d.new_hostname,
-                    "ip": d.new_ip_address,
-                    "vendor": d.new_vendor,
-                }
-                for d in devices
-            ]
+            # 新舊設備完全獨立採集，用 (hostname, ip) 去重避免
+            # 同 hostname + 同 IP 被兩個 coroutine 同時寫入 DB 競爭。
+            # 同 hostname 不同 IP = 不同實際目標，各自採集。
+            device_infos: list[dict[str, str | None]] = []
+            seen: set[tuple[str, str]] = set()
+            for d in devices:
+                if d.new_hostname and d.new_ip_address:
+                    key = (d.new_hostname, d.new_ip_address)
+                    if key not in seen:
+                        seen.add(key)
+                        device_infos.append({
+                            "hostname": d.new_hostname,
+                            "ip": d.new_ip_address,
+                            "vendor": d.new_vendor,
+                        })
+                if d.old_hostname and d.old_ip_address:
+                    key = (d.old_hostname, d.old_ip_address)
+                    if key not in seen:
+                        seen.add(key)
+                        device_infos.append({
+                            "hostname": d.old_hostname,
+                            "ip": d.old_ip_address,
+                            "vendor": d.old_vendor,
+                        })
 
         if not device_infos:
             logger.info(

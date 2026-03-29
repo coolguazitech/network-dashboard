@@ -1,20 +1,19 @@
 """
 Scheduler Service.
 
-Handles scheduled jobs for data collection using APScheduler.
-
-Architecture (v2.19.0 — device-centric rounds):
-  - fast_round (300s): client-related collectors (mac_table, interface_status)
-  - full_round (1800s): ALL collectors (fan, power, version, gbic, etc.)
-  - device_ping (15-30s): batch ICMP via GNMSPING API
-  - client_ping (15-30s): batch ICMP for client IPs
-  - client_collection (300s): assemble client records from collected data
+Architecture (v2.20.0 — continuous collection loop):
+  - collection_loop (continuous): 完成即開始下一輪，無固定間隔
+      SNMP round (ALL collectors) → API passthrough (ACL) → client_collection → cooldown → repeat
+  - device_ping (15s): batch ICMP via GNMSPING API
+  - client_ping (15s): batch ICMP for client IPs
   - retention (30min): cleanup old data
 
-Each round iterates all devices once, probing community per-device (not per-job).
+採集週期純粹取決於設備數量：5 台設備 ≈ 30s/輪（近即時），200 台 ≈ 5min/輪。
+每輪結束後立即觸發 client_collection，確保資料一致性。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time as _time
 from datetime import datetime, timedelta, timezone
@@ -28,9 +27,9 @@ logger = logging.getLogger(__name__)
 
 class SchedulerService:
     """
-    Scheduler for collection jobs.
+    Scheduler for collection and periodic jobs.
 
-    Uses APScheduler to run collection rounds at configured intervals.
+    採集使用連續迴圈（完成即開始下一輪），Ping / Retention 使用 APScheduler 定時。
     """
 
     def __init__(self) -> None:
@@ -53,153 +52,262 @@ class SchedulerService:
             self.collection_service = ApiCollectionService()
             logger.info("Using API collection mode")
         self._jobs: dict[str, str] = {}  # job_name -> job_id
+        self._loop_task: asyncio.Task | None = None  # continuous collection loop
+        self._loop_stop = asyncio.Event()  # signal to stop the loop
 
-    # ── Collection Rounds (SNMP mode) ─────────────────────────────
+    # ── Continuous Collection Loop ──────────────────────────────
 
-    def add_round_job(
+    def start_collection_loop(
         self,
-        round_name: str,
-        collector_names: list[str],
-        interval_seconds: int,
-        initial_delay: float = 0,
-    ) -> str:
-        """
-        Add a scheduled collection round.
-
-        A round iterates all devices once, running the specified collectors
-        per-device. Community is probed once per device, not per collector.
-
-        Args:
-            round_name: e.g., "fast_round", "full_round"
-            collector_names: List of api_names to run this round
-            interval_seconds: Round interval in seconds
-            initial_delay: Seconds to delay the first trigger
-        """
-        job_id = f"round_{round_name}"
-
-        if round_name in self._jobs:
-            self.remove_job(round_name)
-
-        trigger_kwargs: dict[str, Any] = {
-            "seconds": interval_seconds,
-            "jitter": 15,
-        }
-        if initial_delay > 0:
-            trigger_kwargs["start_date"] = (
-                datetime.now(timezone.utc) + timedelta(seconds=initial_delay)
-            )
-
-        job = self.scheduler.add_job(
-            self._run_round,
-            trigger=IntervalTrigger(**trigger_kwargs),
-            id=job_id,
-            kwargs={
-                "round_name": round_name,
-                "collector_names": collector_names,
-            },
-            replace_existing=True,
-        )
-
-        self._jobs[round_name] = job.id
-        logger.info(
-            "Added collection round '%s' (%d collectors) every %ds",
-            round_name, len(collector_names), interval_seconds,
-        )
-        return job.id
-
-    async def _run_round(
-        self,
-        round_name: str,
-        collector_names: list[str],
+        snmp_collectors: list[str],
+        api_collectors: list[dict[str, str]],
+        min_round_gap: int = 10,
     ) -> None:
         """
-        Run a collection round for ALL active maintenances.
+        啟動連續採集迴圈。
 
-        Each round iterates devices once, running all specified collectors
-        per-device with a single community probe.
+        每輪依序執行：
+        1. SNMP round（所有 SNMP collectors，by 設備）
+        2. API passthrough（ACL 等 REST collectors）
+        3. client_collection（組裝 ClientRecord + sync cases）
+        4. cooldown（min_round_gap 秒）
+
+        完成即開始下一輪，不等固定間隔。
+
+        Args:
+            snmp_collectors: List of SNMP collector api_names
+            api_collectors: List of {"name": ..., "source": ...} dicts
+            min_round_gap: Minimum seconds between rounds
         """
-        t0 = _time.monotonic()
-        logger.info("Running collection round '%s'", round_name)
-
-        maintenance_ids = await self._get_active_maintenance_ids()
-        if not maintenance_ids:
-            logger.debug("No active maintenances, skipping round '%s'", round_name)
+        if self._loop_task and not self._loop_task.done():
+            logger.warning("Collection loop already running, skipping")
             return
 
-        try:
-            svc = self.collection_service
-            for mid in maintenance_ids:
-                try:
-                    # Use the new round-based interface
-                    if hasattr(svc, "collect_round"):
-                        result = await svc.collect_round(
-                            round_name=round_name,
-                            collector_names=collector_names,
-                            maintenance_id=mid,
-                        )
-                        logger.info(
-                            "Round '%s' for %s: %d/%d ok, %d unreachable, %.1fs",
-                            round_name, mid,
-                            result["ok"], result["total"],
-                            result["unreachable"], result["elapsed"],
-                        )
-                    else:
-                        # Fallback for API mode: run each collector separately
-                        for api_name in collector_names:
-                            try:
-                                result = await svc.collect(
-                                    api_name=api_name,
-                                    source="",
-                                    maintenance_id=mid,
-                                )
-                                logger.info(
-                                    "%s for %s: %d/%d successful",
-                                    api_name, mid,
-                                    result["success"], result["total"],
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    "%s failed for %s: %s",
-                                    api_name, mid, e,
-                                )
-                except Exception as e:
-                    logger.error(
-                        "Round '%s' failed for %s: %s",
-                        round_name, mid, e,
+        self._loop_stop.clear()
+        self._loop_task = asyncio.create_task(
+            self._collection_loop(
+                snmp_collectors=snmp_collectors,
+                api_collectors=api_collectors,
+                min_round_gap=min_round_gap,
+            ),
+            name="collection_loop",
+        )
+
+        # Auto-restart on unexpected crash (DB blip, unhandled error, etc.)
+        def _on_loop_done(task: asyncio.Task) -> None:
+            if self._loop_stop.is_set():
+                return  # intentional shutdown, don't restart
+            exc = task.exception() if not task.cancelled() else None
+            if exc is not None:
+                logger.error(
+                    "Collection loop crashed (%s), restarting in 10s...", exc,
+                )
+            elif task.cancelled():
+                logger.warning("Collection loop was cancelled unexpectedly, restarting in 10s...")
+            else:
+                return  # normal exit (shouldn't happen, but harmless)
+
+            async def _delayed_restart() -> None:
+                await asyncio.sleep(10)
+                if not self._loop_stop.is_set():
+                    self.start_collection_loop(
+                        snmp_collectors=snmp_collectors,
+                        api_collectors=api_collectors,
+                        min_round_gap=min_round_gap,
                     )
+
+            asyncio.ensure_future(_delayed_restart())
+
+        self._loop_task.add_done_callback(_on_loop_done)
+
+        logger.info(
+            "Started continuous collection loop: "
+            "%d SNMP collectors + %d API collectors, min_gap=%ds",
+            len(snmp_collectors), len(api_collectors), min_round_gap,
+        )
+
+    async def _collection_loop(
+        self,
+        snmp_collectors: list[str],
+        api_collectors: list[dict[str, str]],
+        min_round_gap: int,
+    ) -> None:
+        """
+        連續採集迴圈主體。
+
+        每輪自動計時，完成後等待 min_round_gap 秒再開始下一輪。
+        無活躍歲修時，每 30 秒 check 一次。
+        """
+        round_number = 0
+        # 首輪延遲 5 秒，讓其他服務（DB、Ping）先就位
+        await asyncio.sleep(5)
+
+        while not self._loop_stop.is_set():
+            round_number += 1
+            t0 = _time.monotonic()
+
+            try:
+                maintenance_ids = await self._get_active_maintenance_ids()
+                if not maintenance_ids:
+                    logger.debug("No active maintenances, waiting 30s")
+                    try:
+                        await asyncio.wait_for(
+                            self._loop_stop.wait(), timeout=30,
+                        )
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+
+                logger.info(
+                    "=== Collection round #%d start (%d maintenances) ===",
+                    round_number, len(maintenance_ids),
+                )
+
+                # ── Phase 1: SNMP round (all collectors, device-centric) ──
+                if snmp_collectors:
+                    await self._run_snmp_phase(
+                        snmp_collectors, maintenance_ids, round_number,
+                    )
+
+                # ── Phase 2: API passthrough (ACL etc.) ──
+                if api_collectors:
+                    await self._run_api_phase(
+                        api_collectors, maintenance_ids,
+                    )
+
+                # ── Phase 3: Client collection (組裝 + case sync) ──
+                await self._run_client_collection()
+
+                elapsed = _time.monotonic() - t0
+                logger.info(
+                    "=== Collection round #%d done: %.1fs ===",
+                    round_number, elapsed,
+                )
+
+            except Exception as e:
+                elapsed = _time.monotonic() - t0
+                logger.error(
+                    "Collection round #%d failed after %.1fs: %s",
+                    round_number, elapsed, e,
+                )
+                try:
                     from app.services.system_log import write_log, format_error_detail
                     await write_log(
                         level="ERROR",
                         source="scheduler",
-                        summary=f"採集輪次失敗 ({type(e).__name__}): {round_name} ({mid})",
+                        summary=f"採集輪次 #{round_number} 失敗 ({type(e).__name__})",
                         detail=format_error_detail(
                             exc=e,
-                            context={"輪次": round_name, "歲修": mid},
+                            context={"輪次": round_number},
                         ),
-                        module=round_name,
+                        module="collection_loop",
+                    )
+                except Exception:
+                    logger.error(
+                        "Failed to write system log for round #%d failure",
+                        round_number,
+                    )
+
+            # ── Cooldown ──
+            try:
+                await asyncio.wait_for(
+                    self._loop_stop.wait(), timeout=min_round_gap,
+                )
+                break  # stop signal received
+            except asyncio.TimeoutError:
+                pass  # normal cooldown finished, continue loop
+
+        logger.info("Collection loop stopped after %d rounds", round_number)
+
+    async def _run_snmp_phase(
+        self,
+        collector_names: list[str],
+        maintenance_ids: list[str],
+        round_number: int,
+    ) -> None:
+        """Phase 1: SNMP device-centric collection."""
+        svc = self.collection_service
+        for mid in maintenance_ids:
+            try:
+                if hasattr(svc, "collect_round"):
+                    result = await svc.collect_round(
+                        round_name=f"round_{round_number}",
+                        collector_names=collector_names,
                         maintenance_id=mid,
                     )
-        except Exception as e:
-            logger.error("Round '%s' failed: %s", round_name, e)
-            from app.services.system_log import write_log, format_error_detail
-            await write_log(
-                level="ERROR",
-                source="scheduler",
-                summary=f"採集輪次整體失敗 ({type(e).__name__}): {round_name}",
-                detail=format_error_detail(
-                    exc=e,
-                    context={"輪次": round_name},
-                ),
-                module=round_name,
-            )
-        finally:
-            elapsed = _time.monotonic() - t0
-            logger.info(
-                "Round '%s' cycle done: %d maintenances, %.2fs",
-                round_name,
-                len(maintenance_ids),
-                elapsed,
-            )
+                    logger.info(
+                        "SNMP round #%d for %s: %d/%d ok, %d unreachable, %.1fs",
+                        round_number, mid,
+                        result["ok"], result["total"],
+                        result["unreachable"], result["elapsed"],
+                    )
+                else:
+                    # API mode fallback: run each collector separately
+                    for api_name in collector_names:
+                        try:
+                            result = await svc.collect(
+                                api_name=api_name,
+                                source="",
+                                maintenance_id=mid,
+                            )
+                            logger.info(
+                                "%s for %s: %d/%d successful",
+                                api_name, mid,
+                                result["success"], result["total"],
+                            )
+                        except Exception as e:
+                            logger.error(
+                                "%s failed for %s: %s",
+                                api_name, mid, e,
+                            )
+            except Exception as e:
+                logger.error(
+                    "SNMP phase failed for %s: %s", mid, e,
+                )
+                try:
+                    from app.services.system_log import write_log, format_error_detail
+                    await write_log(
+                        level="ERROR",
+                        source="scheduler",
+                        summary=f"SNMP 採集失敗 ({type(e).__name__}): {mid}",
+                        detail=format_error_detail(
+                            exc=e, context={"歲修": mid},
+                        ),
+                        module="collection_loop",
+                        maintenance_id=mid,
+                    )
+                except Exception:
+                    logger.error("Failed to write system log for SNMP phase %s", mid)
+
+    async def _run_api_phase(
+        self,
+        api_configs: list[dict[str, str]],
+        maintenance_ids: list[str],
+    ) -> None:
+        """Phase 2: API passthrough collection (ACL etc.)."""
+        from app.services.data_collection import get_collection_service
+        api_svc = get_collection_service()
+
+        for mid in maintenance_ids:
+            for cfg in api_configs:
+                api_name = cfg["name"]
+                source = cfg.get("source", "")
+                try:
+                    result = await api_svc.collect(
+                        api_name=api_name,
+                        source=source,
+                        maintenance_id=mid,
+                    )
+                    logger.info(
+                        "API %s for %s: %d/%d successful",
+                        api_name, mid,
+                        result["success"], result["total"],
+                    )
+                except Exception as e:
+                    logger.error(
+                        "API %s failed for %s: %s",
+                        api_name, mid, e,
+                    )
 
     # ── Legacy per-job collection (API mode fallback) ──────────────
 
@@ -313,18 +421,21 @@ class SchedulerService:
 
             if expired:
                 await session.commit()
-                from app.services.system_log import write_log
-                for config in expired:
-                    await write_log(
-                        level="WARNING",
-                        source="scheduler",
-                        summary=(
-                            f"歲修 {config.maintenance_id} 已自動停止採集"
-                            f"（累計活躍時間超過 {settings.max_collection_days} 天上限）"
-                        ),
-                        module="scheduler",
-                        maintenance_id=config.maintenance_id,
-                    )
+                try:
+                    from app.services.system_log import write_log
+                    for config in expired:
+                        await write_log(
+                            level="WARNING",
+                            source="scheduler",
+                            summary=(
+                                f"歲修 {config.maintenance_id} 已自動停止採集"
+                                f"（累計活躍時間超過 {settings.max_collection_days} 天上限）"
+                            ),
+                            module="scheduler",
+                            maintenance_id=config.maintenance_id,
+                        )
+                except Exception:
+                    logger.error("Failed to write system log for expired maintenances")
 
             expired_ids = {c.maintenance_id for c in expired}
             maintenance_ids = [
@@ -370,35 +481,41 @@ class SchedulerService:
                         "%s failed for %s: %s",
                         job_name, mid, e,
                     )
-                    from app.services.system_log import write_log, format_error_detail
-                    await write_log(
-                        level="ERROR",
-                        source="scheduler",
-                        summary=f"排程任務失敗 ({type(e).__name__}): {job_name} ({mid})",
-                        detail=format_error_detail(
-                            exc=e,
-                            context={"API": job_name, "歲修": mid},
-                        ),
-                        module=job_name,
-                        maintenance_id=mid,
-                    )
+                    try:
+                        from app.services.system_log import write_log, format_error_detail
+                        await write_log(
+                            level="ERROR",
+                            source="scheduler",
+                            summary=f"排程任務失敗 ({type(e).__name__}): {job_name} ({mid})",
+                            detail=format_error_detail(
+                                exc=e,
+                                context={"API": job_name, "歲修": mid},
+                            ),
+                            module=job_name,
+                            maintenance_id=mid,
+                        )
+                    except Exception:
+                        logger.error("Failed to write system log for %s/%s", job_name, mid)
 
         except Exception as e:
             logger.error(
                 "Collection failed for '%s': %s",
                 job_name, e,
             )
-            from app.services.system_log import write_log, format_error_detail
-            await write_log(
-                level="ERROR",
-                source="scheduler",
-                summary=f"排程任務整體失敗 ({type(e).__name__}): {job_name}",
-                detail=format_error_detail(
-                    exc=e,
-                    context={"任務": job_name},
-                ),
-                module=job_name,
-            )
+            try:
+                from app.services.system_log import write_log, format_error_detail
+                await write_log(
+                    level="ERROR",
+                    source="scheduler",
+                    summary=f"排程任務整體失敗 ({type(e).__name__}): {job_name}",
+                    detail=format_error_detail(
+                        exc=e,
+                        context={"任務": job_name},
+                    ),
+                    module=job_name,
+                )
+            except Exception:
+                logger.error("Failed to write system log for %s", job_name)
         finally:
             elapsed = _time.monotonic() - t0
             logger.info(
@@ -491,18 +608,21 @@ class SchedulerService:
                 logger.error(
                     "Client collection failed for %s: %s", mid, e,
                 )
-                from app.services.system_log import write_log, format_error_detail
-                await write_log(
-                    level="ERROR",
-                    source="scheduler",
-                    summary=f"客戶端採集失敗 ({type(e).__name__}): {mid}",
-                    detail=format_error_detail(
-                        exc=e,
-                        context={"歲修": mid},
-                    ),
-                    module="client_collection",
-                    maintenance_id=mid,
-                )
+                try:
+                    from app.services.system_log import write_log, format_error_detail
+                    await write_log(
+                        level="ERROR",
+                        source="scheduler",
+                        summary=f"客戶端採集失敗 ({type(e).__name__}): {mid}",
+                        detail=format_error_detail(
+                            exc=e,
+                            context={"歲修": mid},
+                        ),
+                        module="client_collection",
+                        maintenance_id=mid,
+                    )
+                except Exception:
+                    logger.error("Failed to write system log for client collection %s", mid)
 
         elapsed = _time.monotonic() - t0
         logger.info(
@@ -559,16 +679,22 @@ class SchedulerService:
                         dev_result = await session.execute(dev_stmt)
                         devices = dev_result.scalars().all()
 
+                        # 新舊設備完全獨立：同 IP 不同 hostname 各自存一筆 ping_record
+                        # ip_to_hostnames: 用於 ping API 呼叫（IP 不重複）
+                        # hostname_map: IP → list[hostname]，用於存多筆 ping_record
                         groups: dict[TenantGroup, dict[str, str]] = {}
+                        hostname_map: dict[str, set[tuple[str, str]]] = {}  # ip → {(hostname, tg)}
                         for d in devices:
-                            if not (d.new_hostname and d.new_ip_address):
-                                continue
                             tg = d.tenant_group or TenantGroup.F18
                             ip_map = groups.setdefault(tg, {})
-                            ip_map[d.new_ip_address] = d.new_hostname
-                            if (d.old_hostname and d.old_ip_address
-                                    and d.old_ip_address != d.new_ip_address):
-                                ip_map[d.old_ip_address] = d.old_hostname
+                            if d.new_hostname and d.new_ip_address:
+                                ip_map.setdefault(d.new_ip_address, d.new_hostname)
+                                hostname_map.setdefault(d.new_ip_address, set()).add(
+                                    (d.new_hostname, tg.value))
+                            if d.old_hostname and d.old_ip_address:
+                                ip_map.setdefault(d.old_ip_address, d.old_hostname)
+                                hostname_map.setdefault(d.old_ip_address, set()).add(
+                                    (d.old_hostname, tg.value))
 
                         if not groups:
                             continue
@@ -625,16 +751,19 @@ class SchedulerService:
                             ip_to_result = {i.target: i for i in all_parsed_items}
 
                             ping_repo = get_typed_repo("ping_batch", session)
-                            for ip, hostname in device_ip_map.items():
-                                result_item = ip_to_result.get(ip)
-                                if result_item is None:
-                                    continue
-                                await ping_repo.save_batch(
-                                    switch_hostname=hostname,
-                                    raw_data=None,
-                                    parsed_items=[result_item],
-                                    maintenance_id=mid,
-                                )
+                            # 每個 hostname 都存一筆 ping_record（同 IP 不同 hostname 各自存）
+                            saved_hostnames: set[str] = set()
+                            for ip, result_item in ip_to_result.items():
+                                for hn, _ in hostname_map.get(ip, set()):
+                                    if hn in saved_hostnames:
+                                        continue
+                                    saved_hostnames.add(hn)
+                                    await ping_repo.save_batch(
+                                        switch_hostname=hn,
+                                        raw_data=None,
+                                        parsed_items=[result_item],
+                                        maintenance_id=mid,
+                                    )
 
                             from datetime import datetime, timezone
                             now = datetime.now(timezone.utc)
@@ -657,15 +786,18 @@ class SchedulerService:
 
                 except Exception as e:
                     logger.error("device_ping failed for %s: %s", mid, e)
-                    from app.services.system_log import write_log, format_error_detail
-                    await write_log(
-                        level="ERROR",
-                        source="scheduler",
-                        summary=f"設備 Ping 失敗 ({type(e).__name__}): {mid}",
-                        detail=format_error_detail(exc=e, context={"歲修": mid}),
-                        module="device_ping",
-                        maintenance_id=mid,
-                    )
+                    try:
+                        from app.services.system_log import write_log, format_error_detail
+                        await write_log(
+                            level="ERROR",
+                            source="scheduler",
+                            summary=f"設備 Ping 失敗 ({type(e).__name__}): {mid}",
+                            detail=format_error_detail(exc=e, context={"歲修": mid}),
+                            module="device_ping",
+                            maintenance_id=mid,
+                        )
+                    except Exception:
+                        logger.error("Failed to write system log for device_ping %s", mid)
 
         elapsed = _time.monotonic() - t0
         logger.info("device_ping cycle done: %d maintenances, %.2fs",
@@ -814,15 +946,18 @@ class SchedulerService:
 
                 except Exception as e:
                     logger.error("client_ping failed for %s: %s", mid, e)
-                    from app.services.system_log import write_log, format_error_detail
-                    await write_log(
-                        level="ERROR",
-                        source="scheduler",
-                        summary=f"Client Ping 失敗 ({type(e).__name__}): {mid}",
-                        detail=format_error_detail(exc=e, context={"歲修": mid}),
-                        module="client_ping",
-                        maintenance_id=mid,
-                    )
+                    try:
+                        from app.services.system_log import write_log, format_error_detail
+                        await write_log(
+                            level="ERROR",
+                            source="scheduler",
+                            summary=f"Client Ping 失敗 ({type(e).__name__}): {mid}",
+                            detail=format_error_detail(exc=e, context={"歲修": mid}),
+                            module="client_ping",
+                            maintenance_id=mid,
+                        )
+                    except Exception:
+                        logger.error("Failed to write system log for client_ping %s", mid)
 
         elapsed = _time.monotonic() - t0
         logger.info("client_ping cycle done: %d maintenances, %.2fs",
@@ -933,7 +1068,13 @@ class SchedulerService:
             logger.info("Scheduler started")
 
     def stop(self) -> None:
-        """Stop the scheduler, waiting for running jobs to finish."""
+        """Stop the scheduler and collection loop."""
+        # Signal the continuous loop to stop
+        self._loop_stop.set()
+        if self._loop_task and not self._loop_task.done():
+            self._loop_task.cancel()
+            logger.info("Collection loop cancel requested")
+
         if self.scheduler.running:
             self.scheduler.shutdown(wait=True)
             logger.info("Scheduler stopped")
@@ -960,8 +1101,7 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
     """
     Setup scheduled jobs from configuration.
 
-    In SNMP mode: uses device-centric rounds (fast_round + full_round).
-    In API mode: uses legacy per-job scheduling.
+    採集使用連續迴圈（完成即開始下一輪），Ping / Retention 使用 APScheduler 定時。
     """
     from app.core.config import settings
     from app.snmp.collection_service import (
@@ -979,79 +1119,43 @@ async def setup_scheduled_jobs(job_configs: list[dict[str, Any]]) -> None:
         if config["name"] in _CUSTOM_JOBS:
             ping_interval = config.get("interval", 15)
 
+    config_by_name = {c["name"]: c for c in job_configs}
+
     if settings.collection_mode == "snmp":
-        # ── Device-centric SNMP rounds ──
-        fast_interval = 300
-        full_interval = 1800
-
-        # Build config lookup for interval values
-        config_by_name = {c["name"]: c for c in job_configs}
-
-        for name in FAST_ROUND_COLLECTORS:
-            if name in config_by_name:
-                fast_interval = min(fast_interval, config_by_name[name].get("interval", 300))
-        for name in FULL_ROUND_COLLECTORS:
-            if name in config_by_name:
-                full_interval = max(full_interval, config_by_name[name].get("interval", 1800))
-
-        # Fast round: client-related SNMP collectors (mac_table, interface_status)
-        scheduler.add_round_job(
-            round_name="fast_round",
-            collector_names=FAST_ROUND_COLLECTORS,
-            interval_seconds=fast_interval,
-            initial_delay=5,
+        # ── Continuous collection loop (SNMP mode) ──
+        # 所有 SNMP collectors 合為一輪，ACL 走 API passthrough
+        all_snmp = FAST_ROUND_COLLECTORS + FULL_ROUND_COLLECTORS
+        api_cfgs = [
+            {"name": n, "source": config_by_name.get(n, {}).get("source", "")}
+            for n in API_PASSTHROUGH_COLLECTORS
+        ]
+        scheduler.start_collection_loop(
+            snmp_collectors=all_snmp,
+            api_collectors=api_cfgs,
+            min_round_gap=settings.min_round_gap,
         )
-
-        # Full round: indicator-only SNMP collectors (fan, power, version, etc.)
-        # Does NOT include mac_table/interface_status — those are in fast_round.
-        scheduler.add_round_job(
-            round_name="full_round",
-            collector_names=FULL_ROUND_COLLECTORS,
-            interval_seconds=full_interval,
-            initial_delay=30,
-        )
-
-        # ACL collectors use REST API passthrough (not SNMP).
-        # They need separate legacy jobs even in SNMP mode.
-        acl_stagger = 0
-        for name in API_PASSTHROUGH_COLLECTORS:
-            cfg = config_by_name.get(name, {})
-            scheduler.add_collection_job(
-                job_name=name,
-                interval_seconds=cfg.get("interval", 300),
-                source=cfg.get("source", ""),
-                initial_delay=10 + acl_stagger,
-            )
-            acl_stagger += 5
 
         logger.info(
-            "SNMP rounds configured: fast_round=%ds (%d collectors), "
-            "full_round=%ds (%d collectors), "
-            "API passthrough: %s",
-            fast_interval, len(FAST_ROUND_COLLECTORS),
-            full_interval, len(FULL_ROUND_COLLECTORS),
-            API_PASSTHROUGH_COLLECTORS,
+            "Continuous loop: %d SNMP + %d API collectors, min_gap=%ds",
+            len(all_snmp), len(api_cfgs),
+            settings.min_round_gap,
         )
     else:
-        # ── Legacy per-job scheduling (API mode) ──
-        standard_jobs = [
-            c for c in job_configs if c["name"] not in _CUSTOM_JOBS
+        # ── Continuous collection loop (API mode) ──
+        # API 模式下所有 collector 都走 API passthrough
+        api_cfgs = [
+            {"name": c["name"], "source": c.get("source", "")}
+            for c in job_configs if c["name"] not in _CUSTOM_JOBS
         ]
-        stagger_step = 5
-        for idx, config in enumerate(standard_jobs):
-            scheduler.add_collection_job(
-                job_name=config["name"],
-                interval_seconds=config.get("interval", 300),
-                source=config.get("source", ""),
-                initial_delay=idx * stagger_step,
-            )
+        scheduler.start_collection_loop(
+            snmp_collectors=[],
+            api_collectors=api_cfgs,
+            min_round_gap=settings.min_round_gap,
+        )
 
     # Independent ping jobs (same for both modes)
     scheduler.add_device_ping_job(interval_seconds=ping_interval)
     scheduler.add_client_ping_job(interval_seconds=ping_interval)
-
-    # Client collection (assembles data from collected SNMP + ping results)
-    scheduler.add_client_collection_job(interval_seconds=300)
 
     # Retention cleanup
     scheduler.add_retention_job(interval_minutes=30)

@@ -967,7 +967,7 @@ const importCSV = async () => {
 }
 
 const downloadTemplate = () => {
-  const csv = 'category_name,sub_category_name,name,title,department,company,phone,mobile,extension,notes\n技術團隊,,張三,PM,IT部門,A公司,02-12345678,0912345678,1234,備註\n技術團隊,網路組,李四,工程師,A公司,02-12345679,0923456789,5678,備註'
+  const csv = 'category_name,sub_category_name,name,title,department,company,phone,mobile,extension,notes\n技術團隊,,張三,PM,IT部門,A公司,02-12345678,0912345678,1234,備註\n技術團隊,網路組,李四,工程師,網路部,A公司,02-12345679,0923456789,5678,備註'
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)

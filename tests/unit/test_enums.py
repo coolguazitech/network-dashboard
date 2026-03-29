@@ -70,8 +70,8 @@ class TestUserRole:
 
 class TestCaseStatus:
     def test_all_values(self):
-        assert len(CaseStatus) == 5
-        expected = {"UNASSIGNED", "ASSIGNED", "IN_PROGRESS", "DISCUSSING", "RESOLVED"}
+        assert len(CaseStatus) == 6
+        expected = {"UNASSIGNED", "ASSIGNED", "IN_PROGRESS", "DISCUSSING", "RESOLVED", "IGNORED"}
         assert {s.value for s in CaseStatus} == expected
 
 
