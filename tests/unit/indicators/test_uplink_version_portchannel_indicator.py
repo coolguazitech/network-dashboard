@@ -48,13 +48,13 @@ def _make_neighbor_record(
 
 def _make_version_record(
     switch_hostname: str = "SW-01",
-    version: str = "17.6.3",
+    packages: list[str] | None = None,
     collected_at: datetime | None = None,
 ) -> MagicMock:
     """Create a mock VersionRecord."""
     record = MagicMock()
     record.switch_hostname = switch_hostname
-    record.version = version
+    record.packages = packages if packages is not None else ["17.6.3"]
     record.collected_at = collected_at or datetime(2026, 1, 15, 12, 0, 0)
     return record
 
@@ -97,11 +97,15 @@ def _make_pc_expectation(
 def _make_uplink_expectation(
     hostname: str = "SW-01",
     expected_neighbor: str = "CORE-SW-01",
+    local_interface: str = "GigabitEthernet1/0/49",
+    expected_interface: str = "GigabitEthernet1/0/1",
 ) -> MagicMock:
     """Create a mock UplinkExpectation."""
     exp = MagicMock()
     exp.hostname = hostname
     exp.expected_neighbor = expected_neighbor
+    exp.local_interface = local_interface
+    exp.expected_interface = expected_interface
     return exp
 
 
@@ -159,12 +163,13 @@ class TestUplinkEvaluateAllPass:
 
         with (
             patch.object(
-                indicator, "_load_expectations",
+                indicator, "_load_expectations_full",
                 new_callable=AsyncMock,
-                return_value={
-                    "SW-01": ["CORE-SW-01", "CORE-SW-02"],
-                    "SW-02": ["CORE-SW-01"],
-                },
+                return_value=[
+                    _make_uplink_expectation("SW-01", "CORE-SW-01"),
+                    _make_uplink_expectation("SW-01", "CORE-SW-02"),
+                    _make_uplink_expectation("SW-02", "CORE-SW-01"),
+                ],
             ),
             patch.object(
                 indicator, "_get_latest_all_protocols",
@@ -201,11 +206,12 @@ class TestUplinkEvaluateSomeFail:
 
         with (
             patch.object(
-                indicator, "_load_expectations",
+                indicator, "_load_expectations_full",
                 new_callable=AsyncMock,
-                return_value={
-                    "SW-01": ["CORE-SW-01", "CORE-SW-02"],
-                },
+                return_value=[
+                    _make_uplink_expectation("SW-01", "CORE-SW-01"),
+                    _make_uplink_expectation("SW-01", "CORE-SW-02"),
+                ],
             ),
             patch.object(
                 indicator, "_get_latest_all_protocols",
@@ -236,11 +242,12 @@ class TestUplinkEvaluateNoCollectedData:
 
         with (
             patch.object(
-                indicator, "_load_expectations",
+                indicator, "_load_expectations_full",
                 new_callable=AsyncMock,
-                return_value={
-                    "SW-01": ["CORE-SW-01", "CORE-SW-02"],
-                },
+                return_value=[
+                    _make_uplink_expectation("SW-01", "CORE-SW-01"),
+                    _make_uplink_expectation("SW-01", "CORE-SW-02"),
+                ],
             ),
             patch.object(
                 indicator, "_get_latest_all_protocols",
@@ -257,7 +264,7 @@ class TestUplinkEvaluateNoCollectedData:
         assert len(result.failures) == 2
         for failure in result.failures:
             assert failure["device"] == "SW-01"
-            assert failure["reason"] == "無採集數據"
+            assert "無採集數據" in failure["reason"]
 
 
 @pytest.mark.asyncio
@@ -270,9 +277,9 @@ class TestUplinkEvaluateNoExpectations:
 
         with (
             patch.object(
-                indicator, "_load_expectations",
+                indicator, "_load_expectations_full",
                 new_callable=AsyncMock,
-                return_value={},
+                return_value=[],
             ),
             patch.object(
                 indicator, "_get_latest_all_protocols",
@@ -299,11 +306,9 @@ class TestUplinkEvaluateEmptyExpectedNeighborList:
 
         with (
             patch.object(
-                indicator, "_load_expectations",
+                indicator, "_load_expectations_full",
                 new_callable=AsyncMock,
-                return_value={
-                    "SW-01": [],  # empty list, should be skipped
-                },
+                return_value=[],  # no expectations
             ),
             patch.object(
                 indicator, "_get_latest_all_protocols",
@@ -335,12 +340,14 @@ class TestUplinkEvaluateMultipleDevices:
 
         with (
             patch.object(
-                indicator, "_load_expectations",
+                indicator, "_load_expectations_full",
                 new_callable=AsyncMock,
-                return_value={
-                    "SW-01": ["CORE-SW-01", "CORE-SW-02"],
-                    "SW-02": ["CORE-SW-01", "CORE-SW-03"],
-                },
+                return_value=[
+                    _make_uplink_expectation("SW-01", "CORE-SW-01"),
+                    _make_uplink_expectation("SW-01", "CORE-SW-02"),
+                    _make_uplink_expectation("SW-02", "CORE-SW-01"),
+                    _make_uplink_expectation("SW-02", "CORE-SW-03"),
+                ],
             ),
             patch.object(
                 indicator, "_get_latest_all_protocols",
@@ -372,13 +379,11 @@ class TestUplinkEvaluateReverseLookup:
 
         with (
             patch.object(
-                indicator, "_load_expectations",
+                indicator, "_load_expectations_full",
                 new_callable=AsyncMock,
-                return_value={
-                    # User filled it "backwards": hostname=SW-01, neighbor=CORE-SW-01
-                    # SW-01 has no collected data, but CORE-SW-01's data shows SW-01
-                    "SW-01": ["CORE-SW-01"],
-                },
+                return_value=[
+                    _make_uplink_expectation("SW-01", "CORE-SW-01"),
+                ],
             ),
             patch.object(
                 indicator, "_get_latest_all_protocols",
@@ -392,7 +397,7 @@ class TestUplinkEvaluateReverseLookup:
         assert result.pass_count == 1
         assert result.fail_count == 0
         assert result.passes is not None
-        assert "已連接" in result.passes[0]["reason"]
+        assert "反向確認" in result.passes[0]["reason"]
 
     async def test_reverse_lookup_no_data_both_sides(self):
         """Neither side has data -> still reports '無採集數據'."""
@@ -406,11 +411,11 @@ class TestUplinkEvaluateReverseLookup:
 
         with (
             patch.object(
-                indicator, "_load_expectations",
+                indicator, "_load_expectations_full",
                 new_callable=AsyncMock,
-                return_value={
-                    "SW-01": ["CORE-SW-01"],
-                },
+                return_value=[
+                    _make_uplink_expectation("SW-01", "CORE-SW-01"),
+                ],
             ),
             patch.object(
                 indicator, "_get_latest_all_protocols",
@@ -423,7 +428,7 @@ class TestUplinkEvaluateReverseLookup:
         assert result.total_count == 1
         assert result.pass_count == 0
         assert result.fail_count == 1
-        assert result.failures[0]["reason"] == "無採集數據"
+        assert "無採集數據" in result.failures[0]["reason"]
 
     async def test_reverse_lookup_neighbor_has_data_but_no_match(self):
         """Neighbor has data but doesn't see hostname -> still fails."""
@@ -437,11 +442,11 @@ class TestUplinkEvaluateReverseLookup:
 
         with (
             patch.object(
-                indicator, "_load_expectations",
+                indicator, "_load_expectations_full",
                 new_callable=AsyncMock,
-                return_value={
-                    "SW-01": ["CORE-SW-01"],
-                },
+                return_value=[
+                    _make_uplink_expectation("SW-01", "CORE-SW-01"),
+                ],
             ),
             patch.object(
                 indicator, "_get_latest_all_protocols",
@@ -466,10 +471,10 @@ class TestUplinkPassesCappedAtTen:
         session = AsyncMock()
 
         # 15 expectations, all passing
-        expectations = {
-            f"SW-{i:02d}": [f"CORE-{i:02d}"]
+        exp_list = [
+            _make_uplink_expectation(f"SW-{i:02d}", f"CORE-{i:02d}")
             for i in range(1, 16)
-        }
+        ]
         neighbor_records = [
             _make_neighbor_record(f"SW-{i:02d}", remote_hostname=f"CORE-{i:02d}")
             for i in range(1, 16)
@@ -477,9 +482,9 @@ class TestUplinkPassesCappedAtTen:
 
         with (
             patch.object(
-                indicator, "_load_expectations",
+                indicator, "_load_expectations_full",
                 new_callable=AsyncMock,
-                return_value=expectations,
+                return_value=exp_list,
             ),
             patch.object(
                 indicator, "_get_latest_all_protocols",
@@ -530,8 +535,8 @@ class TestVersionEvaluateAllPass:
         session = AsyncMock()
 
         version_records = [
-            _make_version_record("SW-01", version="17.6.3"),
-            _make_version_record("SW-02", version="17.6.3"),
+            _make_version_record("SW-01", packages=["17.6.3"]),
+            _make_version_record("SW-02", packages=["17.6.3"]),
         ]
 
         with (
@@ -572,7 +577,7 @@ class TestVersionEvaluateVersionMismatch:
         session = AsyncMock()
 
         version_records = [
-            _make_version_record("SW-01", version="17.3.1"),
+            _make_version_record("SW-01", packages=["17.3.1"]),
         ]
 
         with (
@@ -597,21 +602,26 @@ class TestVersionEvaluateVersionMismatch:
         assert result.failures is not None
         assert len(result.failures) == 1
         assert result.failures[0]["device"] == "SW-01"
-        assert result.failures[0]["reason"] == "版本不符"
+        assert "版本不符" in result.failures[0]["reason"]
         assert result.failures[0]["expected"] == "17.6.3"
         assert result.failures[0]["actual"] == "17.3.1"
 
 
 @pytest.mark.asyncio
-class TestVersionEvaluateMultipleExpectedVersions:
-    """Multiple acceptable versions (semicolon-separated) -> pass if any match."""
+class TestVersionEvaluateSubstringMatching:
+    """Substring matching: each expected substring found in some actual package."""
 
-    async def test_one_of_multiple_versions_matches(self):
+    async def test_all_substrings_found(self):
+        """All expected substrings found in packages → pass."""
         indicator = VersionIndicator()
         session = AsyncMock()
 
         version_records = [
-            _make_version_record("SW-01", version="17.6.4"),
+            _make_version_record("SW-01", packages=[
+                "flash:/5710-CMW710-BOOT-R1238P06.bin",
+                "flash:/5710-CMW710-SYSTEM-R1238P06.bin",
+                "flash:/5710-CMW710-PATCH-R1238P06H01.bin",
+            ]),
         ]
 
         with (
@@ -619,7 +629,7 @@ class TestVersionEvaluateMultipleExpectedVersions:
                 indicator, "_load_expectations",
                 new_callable=AsyncMock,
                 return_value={
-                    "SW-01": ["17.6.3", "17.6.4"],  # either is acceptable
+                    "SW-01": ["R1238P06", "R1238P06H01"],
                 },
             ),
             patch(
@@ -633,6 +643,39 @@ class TestVersionEvaluateMultipleExpectedVersions:
         assert result.total_count == 1
         assert result.pass_count == 1
         assert result.fail_count == 0
+
+    async def test_missing_substring_fails(self):
+        """One expected substring not found in any package → fail."""
+        indicator = VersionIndicator()
+        session = AsyncMock()
+
+        version_records = [
+            _make_version_record("SW-01", packages=[
+                "flash:/5710-CMW710-BOOT-R1238P06.bin",
+                "flash:/5710-CMW710-SYSTEM-R1238P06.bin",
+            ]),
+        ]
+
+        with (
+            patch.object(
+                indicator, "_load_expectations",
+                new_callable=AsyncMock,
+                return_value={
+                    "SW-01": ["R1238P06", "R1238P06H01"],  # H01 not in packages
+                },
+            ),
+            patch(
+                "app.indicators.version.VersionRecordRepo.get_latest_per_device",
+                new_callable=AsyncMock,
+                return_value=version_records,
+            ),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, session)
+
+        assert result.total_count == 1
+        assert result.pass_count == 0
+        assert result.fail_count == 1
+        assert "R1238P06H01" in result.failures[0]["reason"]
 
 
 @pytest.mark.asyncio
@@ -699,7 +742,7 @@ class TestVersionEvaluateNullActualVersion:
         indicator = VersionIndicator()
         session = AsyncMock()
 
-        null_version_record = _make_version_record("SW-01", version=None)
+        null_version_record = _make_version_record("SW-01", packages=[])
 
         with (
             patch.object(
@@ -721,7 +764,7 @@ class TestVersionEvaluateNullActualVersion:
         assert result.pass_count == 0
         assert result.fail_count == 1
         assert result.failures is not None
-        assert result.failures[0]["reason"] == "版本不符"
+        assert result.failures[0]["reason"] == "採集結果為空"
         assert result.failures[0]["actual"] is None
 
 
@@ -734,9 +777,9 @@ class TestVersionEvaluateMixedResults:
         session = AsyncMock()
 
         version_records = [
-            _make_version_record("SW-01", version="17.6.3"),
-            _make_version_record("SW-02", version="17.3.1"),
-            _make_version_record("SW-03", version="17.6.3"),
+            _make_version_record("SW-01", packages=["17.6.3"]),
+            _make_version_record("SW-02", packages=["17.3.1"]),
+            _make_version_record("SW-03", packages=["17.6.3"]),
         ]
 
         with (
@@ -776,7 +819,7 @@ class TestVersionEvaluatePassesCappedAtTen:
             for i in range(1, 16)
         }
         version_records = [
-            _make_version_record(f"SW-{i:02d}", version="17.6.3")
+            _make_version_record(f"SW-{i:02d}", packages=["17.6.3"])
             for i in range(1, 16)
         ]
 
@@ -808,8 +851,8 @@ class TestVersionEvaluateSummaryFormat:
         session = AsyncMock()
 
         version_records = [
-            _make_version_record("SW-01", version="17.6.3"),
-            _make_version_record("SW-02", version="17.3.1"),
+            _make_version_record("SW-01", packages=["17.6.3"]),
+            _make_version_record("SW-02", packages=["17.3.1"]),
         ]
 
         with (

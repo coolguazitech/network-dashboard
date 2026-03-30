@@ -64,9 +64,9 @@ fetchers:
     description: "電源供應器狀態"
 
   get_version:
-    source: DNA
+    source: FNA
     interval: 600
-    description: "韌體版本"
+    description: "韌體版本（show install active）"
 
   get_gbic_details:
     source: FNA

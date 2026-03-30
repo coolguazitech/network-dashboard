@@ -430,10 +430,10 @@ class VersionRecord(Base):
     maintenance_id: Mapped[str] = mapped_column(String(100), index=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
-    version: Mapped[str] = mapped_column(String(255))
+    packages: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     def __repr__(self) -> str:
-        return f"<VersionRecord {self.switch_hostname}:{self.version}>"
+        return f"<VersionRecord {self.switch_hostname}:{self.packages}>"
 
 
 class PingRecord(Base):

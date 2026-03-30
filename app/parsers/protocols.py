@@ -166,9 +166,13 @@ class FanStatusData(ParsedData):
 
 
 class VersionData(ParsedData):
-    """韌體版本資料。"""
+    """韌體版本資料。
 
-    version: str
+    packages: 設備上安裝的韌體 / 補丁列表。
+    來自 ``show install active`` (FNA) 或 sysDescr (SNMP fallback)。
+    """
+
+    packages: list[str]
 
 
 class NeighborData(ParsedData):

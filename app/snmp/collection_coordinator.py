@@ -413,9 +413,15 @@ class CollectionCoordinator:
         # Phase 1: Community probe
         try:
             target = await session_cache.get_target(ip)
-        except SnmpTimeoutError:
+        except SnmpTimeoutError as e:
+            logger.warning(
+                "Device %s (%s) SNMP community probe failed — "
+                "所有 community 均無回應，設備不可達: %s",
+                hostname, ip, e,
+            )
             return (
-                [(c.api_name, "unreachable", f"SNMP unreachable: {ip}", [])
+                [(c.api_name, "unreachable",
+                  f"SNMP 不可達（community probe 失敗）: {ip} — {e}", [])
                  for c in collectors],
                 True,   # device_unreachable
                 False,  # all_ok
@@ -435,6 +441,10 @@ class CollectionCoordinator:
                 )
                 return (collector.api_name, "ok", None, parsed_items)
             except SnmpTimeoutError as e:
+                logger.warning(
+                    "Collector %s timeout for %s (%s): %s",
+                    collector.api_name, hostname, ip, e,
+                )
                 return (collector.api_name, "timeout", str(e), [])
             except Exception as e:
                 logger.error(

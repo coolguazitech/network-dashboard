@@ -169,7 +169,7 @@ class TestVersionPipeline:
         results = parser.parse(raw)
 
         assert len(results) == 1
-        assert results[0].version
+        assert results[0].packages
 
     def test_ios(self):
         from mock_server.generators.version import generate
@@ -180,7 +180,7 @@ class TestVersionPipeline:
         results = parser.parse(raw)
 
         assert len(results) == 1
-        assert results[0].version
+        assert results[0].packages
 
     def test_nxos(self):
         from mock_server.generators.version import generate
@@ -191,7 +191,7 @@ class TestVersionPipeline:
         results = parser.parse(raw)
 
         assert len(results) == 1
-        assert results[0].version
+        assert results[0].packages
 
 
 class TestPowerPipeline:

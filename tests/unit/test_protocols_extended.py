@@ -391,16 +391,17 @@ class TestTransceiverData:
 class TestVersionData:
 
     def test_valid(self):
-        d = VersionData(version="16.9.4")
-        assert d.version == "16.9.4"
+        d = VersionData(packages=["16.9.4"])
+        assert d.packages == ["16.9.4"]
 
-    def test_empty_string(self):
-        d = VersionData(version="")
-        assert d.version == ""
+    def test_empty_list(self):
+        d = VersionData(packages=[])
+        assert d.packages == []
 
-    def test_long_version(self):
-        d = VersionData(version="PI.5.3.1.9-20230101 Release 1234")
-        assert "PI.5.3.1.9" in d.version
+    def test_multiple_packages(self):
+        d = VersionData(packages=["flash:/boot.bin", "flash:/system.bin", "flash:/patch.bin"])
+        assert len(d.packages) == 3
+        assert "flash:/boot.bin" in d.packages
 
 
 # ══════════════════════════════════════════════════════════════════

@@ -75,5 +75,5 @@ class VersionCollector(BaseSnmpCollector):
             self.api_name, target.ip, device_type, varbinds,
         )
 
-        results: list[ParsedData] = [VersionData(version=version)]
+        results: list[ParsedData] = [VersionData(packages=[version])]
         return raw_text, results

@@ -1,7 +1,13 @@
 """
 Version indicator evaluator.
 
-檢查設備版本是否升級到預期版本。
+檢查設備版本（含補丁）是否符合預期。
+
+驗收邏輯：
+- 期望值以分號分隔多個子字串（如 "R1238P06;PATCH-R1238P06H01"）
+- 實際值是 packages 列表（如 ["flash:/5710-CMW710-BOOT-R1238P06.bin", ...]）
+- 每個期望子字串只要是某個實際 package 的 substring 即算匹配
+- 所有期望子字串都匹配 → 該設備通過
 """
 from __future__ import annotations
 
@@ -29,6 +35,23 @@ class VersionIndicator(BaseIndicator):
     """
 
     indicator_type = "version"
+
+    @staticmethod
+    def _match_expectations(
+        expected_substrings: list[str],
+        actual_packages: list[str],
+    ) -> tuple[bool, list[str]]:
+        """檢查每個期望子字串是否為某個實際 package 的 substring。
+
+        Returns:
+            (all_matched, list_of_unmatched_substrings)
+        """
+        unmatched: list[str] = []
+        for exp in expected_substrings:
+            found = any(exp in pkg for pkg in actual_packages)
+            if not found:
+                unmatched.append(exp)
+        return len(unmatched) == 0, unmatched
 
     async def evaluate(
         self,
@@ -64,43 +87,54 @@ class VersionIndicator(BaseIndicator):
             if record.switch_hostname not in records_by_hostname:
                 records_by_hostname[record.switch_hostname] = record
 
-        # 以「期望」為基準計算（而非以採集記錄為基準）
+        # 以「期望」為基準計算
         total_count = len(version_expectations)
         pass_count = 0
         failures = []
         passes = []
 
-        # 遍歷每個版本期望
-        for hostname, expected_versions in version_expectations.items():
+        for hostname, expected_substrings in version_expectations.items():
             record = records_by_hostname.get(hostname)
 
             if record is None:
-                # 尚未採集到該設備的版本資料
                 failures.append({
                     "device": hostname,
                     "reason": "尚未採集",
-                    "expected": ";".join(expected_versions),
+                    "expected": ";".join(expected_substrings),
                     "actual": None,
                 })
-            else:
-                actual_version = record.version
-                # 比較版本（支援分號分隔的多個期望版本）
-                if actual_version and actual_version in expected_versions:
-                    pass_count += 1
-                    if len(passes) < 10:
-                        passes.append({
-                            "device": hostname,
-                            "reason": "版本符合",
-                            "expected": ";".join(expected_versions),
-                            "actual": actual_version,
-                        })
-                else:
-                    failures.append({
+                continue
+
+            actual_packages = record.packages or []
+            if not actual_packages:
+                failures.append({
+                    "device": hostname,
+                    "reason": "採集結果為空",
+                    "expected": ";".join(expected_substrings),
+                    "actual": None,
+                })
+                continue
+
+            matched, unmatched = self._match_expectations(
+                expected_substrings, actual_packages,
+            )
+
+            if matched:
+                pass_count += 1
+                if len(passes) < 10:
+                    passes.append({
                         "device": hostname,
-                        "reason": "版本不符",
-                        "expected": ";".join(expected_versions),
-                        "actual": actual_version,
+                        "reason": "版本符合",
+                        "expected": ";".join(expected_substrings),
+                        "actual": "; ".join(actual_packages),
                     })
+            else:
+                failures.append({
+                    "device": hostname,
+                    "reason": f"版本不符（未匹配: {', '.join(unmatched)}）",
+                    "expected": ";".join(expected_substrings),
+                    "actual": "; ".join(actual_packages),
+                })
 
         return IndicatorEvaluationResult(
             indicator_type=self.indicator_type,
@@ -126,7 +160,10 @@ class VersionIndicator(BaseIndicator):
         session: AsyncSession,
         maintenance_id: str,
     ) -> dict[str, list[str]]:
-        """從 DB 讀取版本期望。"""
+        """從 DB 讀取版本期望。
+
+        expected_versions 以分號分隔，每個子字串代表一個期望的 substring。
+        """
         stmt = select(VersionExpectation).where(
             VersionExpectation.maintenance_id == maintenance_id,
         )
@@ -135,13 +172,12 @@ class VersionIndicator(BaseIndicator):
 
         exp_map: dict[str, list[str]] = {}
         for exp in expectations:
-            # expected_versions 是分號分隔的字串
-            versions = [
+            substrings = [
                 v.strip()
                 for v in exp.expected_versions.split(";")
                 if v.strip()
             ]
-            exp_map[exp.hostname] = versions
+            exp_map[exp.hostname] = substrings
 
         return exp_map
 
@@ -150,13 +186,13 @@ class VersionIndicator(BaseIndicator):
         return IndicatorMetadata(
             name="version",
             title="韌體版本監控",
-            description="驗證設備是否已升級到目標版本",
+            description="驗證設備是否已升級到目標版本（含補丁）",
             object_type="switch",
             data_type="string",
             observed_fields=[
                 ObservedField(
                     name="version",
-                    display_name="目前版本",
+                    display_name="安裝套件",
                     metric_name="version",
                     unit=None,
                 ),
@@ -189,12 +225,14 @@ class VersionIndicator(BaseIndicator):
             expected = version_expectations.get(
                 record.switch_hostname, []
             )
-            actual = record.version
-            match_rate = (
-                100.0
-                if expected and actual in expected
-                else 0.0
-            )
+            actual_packages = record.packages or []
+            if expected and actual_packages:
+                matched, _ = self._match_expectations(
+                    expected, actual_packages,
+                )
+                match_rate = 100.0 if matched else 0.0
+            else:
+                match_rate = 0.0
 
             time_series.append(
                 TimeSeriesPoint(
@@ -227,18 +265,22 @@ class VersionIndicator(BaseIndicator):
             expected = version_expectations.get(
                 record.switch_hostname, []
             )
-            actual = record.version
+            actual_packages = record.packages or []
+            if expected and actual_packages:
+                matched, _ = self._match_expectations(
+                    expected, actual_packages,
+                )
+            else:
+                matched = False
 
             raw_data.append(
                 RawDataRow(
                     switch_hostname=record.switch_hostname,
-                    version=actual,
+                    version="; ".join(actual_packages) if actual_packages else None,
                     expected_version=(
                         ";".join(expected) if expected else None
                     ),
-                    version_match=(
-                        actual in expected if expected else None
-                    ),
+                    version_match=matched if expected else None,
                     collected_at=record.collected_at,
                 )
             )

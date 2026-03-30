@@ -146,8 +146,12 @@ class TestFanStatusData:
 
 class TestVersionData:
     def test_basic(self):
-        d = VersionData(version="15.2(4)E10")
-        assert d.version == "15.2(4)E10"
+        d = VersionData(packages=["15.2(4)E10"])
+        assert d.packages == ["15.2(4)E10"]
+
+    def test_multiple_packages(self):
+        d = VersionData(packages=["flash:/boot.bin", "flash:/system.bin"])
+        assert len(d.packages) == 2
 
 
 class TestPortChannelData:

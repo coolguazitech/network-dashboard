@@ -27,6 +27,11 @@ from app.repositories.typed_records import TransceiverRecordRepo
 from app.services.threshold_service import get_threshold
 
 
+# -36.95 dBm 是光模塊已安裝但未對接的 sentinel 值，不應視為真正失敗
+_UNCONNECTED_DBM = -36.95
+_UNCONNECTED_TOL = 0.1  # float 容差
+
+
 @dataclass(frozen=True)
 class _Thresholds:
     """Immutable snapshot of transceiver thresholds for a given maintenance."""
@@ -155,25 +160,43 @@ class TransceiverIndicator(BaseIndicator):
                     failing_ifaces.append(failure)
 
             if failing_ifaces:
-                # 設備有異常介面 → 失敗
+                # 全部失敗介面都是 -36.95 未對接 → 視為通過
+                if all(f.get("unconnected_only") for f in failing_ifaces):
+                    pass_count += 1
+                    if len(passes) < 10:
+                        passes.append({
+                            "device": hostname,
+                            "reason": (
+                                f"光模塊未對接已忽略"
+                                f"（{len(failing_ifaces)} 介面）"
+                            ),
+                            "data": {},
+                        })
+                    continue
+
+                # 設備有真正異常介面 → 失敗（排除 unconnected 介面不列入）
+                real_failures = [
+                    f for f in failing_ifaces
+                    if not f.get("unconnected_only")
+                ]
                 iface_detail = "; ".join(
                     f"{f['interface']}: {f['reason']}"
-                    for f in failing_ifaces[:5]
+                    for f in real_failures[:5]
                 )
-                if len(failing_ifaces) > 5:
-                    iface_detail += f" ...等{len(failing_ifaces)}介面"
+                if len(real_failures) > 5:
+                    iface_detail += f" ...等{len(real_failures)}介面"
                 show_limit = 5
                 iface_names = ", ".join(
-                    f["interface"] for f in failing_ifaces[:show_limit]
+                    f["interface"] for f in real_failures[:show_limit]
                 )
-                if len(failing_ifaces) > show_limit:
-                    iface_names += f" ...等{len(failing_ifaces)}介面"
+                if len(real_failures) > show_limit:
+                    iface_names += f" ...等{len(real_failures)}介面"
                 failures.append({
                     "device": hostname,
                     "interface": iface_names,
                     "reason": iface_detail,
                     "data": {
-                        "failing_interfaces": failing_ifaces,
+                        "failing_interfaces": real_failures,
                         },
                     })
             else:
@@ -219,10 +242,24 @@ class TransceiverIndicator(BaseIndicator):
 
     # ── single-record check ─────────────────────────────────────
 
+    @staticmethod
+    def _is_unconnected_power(value: float | None) -> bool:
+        """Return True if the power reading is the unconnected sentinel."""
+        return (
+            value is not None
+            and abs(value - _UNCONNECTED_DBM) < _UNCONNECTED_TOL
+        )
+
     def _check_single_record(
         self, record: TransceiverRecord, th: _Thresholds,
     ) -> dict[str, Any] | None:
-        """Check a single record. Return failure dict or None if passed."""
+        """Check a single record.
+
+        Return failure dict or *None* if passed.
+        The returned dict includes ``"unconnected_only": True`` when all
+        failures stem from the -36.95 dBm sentinel (module present but
+        no fiber attached).
+        """
         if (
             record.tx_power is None
             and record.rx_power is None
@@ -234,18 +271,57 @@ class TransceiverIndicator(BaseIndicator):
                 "interface": record.interface_name,
                 "reason": "光模塊缺失或無法讀取",
                 "data": self._record_data(record),
+                "unconnected_only": False,
             }
 
         failure_reasons = self._collect_failure_reasons(record, th)
         if not failure_reasons:
             return None
 
+        # 判斷是否所有 power 異常都來自 -36.95 sentinel（未對接）
+        # 且溫度/電壓皆正常或 sentinel
+        unconnected_only = self._is_failure_unconnected_only(record, th)
+
         return {
             "device": record.switch_hostname,
             "interface": record.interface_name,
             "reason": " | ".join(failure_reasons),
             "data": self._record_data(record),
+            "unconnected_only": unconnected_only,
         }
+
+    def _is_failure_unconnected_only(
+        self, record: TransceiverRecord, th: _Thresholds,
+    ) -> bool:
+        """True when *all* out-of-range metrics are caused by -36.95 sentinel.
+
+        If temperature or voltage is out of range, it's a real failure.
+        """
+        # temperature or voltage out of range → real failure
+        if record.temperature is not None:
+            if not (th.temperature_min <= record.temperature <= th.temperature_max):
+                return False
+        if record.voltage is not None:
+            if not (th.voltage_min <= record.voltage <= th.voltage_max):
+                return False
+
+        # tx_power / rx_power: only sentinel counts as unconnected
+        has_power_issue = False
+        if record.tx_power is not None and not (
+            th.tx_power_min <= record.tx_power <= th.tx_power_max
+        ):
+            if not self._is_unconnected_power(record.tx_power):
+                return False
+            has_power_issue = True
+        if record.rx_power is not None and not (
+            th.rx_power_min <= record.rx_power <= th.rx_power_max
+        ):
+            if not self._is_unconnected_power(record.rx_power):
+                return False
+            has_power_issue = True
+
+        # 必須至少有一個 power 問題才算 unconnected（否則沒有 failure）
+        return has_power_issue
 
     @staticmethod
     def _collect_failure_reasons(

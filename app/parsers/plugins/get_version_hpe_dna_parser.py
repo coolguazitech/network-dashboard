@@ -77,7 +77,7 @@ class GetVersionHpeDnaParser(BaseParser[VersionData]):
             return []
 
         return [VersionData(
-            version=version,
+            packages=[version],
         )]
 
     def _extract_version(self, output: str) -> str | None:

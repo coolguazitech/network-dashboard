@@ -587,7 +587,7 @@ class TestVersionHpe:
         """)
         result = self.parser.parse(raw)
         assert len(result) == 1
-        assert result[0].version == "7.1.070 Release 6635P07"
+        assert result[0].packages[0] == "7.1.070 Release 6635P07"
 
     def test_software_version_format(self):
         raw = textwrap.dedent("""\
@@ -596,7 +596,7 @@ class TestVersionHpe:
         """)
         result = self.parser.parse(raw)
         assert len(result) == 1
-        assert result[0].version == "WC.16.11.0012"
+        assert result[0].packages[0] == "WC.16.11.0012"
 
     def test_no_version_found(self):
         raw = "Some unrelated text\nwith no relevant data here\n"
@@ -614,13 +614,13 @@ class TestVersionIos:
         """)
         result = self.parser.parse(raw)
         assert len(result) == 1
-        assert result[0].version == "15.2(4)E10"
+        assert result[0].packages[0] == "15.2(4)E10"
 
     def test_iosxe_version(self):
         raw = "Cisco IOS XE Software, Version 17.09.04a\n"
         result = self.parser.parse(raw)
         assert len(result) == 1
-        assert result[0].version == "17.09.04a"
+        assert result[0].packages[0] == "17.09.04a"
 
 
 class TestVersionNxos:
@@ -633,19 +633,19 @@ class TestVersionNxos:
         """)
         result = self.parser.parse(raw)
         assert len(result) == 1
-        assert result[0].version == "9.3(8)"
+        assert result[0].packages[0] == "9.3(8)"
 
     def test_nxos_dotted_version(self):
         raw = "  NXOS: version 10.3.3\n"
         result = self.parser.parse(raw)
         assert len(result) == 1
-        assert result[0].version == "10.3.3"
+        assert result[0].packages[0] == "10.3.3"
 
     def test_system_fallback(self):
         raw = "  system:    version 7.0(3)I7(10)\n"
         result = self.parser.parse(raw)
         assert len(result) == 1
-        assert result[0].version == "7.0(3)I7(10)"
+        assert result[0].packages[0] == "7.0(3)I7(10)"
 
 
 # ====================================================================

@@ -72,12 +72,17 @@ class BaseSnmpCollector(ABC):
                 if attempt < max_retries:
                     wait = 1.0 * (attempt + 1)
                     logger.warning(
-                        "%s: timeout for %s, retry %d/%d (wait %.1fs)",
+                        "%s: timeout for %s, retry %d/%d (wait %.1fs) — %s",
                         self.api_name, target.ip,
-                        attempt + 1, max_retries, wait,
+                        attempt + 1, max_retries, wait, e,
                     )
                     await asyncio.sleep(wait)
                     continue
+                # 最終失敗 — 記錄完整原因
+                logger.warning(
+                    "%s: all %d retries exhausted for %s — %s",
+                    self.api_name, max_retries, target.ip, e,
+                )
                 break
 
         raise SnmpTimeoutError(

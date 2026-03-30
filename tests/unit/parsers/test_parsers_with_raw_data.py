@@ -42,7 +42,7 @@ class TestGetVersionHpeDnaParser:
 
         assert len(results) == 1
         v = results[0]
-        assert "7.1.070" in v.version
+        assert any("7.1.070" in pkg for pkg in v.packages)
 
     def test_empty_input(self):
         from app.parsers.plugins.get_version_hpe_dna_parser import GetVersionHpeDnaParser
@@ -61,7 +61,7 @@ class TestGetVersionIosDnaParser:
 
         assert len(results) == 1
         v = results[0]
-        assert "15.2(4)E10" in v.version
+        assert any("15.2(4)E10" in pkg for pkg in v.packages)
 
 
 class TestGetVersionNxosDnaParser:
@@ -73,7 +73,7 @@ class TestGetVersionNxosDnaParser:
         results = parser.parse(raw)
 
         assert len(results) == 1
-        assert results[0].version  # version string present
+        assert results[0].packages  # packages list present
 
 
 class TestGetErrorCountHpeFnaParser:

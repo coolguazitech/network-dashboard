@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.indicators.transceiver import TransceiverIndicator, _Thresholds
+from app.indicators.transceiver import TransceiverIndicator, _Thresholds, _UNCONNECTED_DBM
 
 
 # ── Fixtures ────────────────────────────────────────────────────────
@@ -789,3 +789,118 @@ class TestCheckSingleRecord:
         assert result["data"]["rx_power"] == -5.0
         assert result["data"]["temperature"] == 35.0
         assert result["data"]["voltage"] == 3.3
+
+
+# ── Unconnected module (-36.95 dBm) tests ─────────────────────────
+
+
+class TestUnconnectedModule:
+    """Tests for -36.95 dBm sentinel (module present, no fiber attached)."""
+
+    def test_unconnected_tx_rx_flagged(self, indicator, thresholds):
+        """Record with both tx/rx at -36.95 → failure marked unconnected_only."""
+        record = _make_record(
+            tx_power=_UNCONNECTED_DBM, rx_power=_UNCONNECTED_DBM,
+            temperature=35.0, voltage=3.3,
+        )
+        result = indicator._check_single_record(record, thresholds)
+        assert result is not None
+        assert result["unconnected_only"] is True
+
+    def test_unconnected_rx_only_flagged(self, indicator, thresholds):
+        """Only rx at -36.95, tx normal → unconnected_only."""
+        record = _make_record(
+            tx_power=-2.0, rx_power=_UNCONNECTED_DBM,
+            temperature=35.0, voltage=3.3,
+        )
+        result = indicator._check_single_record(record, thresholds)
+        assert result is not None
+        assert result["unconnected_only"] is True
+
+    def test_real_power_failure_not_flagged(self, indicator, thresholds):
+        """rx at -22.0 (real failure, not sentinel) → unconnected_only=False."""
+        record = _make_record(
+            tx_power=-2.0, rx_power=-22.0,
+            temperature=35.0, voltage=3.3,
+        )
+        result = indicator._check_single_record(record, thresholds)
+        assert result is not None
+        assert result["unconnected_only"] is False
+
+    def test_temperature_failure_overrides(self, indicator, thresholds):
+        """Even with -36.95 power, temperature failure → unconnected_only=False."""
+        record = _make_record(
+            tx_power=_UNCONNECTED_DBM, rx_power=_UNCONNECTED_DBM,
+            temperature=85.0, voltage=3.3,
+        )
+        result = indicator._check_single_record(record, thresholds)
+        assert result is not None
+        assert result["unconnected_only"] is False
+
+    def test_all_none_not_unconnected(self, indicator, thresholds):
+        """All None → '光模塊缺失', not unconnected_only."""
+        record = _make_record(
+            tx_power=None, rx_power=None,
+            temperature=None, voltage=None,
+        )
+        result = indicator._check_single_record(record, thresholds)
+        assert result is not None
+        assert result["unconnected_only"] is False
+
+
+@pytest.mark.asyncio
+class TestUnconnectedDevicePass:
+    """Device-level: all failures from -36.95 → device passes."""
+
+    async def test_all_unconnected_device_passes(self, indicator, mock_session):
+        """Device where ALL interface failures are -36.95 → PASS."""
+        records = [
+            _make_record("SW-01", "Gi1/0/1",
+                         tx_power=_UNCONNECTED_DBM, rx_power=_UNCONNECTED_DBM,
+                         temperature=35.0, voltage=3.3),
+            _make_record("SW-01", "Gi1/0/2",
+                         tx_power=-2.0, rx_power=_UNCONNECTED_DBM,
+                         temperature=35.0, voltage=3.3),
+        ]
+
+        with (
+            patch.object(indicator, "_get_active_device_hostnames",
+                         return_value=["SW-01"]),
+            patch.object(TransceiverIndicator, "_load_thresholds",
+                         return_value=STANDARD_THRESHOLDS),
+            patch("app.indicators.transceiver.TransceiverRecordRepo.get_latest_per_device",
+                  new_callable=AsyncMock, return_value=records),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
+
+        assert result.pass_count == 1
+        assert result.fail_count == 0
+        assert result.passes is not None
+        assert "未對接已忽略" in result.passes[0]["reason"]
+
+    async def test_mixed_unconnected_and_real_fail(self, indicator, mock_session):
+        """Device with 1 unconnected + 1 real failure → FAIL (only real shown)."""
+        records = [
+            _make_record("SW-01", "Gi1/0/1",
+                         tx_power=_UNCONNECTED_DBM, rx_power=_UNCONNECTED_DBM,
+                         temperature=35.0, voltage=3.3),
+            _make_record("SW-01", "Gi1/0/2",
+                         tx_power=-15.0, rx_power=-5.0,
+                         temperature=35.0, voltage=3.3),
+        ]
+
+        with (
+            patch.object(indicator, "_get_active_device_hostnames",
+                         return_value=["SW-01"]),
+            patch.object(TransceiverIndicator, "_load_thresholds",
+                         return_value=STANDARD_THRESHOLDS),
+            patch("app.indicators.transceiver.TransceiverRecordRepo.get_latest_per_device",
+                  new_callable=AsyncMock, return_value=records),
+        ):
+            result = await indicator.evaluate(MAINTENANCE_ID, mock_session)
+
+        assert result.pass_count == 0
+        assert result.fail_count == 1
+        # Only the real failure interface should be listed
+        assert "Gi1/0/2" in result.failures[0]["interface"]
+        assert len(result.failures[0]["data"]["failing_interfaces"]) == 1

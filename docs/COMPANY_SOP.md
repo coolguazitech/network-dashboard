@@ -1,7 +1,18 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.19.15 (2026-03-29)
+> **版本**: v2.20.0 (2026-03-30)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.20.0 變更摘要**:
+> - **[架構] 版本採集改用 FNA `show install active`**：從 SNMP `sysDescr.0`（只看到單一版本字串）改為 FNA CLI `show install active`，可看到完整的韌體版本 + 補丁列表
+> - **[架構] 版本資料模型重構**：`VersionData.version: str` → `VersionData.packages: list[str]`，DB 欄位從 `VARCHAR(255)` 改為 `JSON`，儲存完整安裝套件列表
+> - **[功能] 版本驗收 substring 匹配**：期望值以分號分隔多個子字串（如 `R1238P06;R1238P06H01`），每個子字串只要是某個實際 package 的 substring 即算匹配，不再要求完全一字不漏比對
+> - **[功能] 新增 FNA Parsers**：`get_version_hpe_fna`（`flash:` 開頭）、`get_version_ios_fna`（`bootflash:`）、`get_version_nxos_fna`（`bootflash:`），解析 `show install active` 輸出
+> - **[設定] FNA 端點統一**：`FETCHER_ENDPOINT__GET_VERSION` 從 per-device-type DNA dict 改為單一 FNA 端點 `/switch/network/get_install_active/{switch_ip}`
+> - **[DB] Alembic migration `p1q2r3s4t5u6`**：自動將舊 `version` 欄位資料轉為 JSON array，向下相容
+> - **[改善] Transceiver -36.95 dBm 忽略邏輯**：光模塊有安裝但未對接（-36.95 dBm sentinel）的情況不再算失敗，該設備所有 interface 都是此狀態時自動通過
+> - **[改善] Uplink 驗收不再要求鄰居在設備清單**：只要本機 LLDP/CDP 採集到鄰居 B 且 interface 吻合，B 不必被 SNMP 採集也算通過。新增 interface-level 精確匹配
+> - **[改善] SNMP timeout 日誌增強**：WARNING 日誌加入 error reason、OID info、GET vs WALK 資訊
 >
 > **v2.19.15 變更摘要**:
 > - **[Bugfix] 拓樸 per-port 物理約束去重**：一個 port 不可能同時接兩條線，topology API 加入 `used_ports` 集合確保每個 `(hostname, interface)` 只出現一次，消除 LLDP 雙向發現產生的重複 link
@@ -356,9 +367,8 @@ FETCHER_ENDPOINT__GET_FAN__NXOS=/api/v1/nxos/environment/show_environment_fan?ho
 FETCHER_ENDPOINT__GET_POWER__HPE=/api/v1/hpe/environment/display_power?hosts={switch_ip}
 FETCHER_ENDPOINT__GET_POWER__IOS=/api/v1/ios/environment/show_env_power?hosts={switch_ip}
 FETCHER_ENDPOINT__GET_POWER__NXOS=/api/v1/nxos/environment/show_environment_power?hosts={switch_ip}
-FETCHER_ENDPOINT__GET_VERSION__HPE=/api/v1/hpe/version/display_version?hosts={switch_ip}
-FETCHER_ENDPOINT__GET_VERSION__IOS=/api/v1/ios/version/show_version?hosts={switch_ip}
-FETCHER_ENDPOINT__GET_VERSION__NXOS=/api/v1/nxos/version/show_version?hosts={switch_ip}
+# v2.20.0: 版本採集改用 FNA (show install active)，不再需要 per-device-type DNA 端點
+FETCHER_ENDPOINT__GET_VERSION=/switch/network/get_install_active/{switch_ip}
 FETCHER_ENDPOINT__GET_INTERFACE_STATUS__HPE=/api/v1/hpe/interface/display_interface_brief?hosts={switch_ip}
 FETCHER_ENDPOINT__GET_INTERFACE_STATUS__IOS=/api/v1/ios/interface/show_interface_status?hosts={switch_ip}
 FETCHER_ENDPOINT__GET_INTERFACE_STATUS__NXOS=/api/v1/nxos/interface/show_interface_status?hosts={switch_ip}
@@ -465,7 +475,7 @@ fetchers:
   # 指標類 — 600s (10min)，歸入 full_round
   get_fan:              { source: DNA, interval: 600 }
   get_power:            { source: DNA, interval: 600 }
-  get_version:          { source: DNA, interval: 600 }
+  get_version:          { source: FNA, interval: 600 }  # v2.20.0: 改用 FNA (show install active)
   get_gbic_details:     { source: FNA, interval: 600 }
   get_error_count:      { source: FNA, interval: 600 }
   get_channel_group:    { source: FNA, interval: 600 }
@@ -1081,10 +1091,7 @@ endpoints:
     hpe:  "/api/v1/hpe/environment/display_power"
     ios:  "/api/v1/ios/environment/show_env_power"
     nxos: "/api/v1/nxos/environment/show_environment_power"
-  get_version:
-    hpe:  "/api/v1/hpe/version/display_version"
-    ios:  "/api/v1/ios/version/show_version"
-    nxos: "/api/v1/nxos/version/show_version"
+  get_version: "/switch/network/get_install_active/{switch_ip}"  # v2.20.0: FNA 統一端點
   get_interface_status:
     hpe:  "/api/v1/hpe/interface/display_interface_brief"
     ios:  "/api/v1/ios/interface/show_interface_status"
@@ -1591,9 +1598,9 @@ app/parsers/plugins/{api_name}_{device_type}_{source}_parser.py
 | 27 | `get_power_hpe_dna_parser.py` | `get_power_hpe_dna` | HPE | DNA | PowerData |
 | 28 | `get_power_ios_dna_parser.py` | `get_power_ios_dna` | CISCO_IOS | DNA | PowerData |
 | 29 | `get_power_nxos_dna_parser.py` | `get_power_nxos_dna` | CISCO_NXOS | DNA | PowerData |
-| 30 | `get_version_hpe_dna_parser.py` | `get_version_hpe_dna` | HPE | DNA | VersionData |
-| 31 | `get_version_ios_dna_parser.py` | `get_version_ios_dna` | CISCO_IOS | DNA | VersionData |
-| 32 | `get_version_nxos_dna_parser.py` | `get_version_nxos_dna` | CISCO_NXOS | DNA | VersionData |
+| 30 | `get_version_hpe_fna_parser.py` | `get_version_hpe_fna` | HPE | FNA | VersionData |
+| 31 | `get_version_ios_fna_parser.py` | `get_version_ios_fna` | CISCO_IOS | FNA | VersionData |
+| 32 | `get_version_nxos_fna_parser.py` | `get_version_nxos_fna` | CISCO_NXOS | FNA | VersionData |
 | 33 | `get_interface_status_hpe_dna_parser.py` | `get_interface_status_hpe_dna` | HPE | DNA | InterfaceStatusData |
 | 34 | `get_interface_status_ios_dna_parser.py` | `get_interface_status_ios_dna` | CISCO_IOS | DNA | InterfaceStatusData |
 | 35 | `get_interface_status_nxos_dna_parser.py` | `get_interface_status_nxos_dna` | CISCO_NXOS | DNA | InterfaceStatusData |

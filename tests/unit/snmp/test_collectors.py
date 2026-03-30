@@ -941,7 +941,7 @@ class TestVersionCollector:
         assert raw_text
         assert len(parsed_items) == 1
         assert isinstance(parsed_items[0], VersionData)
-        assert parsed_items[0].version == "7.1.070 6728P06"
+        assert parsed_items[0].packages == ["7.1.070 6728P06"]
 
     @pytest.mark.asyncio
     async def test_version_cisco_ios(self, target, engine, session_cache):
@@ -958,7 +958,7 @@ class TestVersionCollector:
 
         assert raw_text
         assert len(parsed_items) == 1
-        assert parsed_items[0].version == "15.2(7)E2"
+        assert parsed_items[0].packages == ["15.2(7)E2"]
 
     @pytest.mark.asyncio
     async def test_version_fallback(self, target, engine, session_cache):
@@ -974,7 +974,7 @@ class TestVersionCollector:
 
         assert raw_text
         assert len(parsed_items) == 1
-        assert parsed_items[0].version == "Unknown Device"
+        assert parsed_items[0].packages == ["Unknown Device"]
 
 
 # =====================================================================

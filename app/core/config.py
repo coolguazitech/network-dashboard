@@ -91,11 +91,7 @@ class FetcherEndpointConfig(BaseModel):
         "ios": "/api/v1/ios/environment/show_env_power?hosts={switch_ip}",
         "nxos": "/api/v1/nxos/environment/show_environment_power?hosts={switch_ip}",
     }
-    get_version: str | dict[str, str] = {
-        "hpe": "/api/v1/hpe/version/display_version?hosts={switch_ip}",
-        "ios": "/api/v1/ios/version/show_version?hosts={switch_ip}",
-        "nxos": "/api/v1/nxos/version/show_version?hosts={switch_ip}",
-    }
+    get_version: str = "/switch/network/get_install_active/{switch_ip}"
     get_interface_status: str | dict[str, str] = {
         "hpe": "/api/v1/hpe/interface/display_interface_brief?hosts={switch_ip}",
         "ios": "/api/v1/ios/interface/show_interface_status?hosts={switch_ip}",
