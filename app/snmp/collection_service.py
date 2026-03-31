@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 _API_PASSTHROUGH = frozenset({
     "get_static_acl",
     "get_dynamic_acl",
+    "get_version",
     "gnms_ping",
     "ping_batch",
 })
@@ -36,7 +37,6 @@ FAST_ROUND_COLLECTORS = [
 FULL_ROUND_COLLECTORS = [
     "get_fan",
     "get_power",
-    "get_version",
     "get_gbic_details",
     "get_error_count",
     "get_channel_group",
@@ -44,11 +44,12 @@ FULL_ROUND_COLLECTORS = [
     "get_uplink_cdp",
 ]
 
-# ACL collectors that use REST API passthrough (not SNMP)
+# Collectors that use REST API passthrough (not SNMP)
 # These need separate legacy jobs even in SNMP mode.
 API_PASSTHROUGH_COLLECTORS = [
     "get_static_acl",
     "get_dynamic_acl",
+    "get_version",
 ]
 
 

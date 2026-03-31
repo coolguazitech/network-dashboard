@@ -1,7 +1,10 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.20.0 (2026-03-30)
+> **版本**: v2.20.1 (2026-03-31)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.20.1 變更摘要**:
+> - **[架構] get_version 改為 API passthrough**：SNMP 模式下 `get_version` 不再走 SNMP `sysDescr.0`，改為與 ACL/Ping 一樣走 REST API passthrough（FNA `show install active`），確保即使 `COLLECTION_MODE=snmp` 也能拿到完整的韌體 + 補丁列表
 >
 > **v2.20.0 變更摘要**:
 > - **[架構] 版本採集改用 FNA `show install active`**：從 SNMP `sysDescr.0`（只看到單一版本字串）改為 FNA CLI `show install active`，可看到完整的韌體版本 + 補丁列表

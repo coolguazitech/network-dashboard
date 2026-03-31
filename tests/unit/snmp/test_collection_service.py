@@ -255,6 +255,6 @@ def test_collector_map_has_all_10_apis():
 
 
 def test_api_passthrough_set():
-    """_API_PASSTHROUGH should contain exactly the 4 non-SNMP API names."""
-    expected = {"get_static_acl", "get_dynamic_acl", "gnms_ping", "ping_batch"}
+    """_API_PASSTHROUGH should contain exactly the 5 non-SNMP API names."""
+    expected = {"get_static_acl", "get_dynamic_acl", "get_version", "gnms_ping", "ping_batch"}
     assert _API_PASSTHROUGH == expected
