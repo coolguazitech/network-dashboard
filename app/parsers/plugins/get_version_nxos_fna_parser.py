@@ -42,10 +42,8 @@ class GetVersionNxosFnaParser(BaseParser[VersionData]):
     device_type = DeviceType.CISCO_NXOS
     command = "get_version_nxos_fna"
 
-    # Match bootflash: paths (with optional /// prefix)
-    BOOTFLASH_PATTERN = re.compile(
-        r"(bootflash:/{0,3}\S+)", re.MULTILINE,
-    )
+    # Match bootflash: paths anywhere in text (FNA may return single-line)
+    BOOTFLASH_PATTERN = re.compile(r"bootflash:/{0,3}\S+")
 
     def parse(self, raw_output: str) -> list[VersionData]:
         if not raw_output or not raw_output.strip():

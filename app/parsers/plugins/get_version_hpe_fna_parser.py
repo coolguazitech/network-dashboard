@@ -28,23 +28,28 @@ class GetVersionHpeFnaParser(BaseParser[VersionData]):
     """
     Parser for HPE Comware ``show install active`` output.
 
-    Real CLI output example::
+    Real CLI output example (multi-line)::
 
         Active Packages on slot 1:
           flash:/5710-CMW710-BOOT-R1238P06.bin
           flash:/5710-CMW710-SYSTEM-R1238P06.bin
           flash:/5710-CMW710-PATCH-R1238P06H01.bin
-          flash:/5940-CMW710-SECURITY-FIX-01.bin
 
-    The number of ``flash:`` lines varies per device and may include
+    Real CLI output example (single-line, FNA API format)::
+
+        Active packages on slot 1:  flash:/5945-cmw710-boot-r6635.bin  flash:/5945-cmw710-system-r6635.bin  flash:/5945-CMW710-SYSTEM-R6635H17.bin
+
+    The number of packages varies per device and may include
     boot, system, patch, and additional fix packages.
+    FNA API may return all packages on a single line separated by spaces.
     """
 
     device_type = DeviceType.HPE
     command = "get_version_hpe_fna"
 
-    # Lines starting with optional whitespace + "flash:"
-    FLASH_PATTERN = re.compile(r"^\s*(flash:/\S+)", re.MULTILINE)
+    # Match all "flash:/..." tokens anywhere in the text (not just line start)
+    FLASH_PATTERN = re.compile(r"flash:/\S+")
+
 
     def parse(self, raw_output: str) -> list[VersionData]:
         if not raw_output or not raw_output.strip():
