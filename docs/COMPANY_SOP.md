@@ -1,7 +1,10 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.20.1 (2026-03-31)
+> **版本**: v2.20.2 (2026-03-31)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.20.2 變更摘要**:
+> - **[Bugfix] FNA parser regex 修正**：FNA API 回傳 `show install active` 時所有 package 在同一行（空格分隔），舊 regex 用 `^`（行首錨點）導致只抓到第一個或零個 package。移除行首錨點，改為全文搜尋 `flash:/\S+` / `bootflash:/\S+`，正確抓取所有 package
 >
 > **v2.20.1 變更摘要**:
 > - **[架構] get_version 改為 API passthrough**：SNMP 模式下 `get_version` 不再走 SNMP `sysDescr.0`，改為與 ACL/Ping 一樣走 REST API passthrough（FNA `show install active`），確保即使 `COLLECTION_MODE=snmp` 也能拿到完整的韌體 + 補丁列表
@@ -228,7 +231,7 @@
 
 ## 目錄
 
-- [從舊版升級到 v2.20.1（必讀）](#從舊版升級到-v2201必讀)
+- [從舊版升級到 v2.20.2（必讀）](#從舊版升級到-v2201必讀)
 - [Phase 1：公司端初始部署](#phase-1公司端初始部署)
 - [Phase 1b：SNMP 模式驗證與除錯](#phase-1bsnmp-模式驗證與除錯)
 - [Phase 2：Parser 開發（核心工作）](#phase-2parser-開發核心工作)
@@ -241,7 +244,7 @@
 
 ---
 
-## 從舊版升級到 v2.20.1（必讀）
+## 從舊版升級到 v2.20.2（必讀）
 
 > 如果公司環境已有舊版（v2.19.x 或 v2.20.0）在跑，照以下步驟升級。
 > **全新部署**請直接跳到 [Phase 1](#phase-1公司端初始部署)。
@@ -254,14 +257,14 @@
 
 | Image | 版本 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.20.1` | 主應用 |
-| `coolguazi/netora-mock-server:v2.20.1` | Mock API（僅 Mock 模式需要） |
+| `coolguazi/network-dashboard-base:v2.20.2` | 主應用 |
+| `coolguazi/netora-mock-server:v2.20.2` | Mock API（僅 Mock 模式需要） |
 
 掃描通過後更新 `.env`：
 
 ```ini
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.20.1
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.20.1   # Mock 模式才需要
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.20.2
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.20.2   # Mock 模式才需要
 ```
 
 #### Step 2：修改 .env 中的版本端點（必做，否則啟動失敗）
@@ -337,9 +340,9 @@ docker exec netora_db mariadb -uadmin -padmin netora -e "SELECT switch_hostname,
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.20.1` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.20.2` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.20.1` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.20.2` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
@@ -375,17 +378,17 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.20.1
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.20.2
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.20.1
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.20.2
 ```
 
 拉取 image：
 
 ```bash
-docker pull registry.company.com/netora/network-dashboard-base:v2.20.1
+docker pull registry.company.com/netora/network-dashboard-base:v2.20.2
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.20.1
+docker pull registry.company.com/netora/netora-mock-server:v2.20.2
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 
