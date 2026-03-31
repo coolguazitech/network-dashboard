@@ -74,6 +74,7 @@ GENERATORS: dict[str, Callable[..., str]] = {
     "get_fan": fan.generate,
     "get_power": power.generate,
     "get_version": version.generate,
+    "get_install_active": version.generate_install_active,
     "ping_batch": ping_batch.generate,
     "get_interface_status": interface_status.generate,
     "gnms_ping": gnms_ping.generate,
@@ -156,6 +157,7 @@ FNA_ROUTES: dict[str, str] = {
     "/switch/network/get_interface_error_count/{switch_ip}": "get_error_count",
     "/switch/network/get_static_acl/{switch_ip}": "get_static_acl",
     "/switch/network/get_dynamic_acl/{switch_ip}": "get_dynamic_acl",
+    "/switch/network/get_install_active/{switch_ip}": "get_install_active",
 }
 
 

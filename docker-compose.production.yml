@@ -100,7 +100,7 @@ services:
 
   # ── Mock API Server（僅 mock profile 啟用）──────────────────────────
   mock-api:
-    image: ${MOCK_IMAGE:-coolguazi/netora-mock-server:v2.19.11}
+    image: ${MOCK_IMAGE:-coolguazi/netora-mock-server:v2.20.1}
     container_name: netora_mock_api
     restart: unless-stopped
     profiles: ["mock"]

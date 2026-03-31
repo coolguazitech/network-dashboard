@@ -11,6 +11,43 @@ def generate(device_type: str, fails: bool = False, **_kw: object) -> str:
         return _generate_hpe(fails)
 
 
+def generate_install_active(device_type: str, fails: bool = False, **_kw: object) -> str:
+    """FNA show install active — flash:/bootflash: package list."""
+    if device_type == "nxos":
+        return _generate_install_active_nxos(fails)
+    elif device_type == "ios":
+        return _generate_install_active_ios(fails)
+    else:
+        return _generate_install_active_hpe(fails)
+
+
+def _generate_install_active_hpe(fails: bool) -> str:
+    release = "R1238P05" if fails else "R1238P06"
+    return (
+        "Active Packages on Slot 1:\n"
+        f"  flash:/5710-CMW710-BOOT-{release}.bin\n"
+        f"  flash:/5710-CMW710-SYSTEM-{release}.bin\n"
+        f"  flash:/5710-CMW710-BOOT-PATCH-{release}H01.bin\n"
+    )
+
+
+def _generate_install_active_nxos(fails: bool) -> str:
+    ver = "9.3.8" if fails else "10.3.3"
+    return (
+        "Active Packages:\n"
+        f"  bootflash:nxos64-cs.{ver}.bin\n"
+    )
+
+
+def _generate_install_active_ios(fails: bool) -> str:
+    ver = "16.12.04" if fails else "17.09.04a"
+    return (
+        "Active Packages:\n"
+        f"  bootflash:cat9k_iosxe.{ver}.SPA.bin\n"
+        f"  bootflash:cat9k_iosxe_rpbase.{ver}.SPA.pkg\n"
+    )
+
+
 def _generate_hpe(fails: bool) -> str:
     release = "6635P05" if fails else "6635P07"
     return (
