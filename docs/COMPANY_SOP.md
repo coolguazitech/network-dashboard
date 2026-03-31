@@ -228,6 +228,7 @@
 
 ## 目錄
 
+- [從舊版升級到 v2.20.1（必讀）](#從舊版升級到-v2201必讀)
 - [Phase 1：公司端初始部署](#phase-1公司端初始部署)
 - [Phase 1b：SNMP 模式驗證與除錯](#phase-1bsnmp-模式驗證與除錯)
 - [Phase 2：Parser 開發（核心工作）](#phase-2parser-開發核心工作)
@@ -237,6 +238,92 @@
 - [附錄 C：ParsedData 模型欄位](#附錄-cparseddata-模型欄位)
 - [附錄 D：SNMP 程式碼除錯指南（自己看懂 + 找問題）](#附錄-dsnmp-程式碼除錯指南自己看懂--找問題)
 - [附錄 E：Kubernetes 部署指南（API / Scheduler 分離架構）](#附錄-ekubernetes-部署指南api--scheduler-分離架構)
+
+---
+
+## 從舊版升級到 v2.20.1（必讀）
+
+> 如果公司環境已有舊版（v2.19.x 或 v2.20.0）在跑，照以下步驟升級。
+> **全新部署**請直接跳到 [Phase 1](#phase-1公司端初始部署)。
+
+### 升級步驟
+
+#### Step 1：更新 Image
+
+將新版 image 提交公司 registry 掃描：
+
+| Image | 版本 |
+|-------|------|
+| `coolguazi/network-dashboard-base:v2.20.1` | 主應用 |
+| `coolguazi/netora-mock-server:v2.20.1` | Mock API（僅 Mock 模式需要） |
+
+掃描通過後更新 `.env`：
+
+```ini
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.20.1
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.20.1   # Mock 模式才需要
+```
+
+#### Step 2：修改 .env 中的版本端點（必做，否則啟動失敗）
+
+**刪除**舊的 per-device-type 版本端點（如果有的話）：
+
+```ini
+# ❌ 刪除以下三行（v2.19.x 舊格式，會導致 Pydantic 驗證失敗）
+FETCHER_ENDPOINT__GET_VERSION__HPE=/api/v1/hpe/version/display_version?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_VERSION__IOS=/api/v1/ios/version/show_version?hosts={switch_ip}
+FETCHER_ENDPOINT__GET_VERSION__NXOS=/api/v1/nxos/version/show_version?hosts={switch_ip}
+```
+
+**新增**單一 FNA 端點：
+
+```ini
+# ✅ v2.20.0+ 新格式：單一 FNA 端點，所有廠牌共用
+FETCHER_ENDPOINT__GET_VERSION=/switch/network/get_install_active/{switch_ip}
+```
+
+> **不改會怎樣？** 舊的三行 `__HPE/__IOS/__NXOS` 後綴會被 Pydantic 解析成 dict，
+> 但新版 config 定義是 `str` → 啟動時報 `ValidationError: Input should be a valid string` → **App 無法啟動**。
+
+#### Step 3：重啟服務
+
+```bash
+# 正常重啟（不需要刪 PVC / volume，alembic 會自動遷移）
+docker compose -f docker-compose.production.yml down
+docker compose -f docker-compose.production.yml up -d
+
+# 或 K8s
+kubectl rollout restart deployment/netora-app
+```
+
+#### Step 4：驗證
+
+```bash
+# 1. 確認啟動成功
+curl http://localhost:8000/health
+
+# 2. 確認 alembic 遷移完成（看 entrypoint 日誌）
+docker logs netora_app 2>&1 | grep -i "alembic\|migration\|stamp"
+# 應看到: "Running stamp_revision -> p1q2r3s4t5u6" 或 "Database is already at latest migration"
+
+# 3. 確認 DB schema（packages 欄位應為 longtext/JSON）
+docker exec netora_db mariadb -uadmin -padmin netora -e "DESCRIBE version_records;" | grep packages
+# 應看到: packages    longtext    YES
+
+# 4. 等一輪採集後確認版本資料正確
+docker exec netora_db mariadb -uadmin -padmin netora -e "SELECT switch_hostname, packages FROM version_records LIMIT 3;"
+# 應看到 JSON array 格式，如: ["flash:/5710-CMW710-BOOT-R1238P06.bin", ...]
+```
+
+### DB 遷移說明（不需手動操作）
+
+| 舊 DB 狀態 | Alembic 自動處理 |
+|-----------|----------------|
+| v2.19.x（有 `version` VARCHAR 欄位） | Migration `p1q2r3s4t5u6` 自動：新增 `packages` JSON 欄位 → `UPDATE SET packages = JSON_ARRAY(version)` → 刪除舊 `version` 欄位 |
+| v2.20.0（已有 `packages` JSON 欄位） | 已在最新 migration，跳過 |
+| 全新 DB（空的） | `create_all` 建表 → stamp head，直接建出正確 schema |
+
+> **PVC 不需要刪除**。Alembic 會自動偵測 DB 狀態並執行對應遷移。舊資料會被保留並轉換格式。
 
 ---
 
@@ -250,9 +337,9 @@
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.19.12` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.20.1` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.19.0` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.20.1` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
@@ -288,17 +375,17 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.19.0
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.20.1
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.19.0
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.20.1
 ```
 
 拉取 image：
 
 ```bash
-docker pull registry.company.com/netora/network-dashboard-base:v2.19.0
+docker pull registry.company.com/netora/network-dashboard-base:v2.20.1
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.19.0
+docker pull registry.company.com/netora/netora-mock-server:v2.20.1
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 
