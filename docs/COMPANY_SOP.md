@@ -1602,6 +1602,8 @@ print(f'Total: {len(parser_registry._parsers)} parsers')
 | SNMP 指標全部 0/0 | SNMP 模式未啟用 | 確認 `COLLECTION_MODE=snmp`，見 [Phase 1b](#phase-1bsnmp-模式驗證與除錯) |
 | SNMP 某指標錯誤 | OID 與設備不相容 | 用 snmpwalk 驗證，見 [1b.7](#1b7-snmp-採集失敗的排查流程) |
 | SNMP 日誌看不到 | APP_DEBUG=false | 設 `APP_DEBUG=true` 重啟 |
+| App 啟動報 `ValidationError: Input should be a valid string`，日誌顯示 `fetcher_endpoint.get_version` 收到 dict `{'nxos': '...'}` | `.env` 仍有舊版 per-device-type 端點 `FETCHER_ENDPOINT__GET_VERSION__HPE/IOS/NXOS`，Pydantic 解析成 dict 而非 str | **刪除**舊的三行 `__HPE/__IOS/__NXOS`，**新增**一行 `FETCHER_ENDPOINT__GET_VERSION=/switch/network/get_install_active/{switch_ip}`，見 [升級 Step 2](#step-2修改-env-中的版本端點必做否則啟動失敗) |
+| App 啟動報 DB connection timeout 60s | DB 容器尚未就緒或連線資訊錯誤 | 確認 DB 容器 healthy（`docker ps`），檢查 `.env` 中 `DB_HOST`/`DB_PORT`/`DB_PASSWORD` 是否正確，K8s 環境確認 Service/Endpoint 可達 |
 
 ### 版本更新（重要）
 
