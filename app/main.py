@@ -4,8 +4,10 @@ Network Dashboard - FastAPI Application Entry Point.
 from __future__ import annotations
 
 import logging
+import os
 import traceback
 from contextlib import asynccontextmanager
+from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -308,7 +310,7 @@ def create_app() -> FastAPI:
         scheduler = get_scheduler_service()
         return {
             "status": "ok",
-            "version": "0.3.0",
+            "version": os.getenv("APP_VERSION") or pkg_version("network-dashboard"),
             "scheduler_running": scheduler.is_running(),
             "scheduled_jobs": len(scheduler.get_jobs()),
         }

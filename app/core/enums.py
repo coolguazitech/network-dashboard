@@ -55,11 +55,19 @@ class DataType(str, Enum):
 class TenantGroup(str, Enum):
     """Tenant group for GNMS Ping API."""
 
-    F18 = "F18"
-    F6 = "F6"
+    Infra = "Infra"
+    Fab200mm = "Fab200mm"
     AP = "AP"
-    F14 = "F14"
+    F6 = "F6"
     F12 = "F12"
+    F14 = "F14"
+    F15 = "F15"
+    F16 = "F16"
+    F18 = "F18"
+    F20 = "F20"
+    F21 = "F21"
+    F22 = "F22"
+    F23 = "F23"
 
 
 class ClientDetectionStatus(str, Enum):

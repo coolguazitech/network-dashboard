@@ -115,6 +115,8 @@ services:
     env_file:
       - .env
     environment:
+      # 應用程式版本（對應 image tag）
+      APP_VERSION: ${APP_VERSION:-dev}
       # 資料庫連線（覆寫 .env 中的設定，使用 docker 網路）
       DB_HOST: db
       DB_PORT: 3306
@@ -171,6 +173,10 @@ services:
     networks:
       - dashboard_net
     volumes:
+      # 掛載應用程式碼（開發時即時生效）
+      - ./app:/app/app:ro
+      # 掛載前端靜態檔案（開發時 build 後即時生效）
+      - ./frontend/dist:/app/static:ro
       # 掛載設定檔（方便開發時修改）
       - ./config:/app/config:ro
       # 掛載測試資料

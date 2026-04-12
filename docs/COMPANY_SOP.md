@@ -1,7 +1,14 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.20.2 (2026-03-31)
+> **版本**: v2.21.0 (2026-04-13)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.21.0 變更摘要**:
+> - **[功能] GNMS MacARP Client 自動匯入**：Client 清單新增「從 GNMS 匯入」精靈，透過 GNMS MacARP API 批次查詢設備的 Client MAC/IP，支援分批（每批 100 台）、設備篩選、分組標記備註/負責人、去重匯入。新增 `GNMS_MACARP__BASE_URL` / `GNMS_MACARP__TOKEN` 環境變數
+> - **[功能] Tenant Group 擴充**：從 5 個（F18/F6/AP/F14/F12）擴充至 13 個，新增 Infra/Fab200mm/F15/F16/F20/F21/F22/F23，GNMS Ping base URL 同步更新
+> - **[功能] Client/設備清單「清空全部」按鈕**：一鍵清空整份清單，附二次確認對話框
+> - **[改善] Health endpoint 版本動態化**：`/health` 回傳的 `version` 從寫死改為讀取 `APP_VERSION` 環境變數
+> - **[DB] Alembic migration `q2r3s4t5u6v7`**：擴充 `tenant_group` ENUM 欄位，含防禦性 table 存在檢查
 >
 > **v2.20.2 變更摘要**:
 > - **[Bugfix] FNA parser regex 修正**：FNA API 回傳 `show install active` 時所有 package 在同一行（空格分隔），舊 regex 用 `^`（行首錨點）導致只抓到第一個或零個 package。移除行首錨點，改為全文搜尋 `flash:/\S+` / `bootflash:/\S+`，正確抓取所有 package
@@ -231,7 +238,7 @@
 
 ## 目錄
 
-- [從舊版升級到 v2.20.2（必讀）](#從舊版升級到-v2201必讀)
+- [從舊版升級到 v2.21.0（必讀）](#從舊版升級到-v2210必讀)
 - [Phase 1：公司端初始部署](#phase-1公司端初始部署)
 - [Phase 1b：SNMP 模式驗證與除錯](#phase-1bsnmp-模式驗證與除錯)
 - [Phase 2：Parser 開發（核心工作）](#phase-2parser-開發核心工作)
@@ -244,9 +251,9 @@
 
 ---
 
-## 從舊版升級到 v2.20.2（必讀）
+## 從舊版升級到 v2.21.0（必讀）
 
-> 如果公司環境已有舊版（v2.19.x 或 v2.20.0）在跑，照以下步驟升級。
+> 如果公司環境已有舊版（v2.19.x ~ v2.20.x）在跑，照以下步驟升級。
 > **全新部署**請直接跳到 [Phase 1](#phase-1公司端初始部署)。
 
 ### 升級步驟
@@ -257,14 +264,14 @@
 
 | Image | 版本 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.20.2` | 主應用 |
-| `coolguazi/netora-mock-server:v2.20.2` | Mock API（僅 Mock 模式需要） |
+| `coolguazi/network-dashboard-base:v2.21.0` | 主應用 |
+| `coolguazi/netora-mock-server:v2.21.0` | Mock API（僅 Mock 模式需要） |
 
 掃描通過後更新 `.env`：
 
 ```ini
 APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.20.2
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.20.2   # Mock 模式才需要
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.0   # Mock 模式才需要
 ```
 
 #### Step 2：修改 .env 中的版本端點（必做，否則啟動失敗）
@@ -307,7 +314,7 @@ curl http://localhost:8000/health
 
 # 2. 確認 alembic 遷移完成（看 entrypoint 日誌）
 docker logs netora_app 2>&1 | grep -i "alembic\|migration\|stamp"
-# 應看到: "Running stamp_revision -> p1q2r3s4t5u6" 或 "Database is already at latest migration"
+# 應看到: "Running stamp_revision -> q2r3s4t5u6v7" 或 "Database is already at latest migration"
 
 # 3. 確認 DB schema（packages 欄位應為 longtext/JSON）
 docker exec netora_db mariadb -uadmin -padmin netora -e "DESCRIBE version_records;" | grep packages
@@ -322,8 +329,8 @@ docker exec netora_db mariadb -uadmin -padmin netora -e "SELECT switch_hostname,
 
 | 舊 DB 狀態 | Alembic 自動處理 |
 |-----------|----------------|
-| v2.19.x（有 `version` VARCHAR 欄位） | Migration `p1q2r3s4t5u6` 自動：新增 `packages` JSON 欄位 → `UPDATE SET packages = JSON_ARRAY(version)` → 刪除舊 `version` 欄位 |
-| v2.20.0（已有 `packages` JSON 欄位） | 已在最新 migration，跳過 |
+| v2.19.x（有 `version` VARCHAR 欄位） | Migration `p1q2r3s4t5u6` 自動轉 packages JSON + `q2r3s4t5u6v7` 擴充 tenant_group ENUM |
+| v2.20.x（已有 `packages` JSON 欄位） | Migration `q2r3s4t5u6v7` 擴充 tenant_group ENUM |
 | 全新 DB（空的） | `create_all` 建表 → stamp head，直接建出正確 schema |
 
 > **PVC 不需要刪除**。Alembic 會自動偵測 DB 狀態並執行對應遷移。舊資料會被保留並轉換格式。
@@ -340,9 +347,9 @@ docker exec netora_db mariadb -uadmin -padmin netora -e "SELECT switch_hostname,
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.20.2` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.21.0` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.20.2` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.21.0` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
@@ -380,7 +387,7 @@ cd netora
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
 APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.20.2
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.20.2
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.0
 ```
 
 拉取 image：
@@ -388,7 +395,7 @@ MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.20.2
 ```bash
 docker pull registry.company.com/netora/network-dashboard-base:v2.20.2
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.20.2
+docker pull registry.company.com/netora/netora-mock-server:v2.21.0
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 
@@ -436,11 +443,25 @@ FETCHER_SOURCE__DNA__TIMEOUT=30
 GNMSPING__TIMEOUT=15                           # 原 60s 導致 ping job 超時被 skip → 燈號錯誤
 GNMSPING__ENDPOINT=/api/v1/ping
 GNMSPING__TOKEN=<GNMSPING token（所有 tenant 共用）>
-GNMSPING__BASE_URLS__F18=http://<GNMSPING-F18伺服器IP>:<port>
-GNMSPING__BASE_URLS__F6=http://<GNMSPING-F6伺服器IP>:<port>
-GNMSPING__BASE_URLS__AP=http://<GNMSPING-AP伺服器IP>:<port>
-GNMSPING__BASE_URLS__F14=http://<GNMSPING-F14伺服器IP>:<port>
-GNMSPING__BASE_URLS__F12=http://<GNMSPING-F12伺服器IP>:<port>
+GNMSPING__BASE_URLS__Infra=http://public-gnmspingsvc.netsre.icsd.tsmc.com/
+GNMSPING__BASE_URLS__Fab200mm=http://public-gnmspingsvc.netsre.edg.200mm.tsmc.com/
+GNMSPING__BASE_URLS__AP=http://public-gnmspingsvc.netsre.edg.ap.tsmc.com/
+GNMSPING__BASE_URLS__F6=http://public-gnmspingsvc.netsre.edg.f6.tsmc.com/
+GNMSPING__BASE_URLS__F12=http://public-gnmspingsvc.netsre.edg.f12.tsmc.com/
+GNMSPING__BASE_URLS__F14=http://public-gnmspingsvc.netsre.edg.f14.tsmc.com/
+GNMSPING__BASE_URLS__F15=http://public-gnmspingsvc.netsre.edg.f15.tsmc.com/
+GNMSPING__BASE_URLS__F16=http://public-gnmspingsvc.netsre.edg.f16.tsmc.com/
+GNMSPING__BASE_URLS__F18=http://public-gnmspingsvc.netsre.edg.f18.tsmc.com/
+GNMSPING__BASE_URLS__F20=http://public-gnmspingsvc.netsre.edg.f12.tsmc.com/
+GNMSPING__BASE_URLS__F21=http://public-gnmspingsvc.netsre.edg.f21.tsmc.com/
+GNMSPING__BASE_URLS__F22=http://public-gnmspingsvc.netsre.edg.f22.tsmc.com/
+GNMSPING__BASE_URLS__F23=http://public-gnmspingsvc.netsre.edg.f23tsmc.com/
+
+# ===== GNMS MacARP（v2.21.0 新增，Client 自動匯入用）=====
+GNMS_MACARP__BASE_URL=http://netinv.netsre.icsd.tsmc.com
+GNMS_MACARP__TOKEN=<GNMS MacARP Bearer token>
+GNMS_MACARP__TIMEOUT=60
+GNMS_MACARP__BATCH_SIZE=100
 
 # ===== Endpoint 路徑（必改）=====
 # FNA — 所有廠牌共用（5 個 API），IP 在 path 中
@@ -2444,10 +2465,27 @@ data:
   SNMP_COLLECTOR_RETRIES: "1"       # walk timeout 後 collector 層 retry。1 次 = 最多 2 輪 walk
   SNMP_MAX_REPETITIONS: "25"        # GETBULK 每 PDU 回傳 OID 數
 
-  # ── Ping ──
-  GNMSPING__TIMEOUT: "60"
+  # ── Ping（13 個 tenant）──
+  GNMSPING__TIMEOUT: "15"
   GNMSPING__ENDPOINT: "/api/v1/ping"
-  # ... 其餘非機敏設定
+  GNMSPING__BASE_URLS__Infra: "http://public-gnmspingsvc.netsre.icsd.tsmc.com/"
+  GNMSPING__BASE_URLS__Fab200mm: "http://public-gnmspingsvc.netsre.edg.200mm.tsmc.com/"
+  GNMSPING__BASE_URLS__AP: "http://public-gnmspingsvc.netsre.edg.ap.tsmc.com/"
+  GNMSPING__BASE_URLS__F6: "http://public-gnmspingsvc.netsre.edg.f6.tsmc.com/"
+  GNMSPING__BASE_URLS__F12: "http://public-gnmspingsvc.netsre.edg.f12.tsmc.com/"
+  GNMSPING__BASE_URLS__F14: "http://public-gnmspingsvc.netsre.edg.f14.tsmc.com/"
+  GNMSPING__BASE_URLS__F15: "http://public-gnmspingsvc.netsre.edg.f15.tsmc.com/"
+  GNMSPING__BASE_URLS__F16: "http://public-gnmspingsvc.netsre.edg.f16.tsmc.com/"
+  GNMSPING__BASE_URLS__F18: "http://public-gnmspingsvc.netsre.edg.f18.tsmc.com/"
+  GNMSPING__BASE_URLS__F20: "http://public-gnmspingsvc.netsre.edg.f12.tsmc.com/"
+  GNMSPING__BASE_URLS__F21: "http://public-gnmspingsvc.netsre.edg.f21.tsmc.com/"
+  GNMSPING__BASE_URLS__F22: "http://public-gnmspingsvc.netsre.edg.f22.tsmc.com/"
+  GNMSPING__BASE_URLS__F23: "http://public-gnmspingsvc.netsre.edg.f23tsmc.com/"
+
+  # ── GNMS MacARP（v2.21.0 Client 自動匯入）──
+  GNMS_MACARP__BASE_URL: "http://netinv.netsre.icsd.tsmc.com"
+  GNMS_MACARP__TIMEOUT: "60"
+  GNMS_MACARP__BATCH_SIZE: "100"
 
 ---
 apiVersion: v1
@@ -2461,6 +2499,7 @@ stringData:
   JWT_SECRET: "<隨機字串>"
   FETCHER_SOURCE__FNA__TOKEN: "<FNA token>"
   GNMSPING__TOKEN: "<Ping token>"
+  GNMS_MACARP__TOKEN: "<GNMS MacARP token>"
 ```
 
 ### E.3 驗證部署

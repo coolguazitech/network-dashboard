@@ -66,6 +66,12 @@
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importMacList" />
             </label>
+            <button v-if="userCanWrite && macListStats.total > 0" @click="clearAllClients" class="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-sm rounded-lg transition">
+              🗑️ 清空全部
+            </button>
+            <button v-if="userCanWrite" @click="startGnmsWizard" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-sm rounded-lg transition">
+              🔄 從 GNMS 匯入
+            </button>
             <button v-if="userCanWrite" @click="showAddMacModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition">
               ➕ 新增 Client
             </button>
@@ -190,6 +196,9 @@
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importDeviceList" />
             </label>
+            <button v-if="userCanWrite && deviceStats.total > 0" @click="clearAllDevices" class="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-sm rounded-lg transition">
+              🗑️ 清空全部
+            </button>
             <button v-if="userCanWrite" @click="showAddDeviceModal = true" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition">
               ➕ 新增設備
             </button>
@@ -564,6 +573,225 @@
     </div>
     </Transition>
 
+    <!-- GNMS MacARP 匯入精靈 Modal -->
+    <Transition name="modal">
+    <div v-if="gnmsWizard.show" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @mousedown.self="closeGnmsWizard">
+      <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[700px] max-h-[85vh] flex flex-col">
+
+        <!-- Header + 步驟指示 -->
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-white">從 GNMS 匯入 Client</h3>
+          <div class="flex items-center gap-1 text-xs">
+            <span v-for="s in 4" :key="s"
+              class="w-6 h-6 rounded-full flex items-center justify-center font-bold transition"
+              :class="s === gnmsWizard.step
+                ? 'bg-cyan-500 text-white'
+                : s < gnmsWizard.step ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-400'"
+            >{{ s < gnmsWizard.step ? '✓' : s }}</span>
+          </div>
+        </div>
+
+        <!-- Step 1: 確認開始 -->
+        <div v-if="gnmsWizard.step === 1" class="flex-1 space-y-4">
+          <p class="text-slate-300">系統將根據設備清單，從 GNMS MacARP API 批次查詢每台設備的 Client 資訊。</p>
+          <div class="bg-slate-900/60 rounded-lg p-4 space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-slate-400">歲修 ID</span><span class="text-white font-mono">{{ selectedMaintenanceId }}</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">設備數</span><span class="text-white">{{ deviceStats.total }} 台</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">每批上限</span><span class="text-white">100 台</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">預計批次</span><span class="text-white">{{ Math.ceil(deviceStats.total / 100) }} 批</span></div>
+          </div>
+          <div v-if="deviceStats.total === 0" class="text-amber-400 text-sm bg-amber-900/20 rounded-lg p-3">
+            ⚠ 設備清單為空，請先匯入設備後再使用此功能。
+          </div>
+        </div>
+
+        <!-- Step 2: 載入中 -->
+        <div v-if="gnmsWizard.step === 2" class="flex-1 flex flex-col items-center justify-center py-8">
+          <div class="relative h-12 w-12 mb-4">
+            <div class="absolute inset-0 rounded-full border-2 border-slate-700"></div>
+            <div class="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-400 animate-spin"></div>
+          </div>
+          <p class="text-slate-300 mb-1">正在查詢 GNMS MacARP API...</p>
+          <p class="text-sm text-slate-500">第 {{ gnmsWizard.batchIndex + 1 }} / {{ gnmsWizard.totalBatches }} 批</p>
+        </div>
+
+        <!-- Step 3: 檢視結果 + 填入資訊 -->
+        <div v-if="gnmsWizard.step === 3 && gnmsWizard.batchDone" class="flex-1 flex flex-col items-center justify-center py-6 space-y-4">
+          <div class="text-3xl">✅</div>
+          <p class="text-white font-semibold">第 {{ gnmsWizard.batchIndex + 1 }} / {{ gnmsWizard.totalBatches }} 批匯入完成</p>
+          <div class="bg-slate-900/60 rounded-lg p-4 space-y-1 text-sm w-full max-w-xs">
+            <div class="flex justify-between"><span class="text-slate-400">本批新增</span><span class="text-green-400 font-bold">{{ gnmsWizard.batchImported }}</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">本批跳過</span><span class="text-amber-400">{{ gnmsWizard.batchSkipped }}</span></div>
+            <div class="flex justify-between border-t border-slate-700 pt-1 mt-1"><span class="text-slate-400">累計新增</span><span class="text-white font-bold">{{ gnmsWizard.totalImported }}</span></div>
+          </div>
+        </div>
+
+        <div v-if="gnmsWizard.step === 3 && !gnmsWizard.batchDone" class="flex-1 overflow-hidden flex flex-col space-y-4">
+          <div class="flex items-center justify-between">
+            <p class="text-sm text-slate-400">
+              第 <span class="text-white font-bold">{{ gnmsWizard.batchIndex + 1 }}</span> / {{ gnmsWizard.totalBatches }} 批
+              — 共 <span class="text-white font-bold">{{ gnmsWizard.devices.reduce((s, d) => s + d.client_count, 0) }}</span> 筆 Client
+            </p>
+          </div>
+
+          <!-- 搜尋 + 標記篩選 -->
+          <div class="flex items-center gap-2">
+            <input
+              v-model="gnmsWizard.search"
+              type="text"
+              placeholder="篩選設備名稱（例：AGG、CORE-01）..."
+              class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+            />
+            <div class="flex rounded-lg border border-slate-600/40 overflow-hidden text-xs">
+              <button @click="gnmsWizard.metaFilter = 'all'"
+                class="px-2.5 py-1.5 transition"
+                :class="gnmsWizard.metaFilter === 'all' ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'">
+                全部
+              </button>
+              <button @click="gnmsWizard.metaFilter = 'unmarked'"
+                class="px-2.5 py-1.5 border-x border-slate-600/40 transition"
+                :class="gnmsWizard.metaFilter === 'unmarked' ? 'bg-amber-700 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'">
+                未標記 ({{ gnmsUnmarkedCount }})
+              </button>
+              <button @click="gnmsWizard.metaFilter = 'marked'"
+                class="px-2.5 py-1.5 transition"
+                :class="gnmsWizard.metaFilter === 'marked' ? 'bg-green-700 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'">
+                已標記 ({{ gnmsMetaAssignedCount }})
+              </button>
+            </div>
+            <button
+              @click="gnmsSelectFiltered"
+              :disabled="gnmsFilteredDevices.length === 0"
+              class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded-lg transition whitespace-nowrap disabled:opacity-40"
+            >全選篩選結果 ({{ gnmsFilteredDevices.length }})</button>
+          </div>
+          <div v-if="gnmsWizard.selectedDevices.length > 0" class="flex items-center gap-2 p-2 bg-cyan-900/20 rounded-lg border border-cyan-700/40 text-sm">
+            <span class="text-cyan-300">已選 <b>{{ gnmsWizard.selectedDevices.length }}</b> 台設備（{{ gnmsSelectedClientCount }} 筆 Client）</span>
+            <button @click="gnmsWizard.selectedDevices = []" class="ml-auto px-2 py-0.5 text-slate-400 hover:text-white text-xs">✕ 清除</button>
+          </div>
+
+          <!-- 設備清單表格 -->
+          <div class="overflow-y-auto max-h-[300px] rounded-lg border border-slate-700">
+            <table class="min-w-full text-sm">
+              <thead class="bg-slate-900/60 sticky top-0">
+                <tr>
+                  <th class="px-2 py-2 text-center w-8">
+                    <input type="checkbox" :checked="gnmsFilteredDevices.length > 0 && gnmsFilteredDevices.every(d => gnmsWizard.selectedDevices.includes(d.device_name))" @change="gnmsToggleAll" class="rounded border-slate-500" />
+                  </th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400">設備名稱</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400">Tenant Group</th>
+                  <th class="px-3 py-2 text-right text-xs font-medium text-slate-400">Client 數</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400">已設定</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-700/50">
+                <tr v-for="dev in gnmsFilteredDevices" :key="dev.device_name"
+                    class="hover:bg-slate-700/30 transition cursor-pointer"
+                    :class="{ 'bg-cyan-900/15': gnmsWizard.selectedDevices.includes(dev.device_name) }"
+                    @click="gnmsToggleDevice(dev.device_name)">
+                  <td class="px-2 py-1.5 text-center" @click.stop>
+                    <input type="checkbox" :value="dev.device_name" v-model="gnmsWizard.selectedDevices" class="rounded border-slate-500" />
+                  </td>
+                  <td class="px-3 py-1.5 text-white font-mono text-xs">{{ dev.device_name }}</td>
+                  <td class="px-3 py-1.5">
+                    <span class="px-2 py-0.5 rounded text-xs font-medium"
+                      :class="dev.tenant_group ? 'bg-cyan-900/40 text-cyan-300' : 'bg-slate-700 text-slate-400'">
+                      {{ dev.tenant_group || '未知' }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-1.5 text-right text-slate-300">{{ dev.client_count }}</td>
+                  <td class="px-3 py-1.5">
+                    <span v-if="gnmsWizard.deviceMeta[dev.device_name]" class="text-green-400 text-xs">✓ {{ gnmsWizard.deviceMeta[dev.device_name].description || '(無備註)' }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 填入備註和負責人 + 套用 -->
+          <div class="bg-slate-900/40 rounded-lg p-3 border border-slate-700/50 space-y-3">
+            <div class="flex items-center gap-2 text-xs text-slate-400">
+              <span>選擇設備後填入資訊，點「套用到選取」標記；重複操作直到所有設備都標記完成</span>
+            </div>
+            <div class="grid grid-cols-[1fr_1fr_auto] gap-3 items-end">
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1">備註</label>
+                <input v-model="gnmsWizard.description" type="text" placeholder="例：F18 棟交換機"
+                  class="w-full px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1">預設負責人</label>
+                <select v-model="gnmsWizard.defaultAssignee"
+                  class="w-full px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400">
+                  <option value="">系統管理員（預設）</option>
+                  <option v-for="name in filteredDisplayNames" :key="name" :value="name">{{ name }}</option>
+                </select>
+              </div>
+              <button @click="gnmsApplyMeta"
+                :disabled="gnmsWizard.selectedDevices.length === 0"
+                class="px-3 py-1.5 bg-cyan-600 text-white text-sm rounded-lg hover:bg-cyan-500 transition disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap">
+                套用到選取 ({{ gnmsWizard.selectedDevices.length }})
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4: 匯入完成 -->
+        <div v-if="gnmsWizard.step === 4" class="flex-1 space-y-4">
+          <div class="text-center py-4">
+            <div class="text-4xl mb-2">✅</div>
+            <p class="text-lg text-white font-semibold">匯入完成</p>
+          </div>
+          <div class="bg-slate-900/60 rounded-lg p-4 space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-slate-400">新增</span><span class="text-green-400 font-bold">{{ gnmsWizard.totalImported }} 筆</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">跳過（重複）</span><span class="text-amber-400">{{ gnmsWizard.totalSkipped }} 筆</span></div>
+            <div v-if="gnmsWizard.totalErrors.length" class="flex justify-between"><span class="text-slate-400">錯誤</span><span class="text-red-400">{{ gnmsWizard.totalErrors.length }} 筆</span></div>
+          </div>
+          <div v-if="gnmsWizard.totalErrors.length" class="max-h-[150px] overflow-y-auto rounded-lg border border-red-800/40 p-3">
+            <p v-for="(err, i) in gnmsWizard.totalErrors.slice(0, 20)" :key="i" class="text-xs text-red-400 font-mono">{{ err }}</p>
+            <p v-if="gnmsWizard.totalErrors.length > 20" class="text-xs text-slate-500 mt-1">... 還有 {{ gnmsWizard.totalErrors.length - 20 }} 筆錯誤</p>
+          </div>
+        </div>
+
+        <!-- Footer 按鈕 -->
+        <div class="flex justify-between items-center mt-5 pt-4 border-t border-slate-700">
+          <button @click="closeGnmsWizard" class="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition text-sm">
+            {{ gnmsWizard.step === 4 ? '關閉' : '取消' }}
+          </button>
+          <div class="flex gap-2">
+            <button v-if="gnmsWizard.step === 1 && deviceStats.total > 0"
+              @click="gnmsFetchBatch"
+              class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 transition text-sm">
+              開始查詢
+            </button>
+            <button v-if="gnmsWizard.step === 3 && !gnmsWizard.batchDone"
+              @click="gnmsSkipBatch"
+              class="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition text-sm">
+              {{ gnmsWizard.batchIndex + 1 < gnmsWizard.totalBatches ? '跳過此批 ▸' : '跳過並完成' }}
+            </button>
+            <button v-if="gnmsWizard.step === 3 && !gnmsWizard.batchDone"
+              @click="gnmsImportBatch"
+              :disabled="gnmsWizard.loading || gnmsMetaAssignedCount === 0"
+              class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition text-sm disabled:opacity-50">
+              匯入已標記設備 ({{ gnmsMetaAssignedCount }})
+            </button>
+            <button v-if="gnmsWizard.step === 3 && gnmsWizard.batchDone"
+              @click="gnmsAdvanceOrFinish"
+              class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 transition text-sm">
+              {{ gnmsWizard.batchIndex + 1 < gnmsWizard.totalBatches ? '繼續下一批 ▸' : '完成' }}
+            </button>
+            <button v-if="gnmsWizard.step === 4"
+              @click="loadMacList(); loadMacStats(); closeGnmsWizard()"
+              class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 transition text-sm">
+              完成
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    </Transition>
+
   </div>
 </template>
 
@@ -623,7 +851,7 @@ export default {
       // Modal 控制
       showAddDeviceModal: false,
       editingDevice: false,  // 區分新增/編輯模式
-      tenantGroupOptions: ['F18', 'F6', 'AP', 'F14', 'F12'],  // Tenant Group 選項
+      tenantGroupOptions: ['Infra', 'Fab200mm', 'AP', 'F6', 'F12', 'F14', 'F15', 'F16', 'F18', 'F20', 'F21', 'F22', 'F23'],
       newDevice: {
         id: null,
         old_hostname: '', old_ip_address: '', old_vendor: '',
@@ -631,6 +859,31 @@ export default {
         tenant_group: 'F18', description: ''
       },
 
+
+      // GNMS MacARP 匯入精靈
+      gnmsWizard: {
+        show: false,
+        step: 1,        // 1=確認開始, 2=載入中, 3=檢視/填入, 4=匯入結果
+        loading: false,
+        batchIndex: 0,
+        totalBatches: 0,
+        devices: [],     // GnmsMacArpDeviceSummary[]
+        rawData: {},     // device_name → client[]
+        selectedDevices: [],  // 勾選的設備 hostname
+        deviceMeta: {},       // device_name → { description, defaultAssignee }
+        search: '',           // 設備名稱篩選
+        metaFilter: 'all',   // 'all' | 'marked' | 'unmarked'
+        description: '',
+        defaultAssignee: '',
+        // 累計結果
+        totalImported: 0,
+        totalSkipped: 0,
+        totalErrors: [],
+        // 當前批次結果
+        batchDone: false,
+        batchImported: 0,
+        batchSkipped: 0,
+      },
 
       // 匯入結果 Modal
       importResultModal: {
@@ -661,6 +914,35 @@ export default {
     isAllDeviceSelected: {
       get() { return this.deviceList.length > 0 && this.selectedDevices.length === this.deviceList.length; },
       set(val) { this.selectedDevices = val ? this.deviceList.map(d => d.id) : []; },
+    },
+    gnmsFilteredDevices() {
+      const q = (this.gnmsWizard.search || '').trim().toUpperCase();
+      const filter = this.gnmsWizard.metaFilter;
+      const meta = this.gnmsWizard.deviceMeta;
+      return this.gnmsWizard.devices.filter(d => {
+        // 文字篩選
+        if (q && !d.device_name.toUpperCase().includes(q)
+            && !(d.tenant_group || '').toUpperCase().includes(q)) {
+          return false;
+        }
+        // 標記狀態篩選
+        if (filter === 'marked' && !meta[d.device_name]) return false;
+        if (filter === 'unmarked' && meta[d.device_name]) return false;
+        return true;
+      });
+    },
+    gnmsUnmarkedCount() {
+      const meta = this.gnmsWizard.deviceMeta;
+      return this.gnmsWizard.devices.filter(d => !meta[d.device_name]).length;
+    },
+    gnmsMetaAssignedCount() {
+      return Object.keys(this.gnmsWizard.deviceMeta).length;
+    },
+    gnmsSelectedClientCount() {
+      const sel = new Set(this.gnmsWizard.selectedDevices);
+      return this.gnmsWizard.devices
+        .filter(d => sel.has(d.device_name))
+        .reduce((s, d) => s + d.client_count, 0);
     },
     canAddDevice() {
       const d = this.newDevice;
@@ -1430,6 +1712,222 @@ OLD-SW-004,10.1.1.4,Cisco-NXOS,,,,,只填舊設備`;
       link.href = URL.createObjectURL(blob);
       link.download = `import_errors_${new Date().toISOString().slice(0,10)}.csv`;
       link.click();
+    },
+
+    // ========== 清空全部 ==========
+    async clearAllClients() {
+      const confirmed = await this.showConfirm(
+        `確定要清空所有 Client（共 ${this.macListStats.total} 筆）？此操作無法復原。`,
+        '清空 Client 清單',
+      );
+      if (!confirmed) return;
+      try {
+        const { data } = await api.delete(`/mac-list/${this.selectedMaintenanceId}`);
+        this.showToast(data.message || '已清空', 'success');
+        this.selectedMacs = [];
+        await this.loadMacList();
+        await this.loadMacStats();
+      } catch (e) {
+        this.showToast('清空失敗：' + (e.response?.data?.detail || e.message), 'error');
+      }
+    },
+
+    async clearAllDevices() {
+      const confirmed = await this.showConfirm(
+        `確定要清空所有設備（共 ${this.deviceStats.total} 台）？相關採集資料也會一併清除，此操作無法復原。`,
+        '清空設備清單',
+      );
+      if (!confirmed) return;
+      try {
+        const { data } = await api.delete(`/maintenance-devices/${this.selectedMaintenanceId}`);
+        this.showToast(data.message || '已清空', 'success');
+        this.selectedDevices = [];
+        await this.loadDeviceList();
+        await this.loadDeviceStats();
+      } catch (e) {
+        this.showToast('清空失敗：' + (e.response?.data?.detail || e.message), 'error');
+      }
+    },
+
+    // ========== GNMS MacARP 匯入精靈 ==========
+    startGnmsWizard() {
+      if (!this.selectedMaintenanceId) {
+        this.showToast('請先選擇歲修 ID', 'warning');
+        return;
+      }
+      // 重置精靈狀態
+      this.gnmsWizard = {
+        show: true,
+        step: 1,
+        loading: false,
+        batchIndex: 0,
+        totalBatches: Math.ceil(this.deviceStats.total / 100) || 0,
+        devices: [],
+        rawData: {},
+        selectedDevices: [],
+        deviceMeta: {},
+        description: '',
+        defaultAssignee: '',
+        totalImported: 0,
+        totalSkipped: 0,
+        totalErrors: [],
+        batchImported: 0,
+        batchSkipped: 0,
+      };
+      // 載入使用者列表
+      this.loadUserDisplayNames();
+    },
+
+    closeGnmsWizard() {
+      this.gnmsWizard.show = false;
+    },
+
+    gnmsToggleDevice(deviceName) {
+      const idx = this.gnmsWizard.selectedDevices.indexOf(deviceName);
+      if (idx >= 0) {
+        this.gnmsWizard.selectedDevices.splice(idx, 1);
+      } else {
+        this.gnmsWizard.selectedDevices.push(deviceName);
+      }
+    },
+
+    gnmsToggleAll(e) {
+      const filtered = this.gnmsFilteredDevices.map(d => d.device_name);
+      if (e.target.checked) {
+        // 合併：保留已選的 + 加入篩選結果
+        const set = new Set([...this.gnmsWizard.selectedDevices, ...filtered]);
+        this.gnmsWizard.selectedDevices = [...set];
+      } else {
+        // 移除篩選結果中的，保留其他已選的
+        const remove = new Set(filtered);
+        this.gnmsWizard.selectedDevices = this.gnmsWizard.selectedDevices.filter(n => !remove.has(n));
+      }
+    },
+
+    gnmsSelectFiltered() {
+      const filtered = this.gnmsFilteredDevices.map(d => d.device_name);
+      const set = new Set([...this.gnmsWizard.selectedDevices, ...filtered]);
+      this.gnmsWizard.selectedDevices = [...set];
+    },
+
+    gnmsApplyMeta() {
+      const wiz = this.gnmsWizard;
+      if (wiz.selectedDevices.length === 0) return;
+
+      const updated = { ...wiz.deviceMeta };
+      for (const name of wiz.selectedDevices) {
+        updated[name] = {
+          description: wiz.description,
+          default_assignee: wiz.defaultAssignee,
+        };
+      }
+      wiz.deviceMeta = updated;
+
+      this.showToast(
+        `已標記 ${wiz.selectedDevices.length} 台設備`,
+        'success',
+      );
+      // 清除選取以便下一組
+      wiz.selectedDevices = [];
+      wiz.description = '';
+      wiz.defaultAssignee = '';
+    },
+
+    async gnmsFetchBatch() {
+      const wiz = this.gnmsWizard;
+      wiz.step = 2;
+      wiz.loading = true;
+
+      try {
+        const { data } = await api.get(
+          `/mac-list/${this.selectedMaintenanceId}/gnms-macarp-fetch`,
+          {
+            params: { batch_index: wiz.batchIndex },
+            timeout: 120000,
+          },
+        );
+        wiz.totalBatches = data.total_batches;
+        wiz.devices = data.devices;
+        wiz.rawData = data.raw_data;
+        wiz.step = 3;
+      } catch (e) {
+        const msg = e.response?.data?.detail || e.message || '查詢失敗';
+        this.showToast(`GNMS 查詢失敗：${msg}`, 'error');
+        wiz.step = 1;
+      } finally {
+        wiz.loading = false;
+      }
+    },
+
+    gnmsAdvanceOrFinish() {
+      const wiz = this.gnmsWizard;
+      if (wiz.batchIndex + 1 < wiz.totalBatches) {
+        wiz.batchIndex = wiz.batchIndex + 1;
+        wiz.deviceMeta = {};
+        wiz.selectedDevices = [];
+        wiz.search = '';
+        wiz.metaFilter = 'all';
+        wiz.description = '';
+        wiz.defaultAssignee = '';
+        wiz.batchDone = false;
+        this.gnmsFetchBatch();
+      } else {
+        wiz.step = 4;
+      }
+    },
+
+    gnmsSkipBatch() {
+      this.gnmsAdvanceOrFinish();
+    },
+
+    async gnmsImportBatch() {
+      const wiz = this.gnmsWizard;
+
+      // 只匯入已標記的設備
+      const assignedNames = Object.keys(wiz.deviceMeta);
+      if (assignedNames.length === 0) {
+        this.showToast('請先選擇設備並「套用到選取」', 'warning');
+        return;
+      }
+
+      // 篩選 rawData 只保留已標記的設備
+      const filteredRaw = {};
+      for (const name of assignedNames) {
+        if (wiz.rawData[name]) {
+          filteredRaw[name] = wiz.rawData[name];
+        }
+      }
+
+      wiz.loading = true;
+
+      try {
+        const { data } = await api.post(
+          `/mac-list/${this.selectedMaintenanceId}/gnms-macarp-import`,
+          {
+            raw_data: filteredRaw,
+            device_meta: wiz.deviceMeta,
+          },
+          { timeout: 60000 },
+        );
+
+        // 累計結果
+        wiz.totalImported += data.imported;
+        wiz.totalSkipped += data.skipped;
+        wiz.totalErrors.push(...(data.errors || []));
+        wiz.batchImported = data.imported;
+        wiz.batchSkipped = data.skipped;
+
+        // 刷新 client 清單統計
+        this.loadMacStats();
+
+        // 顯示批次完成中間狀態，讓用戶點「繼續」
+        wiz.batchDone = true;
+      } catch (e) {
+        const msg = e.response?.data?.detail || e.message || '匯入失敗';
+        this.showToast(`匯入失敗：${msg}`, 'error');
+      } finally {
+        wiz.loading = false;
+      }
     },
   },
 };

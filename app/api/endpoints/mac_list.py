@@ -21,7 +21,8 @@ from app.core.enums import ClientDetectionStatus, TenantGroup
 from app.db.base import get_session_context
 from app.core.enums import UserRole
 from app.db.models import (
-    MaintenanceMacList, ClientCategoryMember, ClientCategory, User,
+    MaintenanceDeviceList, MaintenanceMacList,
+    ClientCategoryMember, ClientCategory, User,
     PingRecord, LatestCollectionBatch, Case, ClientRecord, ClientComparison,
     SeverityOverride, ReferenceClient, LatestClientRecord,
 )
@@ -1350,6 +1351,290 @@ async def download_template(
             )
         }
     )
+
+
+# ── GNMS MacARP 自動匯入 ─────────────────────────────────────��───────
+
+
+class GnmsMacArpClient(BaseModel):
+    """GNMS MacARP API 回傳���單筆 client。"""
+    device_name: str = ""
+    device_ip: str = ""
+    interface_name: str = ""
+    user_ip: str = ""
+    user_mac: str = ""
+    owner: str = ""
+    tenant_group: str = ""
+    area: str = ""
+    effective_acl_name: str = ""
+    last_seen: str = ""
+
+
+class GnmsMacArpDeviceSummary(BaseModel):
+    """每台設���的摘要（供前端 wizard 顯示）。"""
+    device_name: str
+    tenant_group: str
+    client_count: int
+
+
+class GnmsMacArpFetchResponse(BaseModel):
+    """fetch 端點的回應。"""
+    batch_index: int
+    total_batches: int
+    devices: list[GnmsMacArpDeviceSummary]
+    raw_data: dict[str, list[dict]]  # device_name → client list
+
+
+class GnmsMacArpDeviceMeta(BaseModel):
+    """每台設備的匯入設定。"""
+    description: str | None = None
+    default_assignee: str | None = None
+
+
+class GnmsMacArpImportRequest(BaseModel):
+    """import 端點的請求。"""
+    raw_data: dict[str, list[dict]]
+    device_meta: dict[str, GnmsMacArpDeviceMeta] = {}  # device_name → meta
+    # fallback（未在 device_meta 中的設備）
+    description: str | None = None
+    default_assignee: str | None = None
+
+
+@router.get("/{maintenance_id}/gnms-macarp-fetch")
+async def gnms_macarp_fetch(
+    maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+    batch_index: int = Query(0, ge=0, description="第幾批 (0-based)"),
+) -> GnmsMacArpFetchResponse:
+    """
+    從 GNMS MacARP API 取��一��設備的 client 資料。
+
+    流程：
+    1. 讀取歲修設備清���，取 hostname
+    2. 按 batch_size (預設 100) 分批
+    3. 呼叫 GNMS MacARP API
+    4. 回傳設備摘要 + 原始���料供下一步匯入
+    """
+    import logging
+    import httpx
+    from app.core.config import settings
+
+    logger = logging.getLogger(__name__)
+    cfg = settings.gnms_macarp
+
+    if not cfg.base_url:
+        raise HTTPException(
+            status_code=400,
+            detail="GNMS MacARP API 尚未設定（GNMS_MACARP__BASE_URL）",
+        )
+
+    # 1. 讀取設備清單
+    async with get_session_context() as session:
+        stmt = select(
+            MaintenanceDeviceList.new_hostname,
+        ).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id,
+            MaintenanceDeviceList.new_hostname.isnot(None),
+            MaintenanceDeviceList.new_hostname != "",
+        )
+        result = await session.execute(stmt)
+        all_hostnames = [r[0] for r in result.all()]
+
+    if not all_hostnames:
+        raise HTTPException(
+            status_code=400,
+            detail="設備清��為空，請先匯入設備",
+        )
+
+    # 2. 分批
+    batch_size = cfg.batch_size or 100
+    total_batches = (len(all_hostnames) + batch_size - 1) // batch_size
+
+    if batch_index >= total_batches:
+        raise HTTPException(
+            status_code=400,
+            detail=f"batch_index {batch_index} 超出範圍（共 {total_batches} 批）",
+        )
+
+    start = batch_index * batch_size
+    batch_names = all_hostnames[start:start + batch_size]
+
+    # 3. 呼叫 GNMS MacARP API
+    url = f"{cfg.base_url.rstrip('/')}/api/v1/macarp/batch"
+    params = [("name", n) for n in batch_names]
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {cfg.token}",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=cfg.timeout) as client:
+            resp = await client.get(url, params=params, headers=headers)
+            resp.raise_for_status()
+            body = resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error("GNMS MacARP API HTTP error: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail=f"GNMS MacARP API 回應錯誤: {e.response.status_code}",
+        )
+    except Exception as e:
+        logger.error("GNMS MacARP API error: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail=f"GNMS MacARP API 連線失敗: {e}",
+        )
+
+    # 4. ��析回應
+    data: dict[str, list[dict]] = body.get("data", {})
+    devices: list[GnmsMacArpDeviceSummary] = []
+
+    for device_name, clients in data.items():
+        # 取第一個 client 的 tenant_group 作為該設備的���表
+        tg = ""
+        if clients:
+            tg = clients[0].get("tenant_group", "")
+        devices.append(GnmsMacArpDeviceSummary(
+            device_name=device_name,
+            tenant_group=tg,
+            client_count=len(clients),
+        ))
+
+    return GnmsMacArpFetchResponse(
+        batch_index=batch_index,
+        total_batches=total_batches,
+        devices=devices,
+        raw_data=data,
+    )
+
+
+@router.post("/{maintenance_id}/gnms-macarp-import")
+async def gnms_macarp_import(
+    maintenance_id: str,
+    body: GnmsMacArpImportRequest,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
+) -> dict[str, Any]:
+    """
+    將 GNMS MacARP fetch 結果匯入 Client 清單。
+
+    接收前端傳回的 raw_data + 用戶填入的 description / default_assignee。
+    自動去重（同 maintenance_id + mac_address 不重複新增）。
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    async with get_session_context() as session:
+        # 查現有 MAC 避免重複
+        existing_stmt = select(MaintenanceMacList.mac_address).where(
+            MaintenanceMacList.maintenance_id == maintenance_id,
+        )
+        result = await session.execute(existing_stmt)
+        existing_macs = {r[0] for r in result.all()}
+
+        # 預先解析所有 assignee（per-device + fallback）
+        assignee_cache: dict[str, str] = {}
+
+        async def get_assignee(name: str | None) -> str:
+            key = name or ""
+            if key not in assignee_cache:
+                try:
+                    assignee_cache[key] = await resolve_default_assignee(
+                        session, name,
+                    )
+                except HTTPException:
+                    assignee_cache[key] = "系統管理員"
+            return assignee_cache[key]
+
+        imported = 0
+        skipped = 0
+        errors: list[str] = []
+
+        for device_name, clients in body.raw_data.items():
+            # 取 per-device meta，沒有就用 fallback
+            meta = body.device_meta.get(device_name)
+            desc = meta.description if meta else body.description
+            assignee_name = (
+                meta.default_assignee if meta
+                else body.default_assignee
+            )
+            assignee = await get_assignee(assignee_name)
+
+            for client in clients:
+                raw_mac = client.get("user_mac", "").strip()
+                raw_ip = client.get("user_ip", "").strip()
+                raw_tg = client.get(
+                    "tenant_group", "",
+                ).strip().upper()
+
+                if not raw_mac or not raw_ip:
+                    continue
+
+                # 標準化 MAC
+                mac = normalize_mac(raw_mac)
+                if not MAC_REGEX.match(mac):
+                    errors.append(
+                        f"{device_name}: MAC 格式錯誤 ({raw_mac})"
+                    )
+                    continue
+
+                if not IP_REGEX.match(raw_ip):
+                    errors.append(
+                        f"{device_name}: IP 格式錯誤 ({raw_ip})"
+                    )
+                    continue
+
+                # 去重
+                if mac in existing_macs:
+                    skipped += 1
+                    continue
+
+                # tenant_group
+                try:
+                    tg = (TenantGroup(raw_tg)
+                          if raw_tg else TenantGroup.F18)
+                except ValueError:
+                    tg = TenantGroup.F18
+
+                session.add(MaintenanceMacList(
+                    maintenance_id=maintenance_id,
+                    mac_address=mac,
+                    ip_address=raw_ip,
+                    tenant_group=tg,
+                    detection_status=ClientDetectionStatus.NOT_CHECKED,
+                    description=desc,
+                    default_assignee=assignee,
+                ))
+                existing_macs.add(mac)
+                imported += 1
+
+        await session.commit()
+
+        # 同步���件 + 比較結果
+        if imported > 0:
+            await write_log(
+                level="INFO",
+                source="api",
+                summary=f"GNMS MacARP 匯入: 新增 {imported}, 跳過 {skipped} (重複)",
+                module="client_list",
+                maintenance_id=maintenance_id,
+            )
+            await regenerate_comparisons(maintenance_id, session)
+
+            from app.services.case_service import CaseService
+            case_svc = CaseService()
+            await case_svc.sync_cases(maintenance_id, session)
+
+        logger.info(
+            "GNMS MacARP import for %s: imported=%d, skipped=%d, errors=%d",
+            maintenance_id, imported, skipped, len(errors),
+        )
+
+        return {
+            "imported": imported,
+            "skipped": skipped,
+            "errors": errors,
+            "total_errors": len(errors),
+        }
 
 
 @router.post("/{maintenance_id}/detect")

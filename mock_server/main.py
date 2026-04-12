@@ -36,6 +36,7 @@ from mock_server.generators import (
     error_count,
     fan,
     gbic_details,
+    gnms_macarp,
     gnms_ping,
     interface_status,
     mac_table,
@@ -262,6 +263,24 @@ async def mock_gnms_ping(request: Request) -> Response:
         failure_rate=settings.mock_steady_failure_rate,
     )
     return Response(content=output, media_type="text/plain")
+
+
+# ── GNMS MacARP (batch query) ──────────────────────────────────────
+
+@app.get("/api/v1/macarp/batch", tags=["GNMS MacARP"])
+async def mock_gnms_macarp(
+    name: list[str] = Query(..., description="Device hostnames (max 100)"),
+) -> dict:
+    """
+    Mock GNMS MacARP batch API。
+
+    真實 API: GET /api/v1/macarp/batch?name=SW1&name=SW2&...
+    Auth: Bearer token（接受但不驗證）
+    """
+    # 限制 100 台
+    device_names = name[:100]
+    logger.info("GNMS MacARP batch query: %d devices", len(device_names))
+    return gnms_macarp.generate_for_devices(device_names)
 
 
 # ── Legacy: ping_batch (internal) ───────────────────────────────────
