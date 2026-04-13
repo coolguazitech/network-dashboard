@@ -232,35 +232,39 @@
                 <button
                   v-if="isMyPendingCase(c)"
                   @click.stop="acceptCase(c)"
-                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-blue-500 hover:bg-blue-400 text-white transition-all case-accept-btn whitespace-nowrap"
+                  :disabled="isCaseProcessing(c)"
+                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-blue-500 hover:bg-blue-400 text-white transition-all case-accept-btn whitespace-nowrap disabled:opacity-50 disabled:cursor-wait"
                 >
-                  接受
+                  {{ isCaseProcessing(c) ? '處理中…' : '接受' }}
                 </button>
                 <!-- 不處理按鈕（指派給我的待接受案件） -->
                 <button
                   v-if="isMyPendingCase(c)"
                   @click.stop="ignoreCase(c)"
-                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-gray-600 hover:bg-gray-500 text-gray-200 transition-all whitespace-nowrap"
+                  :disabled="isCaseProcessing(c)"
+                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-gray-600 hover:bg-gray-500 text-gray-200 transition-all whitespace-nowrap disabled:opacity-50 disabled:cursor-wait"
                 >
-                  不處理
+                  {{ isCaseProcessing(c) ? '處理中…' : '不處理' }}
                 </button>
 
                 <!-- 重啟按鈕（已結案案件） -->
                 <button
                   v-if="isMyResolvedCase(c)"
                   @click.stop="reopenCase(c)"
-                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-amber-500/80 hover:bg-amber-500 text-white transition-all case-reopen-btn whitespace-nowrap"
+                  :disabled="isCaseProcessing(c)"
+                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-amber-500/80 hover:bg-amber-500 text-white transition-all case-reopen-btn whitespace-nowrap disabled:opacity-50 disabled:cursor-wait"
                 >
-                  繼續處理
+                  {{ isCaseProcessing(c) ? '處理中…' : '繼續處理' }}
                 </button>
 
                 <!-- 繼續處理按鈕（不處理案件） -->
                 <button
                   v-if="isMyIgnoredCase(c)"
                   @click.stop="resumeCase(c)"
-                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-amber-500/80 hover:bg-amber-500 text-white transition-all whitespace-nowrap"
+                  :disabled="isCaseProcessing(c)"
+                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-amber-500/80 hover:bg-amber-500 text-white transition-all whitespace-nowrap disabled:opacity-50 disabled:cursor-wait"
                 >
-                  繼續處理
+                  {{ isCaseProcessing(c) ? '處理中…' : '繼續處理' }}
                 </button>
 
                 <!-- 狀態文字（無按鈕時顯示） -->
@@ -784,6 +788,8 @@ export default {
       // 自動刷新
       refreshTimer: null,
       debounceTimer: null,
+      // 按鈕 loading 狀態
+      processingCaseIds: new Set(),
     }
   },
   computed: {
@@ -1111,24 +1117,44 @@ export default {
       return c.status === 'IGNORED' && c.assignee === this.currentDisplayName
     },
 
+    isCaseProcessing(c) {
+      return this.processingCaseIds.has(c.id)
+    },
+
     async acceptCase(c) {
-      const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
-      if (ok) this.showMessage('已接受案件，案件將移至「處理中」', 'success')
+      if (this.isCaseProcessing(c)) return
+      this.processingCaseIds.add(c.id)
+      try {
+        const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
+        if (ok) this.showMessage('已接受案件，案件將移至「處理中」', 'success')
+      } finally { this.processingCaseIds.delete(c.id) }
     },
 
     async ignoreCase(c) {
-      const ok = await this.updateCase(c, { status: 'IGNORED' })
-      if (ok) this.showMessage('案件已標記為不處理', 'info')
+      if (this.isCaseProcessing(c)) return
+      this.processingCaseIds.add(c.id)
+      try {
+        const ok = await this.updateCase(c, { status: 'IGNORED' })
+        if (ok) this.showMessage('案件已標記為不處理', 'info')
+      } finally { this.processingCaseIds.delete(c.id) }
     },
 
     async reopenCase(c) {
-      const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
-      if (ok) this.showMessage('案件繼續處理，案件將移至「處理中」', 'success')
+      if (this.isCaseProcessing(c)) return
+      this.processingCaseIds.add(c.id)
+      try {
+        const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
+        if (ok) this.showMessage('案件繼續處理，案件將移至「處理中」', 'success')
+      } finally { this.processingCaseIds.delete(c.id) }
     },
 
     async resumeCase(c) {
-      const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
-      if (ok) this.showMessage('案件已恢復處理，案件將移至「處理中」', 'success')
+      if (this.isCaseProcessing(c)) return
+      this.processingCaseIds.add(c.id)
+      try {
+        const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
+        if (ok) this.showMessage('案件已恢復處理，案件將移至「處理中」', 'success')
+      } finally { this.processingCaseIds.delete(c.id) }
     },
 
     getStatusActionsForCase(c) {

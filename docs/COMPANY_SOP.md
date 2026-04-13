@@ -1,7 +1,11 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.21.4 (2026-04-13)
+> **版本**: v2.21.5 (2026-04-14)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.21.5 變更摘要**:
+> - **[改善] 案件按鈕 loading 狀態**：接受/不處理/繼續處理按鈕加上 loading 防重複點擊，`write_log` 改 fire-and-forget 加速 API 回應
+> - **[改善] 拓樸紅色節點移除邊框**：紅色節點不再有邊框，避免與選取節點的白色邊框混淆
 >
 > **v2.21.4 變更摘要**:
 > - **[功能] GNMS MacARP Client 自動匯入**：Client 清單新增「從 GNMS 匯入」精靈，透過 GNMS MacARP API 批次查詢設備的 Client MAC/IP，支援分批（每批 100 台）、設備篩選、分組標記備註/負責人、去重匯入。新增 `GNMS_MACARP__BASE_URL` / `GNMS_MACARP__TOKEN` 環境變數
@@ -272,14 +276,14 @@
 
 | Image | 版本 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.21.4` | 主應用 |
-| `coolguazi/netora-mock-server:v2.21.4` | Mock API（僅 Mock 模式需要） |
+| `coolguazi/network-dashboard-base:v2.21.5` | 主應用 |
+| `coolguazi/netora-mock-server:v2.21.5` | Mock API（僅 Mock 模式需要） |
 
 掃描通過後更新 `.env`：
 
 ```ini
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.20.2
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.4   # Mock 模式才需要
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.21.5
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.5   # Mock 模式才需要
 ```
 
 #### Step 2：修改 .env 中的版本端點（必做，否則啟動失敗）
@@ -355,9 +359,9 @@ docker exec netora_db mariadb -uadmin -padmin netora -e "SELECT switch_hostname,
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.21.4` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.21.5` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.21.4` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.21.5` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
@@ -393,9 +397,9 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.20.2
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.21.5
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.4
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.5
 ```
 
 拉取 image：
@@ -403,7 +407,7 @@ MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.4
 ```bash
 docker pull registry.company.com/netora/network-dashboard-base:v2.20.2
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.21.4
+docker pull registry.company.com/netora/netora-mock-server:v2.21.5
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 

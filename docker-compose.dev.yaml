@@ -146,7 +146,7 @@ services:
       FETCHER_ENDPOINT__GET_MAC_TABLE: /api/get_mac_table
       FETCHER_ENDPOINT__GET_FAN: /api/get_fan
       FETCHER_ENDPOINT__GET_POWER: /api/get_power
-      FETCHER_ENDPOINT__GET_VERSION: /api/get_version
+      FETCHER_ENDPOINT__GET_VERSION: /switch/network/get_install_active/{switch_ip}
       FETCHER_ENDPOINT__GET_INTERFACE_STATUS: /api/get_interface_status
       # S3 Object Storage (SeaweedFS)
       MINIO__ENDPOINT: seaweedfs:8333

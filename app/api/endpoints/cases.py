@@ -5,6 +5,7 @@ Cases API endpoints.
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -332,13 +333,13 @@ async def update_case(
     if "error" in result:
         raise HTTPException(status_code=403, detail=result["error"])
 
-    await write_log(
+    _task = asyncio.create_task(write_log(
         level="INFO",
         source="api",
         summary=f"更新案件 #{case_id}",
         module="cases",
         maintenance_id=maintenance_id,
-    )
+    ))
 
     return {"success": True, "case": result}
 

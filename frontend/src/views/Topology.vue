@@ -766,8 +766,10 @@ const chartOption = computed(() => {
           itemStyle: {
             color,
             opacity: isDimmed ? 0.15 : 1,
-            borderColor: isPinnedNode ? '#fff' : isPingFail ? '#fca5a5' : isOtherFail ? '#a16207' : 'rgba(0,0,0,0.3)',
-            borderWidth: isPinnedNode ? 2 : isPingFail ? 2.5 : isFail ? 1.5 : 0.5,
+            borderColor: isPinnedNode ? '#fff' : isOtherFail ? '#a16207' : 'rgba(0,0,0,0.3)',
+            borderWidth: isPinnedNode ? 2 : isPingFail ? 0 : isOtherFail ? 1.5 : 0.5,
+            shadowBlur: 0,
+            shadowColor: 'transparent',
           },
           label: {
             show: isDimmed ? false : (onlyMode || isPinnedNode || _currentZoom >= 2),
