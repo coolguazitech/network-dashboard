@@ -151,7 +151,7 @@
           <span class="text-slate-300">正常</span>
         </span>
         <span class="flex items-center gap-1.5">
-          <span class="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block"></span>
+          <span class="w-2.5 h-2.5 rounded-full bg-yellow-500 inline-block"></span>
           <span class="text-slate-300">驗收異常</span>
         </span>
         <span class="flex items-center gap-1.5">
@@ -747,9 +747,9 @@ const chartOption = computed(() => {
         const isPinnedNode = pinned.has(n.name)
         const isHighlighted = highlightNodes.has(n.name)
         const isDimmed = pinned.size > 0 && !isHighlighted
-        // 顏色邏輯：紅=ping不到, 橘=其他驗收失敗, 綠=正常, 灰=外部設備
-        const color = isPingFail ? '#ef4444'
-          : isOtherFail ? '#f97316'
+        // 顏色邏輯：紅=ping不到, 黃=其他驗收失敗, 綠=正常, 灰=外部設備
+        const color = isPingFail ? '#dc2626'
+          : isOtherFail ? '#eab308'
           : n.in_device_list ? '#22c55e'
           : NODE_COLORS.external
         return {
@@ -766,8 +766,8 @@ const chartOption = computed(() => {
           itemStyle: {
             color,
             opacity: isDimmed ? 0.15 : 1,
-            borderColor: isPinnedNode ? '#fff' : isPingFail ? '#991b1b' : isOtherFail ? '#9a3412' : 'rgba(0,0,0,0.3)',
-            borderWidth: isPinnedNode ? 2 : isFail ? 1.5 : 0.5,
+            borderColor: isPinnedNode ? '#fff' : isPingFail ? '#fca5a5' : isOtherFail ? '#a16207' : 'rgba(0,0,0,0.3)',
+            borderWidth: isPinnedNode ? 2 : isPingFail ? 2.5 : isFail ? 1.5 : 0.5,
           },
           label: {
             show: isDimmed ? false : (onlyMode || isPinnedNode || _currentZoom >= 2),

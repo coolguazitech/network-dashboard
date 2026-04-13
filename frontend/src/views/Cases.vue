@@ -236,6 +236,14 @@
                 >
                   接受
                 </button>
+                <!-- 不處理按鈕（指派給我的待接受案件） -->
+                <button
+                  v-if="isMyPendingCase(c)"
+                  @click.stop="ignoreCase(c)"
+                  class="px-2.5 py-0.5 text-sm rounded font-semibold bg-gray-600 hover:bg-gray-500 text-gray-200 transition-all whitespace-nowrap"
+                >
+                  不處理
+                </button>
 
                 <!-- 重啟按鈕（已結案案件） -->
                 <button
@@ -1106,6 +1114,11 @@ export default {
     async acceptCase(c) {
       const ok = await this.updateCase(c, { status: 'IN_PROGRESS' })
       if (ok) this.showMessage('已接受案件，案件將移至「處理中」', 'success')
+    },
+
+    async ignoreCase(c) {
+      const ok = await this.updateCase(c, { status: 'IGNORED' })
+      if (ok) this.showMessage('案件已標記為不處理', 'info')
     },
 
     async reopenCase(c) {
