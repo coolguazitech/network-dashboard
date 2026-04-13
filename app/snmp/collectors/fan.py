@@ -16,6 +16,8 @@ from app.snmp.oid_maps import (
     CISCO_ENV_FAN_DESCR,
     CISCO_ENV_FAN_STATE,
     CISCO_ENVMON_STATE_MAP,
+    CISCO_FRU_FAN_STATE,
+    CISCO_FRU_FAN_STATE_MAP,
     ENT_PHYSICAL_CLASS,
     ENT_PHYSICAL_CLASS_FAN,
     ENT_PHYSICAL_NAME,
@@ -41,9 +43,10 @@ class FanCollector(BaseSnmpCollector):
     ) -> tuple[str, list[ParsedData]]:
         if device_type == DeviceType.HPE:
             return await self._collect_hpe(target, device_type, engine)
+        elif device_type == DeviceType.CISCO_NXOS:
+            return await self._collect_nxos(target, device_type, engine)
         else:
-            # Cisco IOS / NXOS
-            return await self._collect_cisco(target, device_type, engine)
+            return await self._collect_cisco_ios(target, device_type, engine)
 
     async def _collect_hpe(
         self,
@@ -97,17 +100,16 @@ class FanCollector(BaseSnmpCollector):
         )
         return raw_text, results
 
-    async def _collect_cisco(
+    async def _collect_cisco_ios(
         self,
         target: SnmpTarget,
         device_type: DeviceType,
         engine: AsyncSnmpEngine,
     ) -> tuple[str, list[ParsedData]]:
-        """Cisco IOS/NXOS: CISCO-ENVMON-MIB fan status table."""
+        """Cisco IOS: CISCO-ENVMON-MIB fan status table."""
         state_varbinds = await engine.walk(target, CISCO_ENV_FAN_STATE)
         descr_varbinds = await engine.walk(target, CISCO_ENV_FAN_DESCR)
 
-        # Build index -> description mapping
         descr_map: dict[str, str] = {}
         for oid_str, val_str in descr_varbinds:
             idx = self.extract_index(oid_str, CISCO_ENV_FAN_DESCR)
@@ -119,13 +121,32 @@ class FanCollector(BaseSnmpCollector):
             state_code = self.safe_int(val_str)
             status = CISCO_ENVMON_STATE_MAP.get(state_code, "unknown")
             fan_name = descr_map.get(idx, f"Fan-{idx}")
-
-            results.append(
-                FanStatusData(fan_id=fan_name, status=status),
-            )
+            results.append(FanStatusData(fan_id=fan_name, status=status))
 
         all_varbinds = state_varbinds + descr_varbinds
         raw_text = self.format_raw(
             self.api_name, target.ip, device_type, all_varbinds,
+        )
+        return raw_text, results
+
+    async def _collect_nxos(
+        self,
+        target: SnmpTarget,
+        device_type: DeviceType,
+        engine: AsyncSnmpEngine,
+    ) -> tuple[str, list[ParsedData]]:
+        """Cisco NX-OS: CISCO-ENTITY-FRU-CONTROL-MIB cefcFanTrayOperStatus."""
+        state_varbinds = await engine.walk(target, CISCO_FRU_FAN_STATE)
+
+        results: list[ParsedData] = []
+        for oid_str, val_str in state_varbinds:
+            idx = self.extract_index(oid_str, CISCO_FRU_FAN_STATE)
+            state_code = self.safe_int(val_str)
+            status = CISCO_FRU_FAN_STATE_MAP.get(state_code, "unknown")
+            fan_name = f"Fan-{idx}"
+            results.append(FanStatusData(fan_id=fan_name, status=status))
+
+        raw_text = self.format_raw(
+            self.api_name, target.ip, device_type, state_varbinds,
         )
         return raw_text, results

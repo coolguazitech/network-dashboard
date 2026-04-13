@@ -70,11 +70,15 @@ HH3C_TRANSCEIVER_CHANNEL_RX_POWER = "1.3.6.1.4.1.25506.2.70.1.2.1.3"  # QSFP per
 # Vendor-Specific: Cisco (Enterprise 9)
 # =============================================================================
 
-# CISCO-ENVMON-MIB (fan + power)
+# CISCO-ENVMON-MIB (fan + power) — IOS
 CISCO_ENV_FAN_STATE = "1.3.6.1.4.1.9.9.13.1.4.1.3"
 CISCO_ENV_FAN_DESCR = "1.3.6.1.4.1.9.9.13.1.4.1.2"
 CISCO_ENV_SUPPLY_STATE = "1.3.6.1.4.1.9.9.13.1.5.1.3"
 CISCO_ENV_SUPPLY_DESCR = "1.3.6.1.4.1.9.9.13.1.5.1.2"
+
+# CISCO-ENTITY-FRU-CONTROL-MIB (fan + power) — NX-OS
+CISCO_FRU_FAN_STATE = "1.3.6.1.4.1.9.9.117.1.4.1.1.1"       # cefcFanTrayOperStatus
+CISCO_FRU_SUPPLY_STATE = "1.3.6.1.4.1.9.9.117.1.1.2.1.2"    # cefcFRUPowerOperStatus
 
 # CISCO-ENTITY-SENSOR-MIB (transceiver DOM)
 CISCO_ENT_SENSOR_VALUE = "1.3.6.1.4.1.9.9.91.1.1.1.1.4"
@@ -115,14 +119,38 @@ HH3C_ERROR_STATUS_MAP: dict[int, str] = {
     91: "fail",         # hardwareFaulty
 }
 
-# CISCO-ENVMON-MIB::ciscoEnvMonFanState / ciscoEnvMonSupplyState
+# CISCO-ENVMON-MIB::ciscoEnvMonFanState / ciscoEnvMonSupplyState (IOS)
 CISCO_ENVMON_STATE_MAP: dict[int, str] = {
-    1: "normal",
+    1: "normal",        # normal
     2: "normal",        # warning — still operational
     3: "fail",          # critical
     4: "fail",          # shutdown
     5: "absent",        # notPresent
-    6: "fail",          # notFunctioning
+    6: "fail",          # notFunctioning / mismatch
+}
+
+# CISCO-ENTITY-FRU-CONTROL-MIB::cefcFRUPowerOperStatus (NX-OS power)
+CISCO_FRU_POWER_STATE_MAP: dict[int, str] = {
+    1: "normal",        # offEnvOther — treat as ok (normal shutdown)
+    2: "normal",        # on
+    8: "normal",        # onButInlinePowerOff — power good, inline off
+    9: "normal",        # onButFanFail — PSU on, fan issue separate
+    3: "fail",          # offAdmin
+    4: "fail",          # offDenied
+    5: "fail",          # offEnvPower
+    6: "fail",          # offEnvTemp
+    7: "fail",          # offEnvFan
+    10: "fail",         # offCoolingNotSupported
+    11: "fail",         # offInsufficientPower
+    12: "absent",       # offNonRedundant — not present / removed
+}
+
+# CISCO-ENTITY-FRU-CONTROL-MIB::cefcFanTrayOperStatus (NX-OS fan)
+CISCO_FRU_FAN_STATE_MAP: dict[int, str] = {
+    1: "unknown",       # unknown
+    2: "normal",        # up
+    3: "normal",        # down — administratively down, not failed
+    4: "normal",        # warning — degraded but operational
 }
 
 # IF-MIB::ifOperStatus

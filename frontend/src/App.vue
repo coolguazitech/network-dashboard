@@ -357,6 +357,9 @@
 
     <!-- 全域通知 -->
     <ToastContainer />
+
+    <!-- 版本號 (右下角固定) -->
+    <span v-if="appVersion" class="fixed bottom-3 right-4 text-xs text-slate-500 font-mono z-10 select-none">{{ appVersion }}</span>
   </div>
 </template>
 
@@ -378,6 +381,9 @@ dayjs.extend(utc)
 
 const router = useRouter()
 const route = useRoute()
+
+// 應用版本號
+const appVersion = ref('')
 
 // 使用者選單
 const showUserMenu = ref(false)
@@ -578,6 +584,15 @@ watch(isAuthenticated, async (authenticated) => {
 })
 
 onMounted(async () => {
+  // 取得版本號（不需登入，health 在根路徑不帶 /api/v1 prefix）
+  try {
+    const resp = await fetch('/health')
+    if (resp.ok) {
+      const data = await resp.json()
+      appVersion.value = data.version || ''
+    }
+  } catch { /* ignore */ }
+
   // 僅在已登入時載入資料
   if (!isAuthenticated.value) return
 

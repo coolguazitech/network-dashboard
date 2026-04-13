@@ -63,8 +63,9 @@ RUN pip install --upgrade pip && \
     # 升級 setuptools 到最新版本以修復 vendored 依賴的 CVE
     pip install --upgrade "setuptools>=75.0.0" "wheel>=0.46.2" && \
     pip install . && \
-    # 再次確保 wheel 和 jaraco.context 是最新版本
-    pip install --upgrade "jaraco.context>=6.1.0" "wheel>=0.46.2" && \
+    # 升級有 CVE 的套件到修復版本
+    pip install --upgrade "jaraco.context>=6.1.0" "wheel>=0.46.2" \
+        "pyasn1>=0.6.3" && \
     # 驗證關鍵模組安裝成功
     python -c "import bcrypt; import jwt; print('bcrypt and jwt OK')"
 
@@ -109,6 +110,12 @@ RUN apt-get update && \
 
 # 從 python-deps 階段複製虛擬環境
 COPY --from=python-deps /opt/venv /opt/venv
+
+# 清除 base image 自帶的有 CVE 的系統 wheel（venv 裡已有安全版本）
+RUN pip install --no-cache-dir --upgrade "wheel>=0.46.2" "pyasn1>=0.6.3" && \
+    # 移除系統層 Python 的舊 wheel（scanner 會抓到）
+    rm -rf /usr/lib/python3/dist-packages/wheel* \
+           /usr/lib/python3/dist-packages/wheel-*.dist-info 2>/dev/null || true
 
 WORKDIR $APP_HOME
 
