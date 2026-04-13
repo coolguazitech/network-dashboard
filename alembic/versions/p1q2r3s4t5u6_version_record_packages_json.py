@@ -21,24 +21,40 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _col_exists(conn, table: str, column: str) -> bool:
+    from sqlalchemy import text
+    row = conn.execute(
+        text(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() "
+            "AND table_name = :t AND column_name = :c"
+        ),
+        {"t": table, "c": column},
+    ).scalar()
+    return bool(row)
+
+
 def upgrade() -> None:
-    # 1. Add new JSON column
-    op.add_column(
-        "version_records",
-        sa.Column("packages", sa.JSON(), nullable=True),
-    )
+    conn = op.get_bind()
+
+    # 1. Add new JSON column (skip if already exists — create_all case)
+    if not _col_exists(conn, "version_records", "packages"):
+        op.add_column(
+            "version_records",
+            sa.Column("packages", sa.JSON(), nullable=True),
+        )
 
     # 2. Migrate existing data: version string → JSON array ["version"]
-    op.execute(
-        """
-        UPDATE version_records
-        SET packages = JSON_ARRAY(version)
-        WHERE version IS NOT NULL AND version != ''
-        """
-    )
-
-    # 3. Drop old column
-    op.drop_column("version_records", "version")
+    if _col_exists(conn, "version_records", "version"):
+        op.execute(
+            """
+            UPDATE version_records
+            SET packages = JSON_ARRAY(version)
+            WHERE version IS NOT NULL AND version != ''
+            """
+        )
+        # 3. Drop old column
+        op.drop_column("version_records", "version")
 
 
 def downgrade() -> None:

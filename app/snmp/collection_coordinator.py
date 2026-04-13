@@ -270,8 +270,8 @@ class CollectionCoordinator:
     # Per-device hard timeout inside semaphore.
     # With parallel collectors, per-device time ≈ max(single_walk) + probe,
     # not sum(all_walks). Budget is generous to avoid false timeouts.
-    _PER_COLLECTOR_BUDGET: float = 15.0  # seconds; kept for startup warning
-    _HARD_TIMEOUT_MIN: float = 45.0     # floor for any round
+    _PER_COLLECTOR_BUDGET: float = 30.0  # seconds; kept for startup warning
+    _HARD_TIMEOUT_MIN: float = 90.0     # floor: Core 設備 MAC table 大，45s 不夠
     _HARD_TIMEOUT_PROBE: float = 15.0   # overhead for community probe + buffer
 
     async def _collect_device(
