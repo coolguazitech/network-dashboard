@@ -7,13 +7,13 @@ from __future__ import annotations
 
 from typing import Any, Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.base import get_async_session
-from app.db.models import CollectionError
+from app.db.models import CollectionError, MaintenanceDeviceList
 from app.services.indicator_service import IndicatorService
 from app.api.endpoints.auth import get_current_user, check_maintenance_access
 
@@ -104,6 +104,17 @@ async def get_indicator_details(
         for err in err_result.scalars().all()
     }
 
+    # 查詢被忽略的設備
+    ignored_stmt = select(
+        MaintenanceDeviceList.new_hostname,
+    ).where(
+        MaintenanceDeviceList.maintenance_id == maintenance_id,
+        MaintenanceDeviceList.new_hostname.isnot(None),
+        MaintenanceDeviceList.indicator_ignored == True,  # noqa: E712
+    )
+    ignored_result = await session.execute(ignored_stmt)
+    ignored_devices: set[str] = {row[0] for row in ignored_result.all()}
+
     # 合併失敗清單：有 CollectionError 的設備只顯示一行（系統異常）
     seen_error_devices: set[str] = set()
     merged_failures: list[dict] = []
@@ -118,9 +129,10 @@ async def get_indicator_details(
                     **f,
                     "reason": f"系統異常: {error_map[device]}",
                     "is_system_error": True,
+                    "ignored": device in ignored_devices,
                 })
         else:
-            merged_failures.append(f)
+            merged_failures.append({**f, "ignored": device in ignored_devices})
 
     # 補上只有 CollectionError 但 indicator 未報告的設備
     for hostname, msg in error_map.items():
@@ -131,18 +143,28 @@ async def get_indicator_details(
                 "reason": f"系統異常: {msg}",
                 "data": None,
                 "is_system_error": True,
+                "ignored": hostname in ignored_devices,
             })
 
     all_failures = merged_failures
 
     # CE 算進分母，但只補上 indicator 自己尚未計入的設備
-    # （expectations-based indicator 已把無資料設備當失敗，不需重複加）
     ce_count = len(error_map)
     supplement_count = ce_count - len(seen_error_devices)
+
+    # 計算 ignored 設備的失敗數（轉為通過）
+    all_fail_devices = {
+        f.get("device", "") for f in all_failures
+    }
+    ignored_fail_count = len(all_fail_devices & ignored_devices)
+
     adjusted_total = result.total_count + supplement_count
-    adjusted_fail = result.fail_count + supplement_count
+    adjusted_fail = (
+        result.fail_count + supplement_count - ignored_fail_count
+    )
+    adjusted_pass = result.pass_count + ignored_fail_count
     adjusted_rate = (
-        (result.pass_count / adjusted_total * 100)
+        (adjusted_pass / adjusted_total * 100)
         if adjusted_total > 0 else 0.0
     )
 
@@ -150,7 +172,7 @@ async def get_indicator_details(
         "indicator_type": result.indicator_type,
         "maintenance_id": result.maintenance_id,
         "total_count": adjusted_total,
-        "pass_count": result.pass_count,
+        "pass_count": adjusted_pass,
         "fail_count": adjusted_fail,
         "pass_rate": adjusted_rate,
         "pass_rates": result.pass_rates,
@@ -161,3 +183,27 @@ async def get_indicator_details(
     }
 
 
+@router.put("/maintenance/{maintenance_id}/device/{hostname}/toggle-ignore")
+async def toggle_device_ignore(
+    maintenance_id: str,
+    hostname: str,
+    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """切換設備的指標忽略狀態。"""
+    check_maintenance_access(user, maintenance_id)
+    stmt = select(MaintenanceDeviceList).where(
+        MaintenanceDeviceList.maintenance_id == maintenance_id,
+        MaintenanceDeviceList.new_hostname == hostname,
+    )
+    result = await session.execute(stmt)
+    device = result.scalar_one_or_none()
+    if not device:
+        raise HTTPException(status_code=404, detail=f"找不到設備: {hostname}")
+
+    device.indicator_ignored = not device.indicator_ignored
+    await session.commit()
+    return {
+        "hostname": hostname,
+        "indicator_ignored": device.indicator_ignored,
+    }

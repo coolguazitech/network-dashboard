@@ -27,6 +27,8 @@ from app.snmp.oid_maps import (
     CISCO_ENV_FAN_STATE,
     CISCO_ENV_SUPPLY_DESCR,
     CISCO_ENV_SUPPLY_STATE,
+    CISCO_FRU_FAN_STATE,
+    CISCO_FRU_SUPPLY_STATE,
     CISCO_VTP_VLAN_STATE,
     DOT1D_BASE_PORT_IF_INDEX,
     DOT1D_TP_FDB_PORT,
@@ -463,6 +465,10 @@ def mock_walk(
         return _mock_cisco_supply_state(fails)
     if oid_prefix == CISCO_ENV_SUPPLY_DESCR:
         return _mock_cisco_supply_descr()
+    if oid_prefix == CISCO_FRU_FAN_STATE:
+        return _mock_nxos_fru_fan_state(fails)
+    if oid_prefix == CISCO_FRU_SUPPLY_STATE:
+        return _mock_nxos_fru_supply_state(fails)
     if oid_prefix == CISCO_CDP_CACHE_DEVICE_ID:
         neighbors = _get_uplink_neighbors(ip)
         if fails and len(neighbors) > 1:
@@ -925,6 +931,25 @@ def _mock_cisco_supply_descr() -> list[tuple[str, str]]:
     return [
         (f"{CISCO_ENV_SUPPLY_DESCR}.1", "Power Supply 1"),
         (f"{CISCO_ENV_SUPPLY_DESCR}.2", "Power Supply 2"),
+    ]
+
+
+def _mock_nxos_fru_fan_state(fails: bool) -> list[tuple[str, str]]:
+    """CISCO-ENTITY-FRU-CONTROL cefcFanTrayOperStatus. 2=up, 4=warning."""
+    fan3 = "4" if fails else "2"
+    return [
+        (f"{CISCO_FRU_FAN_STATE}.470", "2"),
+        (f"{CISCO_FRU_FAN_STATE}.471", "2"),
+        (f"{CISCO_FRU_FAN_STATE}.472", fan3),
+    ]
+
+
+def _mock_nxos_fru_supply_state(fails: bool) -> list[tuple[str, str]]:
+    """CISCO-ENTITY-FRU-CONTROL cefcFRUPowerOperStatus. 2=on, 5=offEnvPower."""
+    psu2 = "5" if fails else "2"
+    return [
+        (f"{CISCO_FRU_SUPPLY_STATE}.470", "2"),
+        (f"{CISCO_FRU_SUPPLY_STATE}.471", psu2),
     ]
 
 

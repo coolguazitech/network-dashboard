@@ -180,13 +180,32 @@
               <div
                 v-for="(failure, idx) in indicatorDetails.failures"
                 :key="idx"
-                class="bg-slate-900/50 rounded-lg px-4 py-3 border border-slate-700/50 hover:border-slate-600 transition"
+                class="relative bg-slate-900/50 rounded-lg px-4 py-3 border transition"
+                :class="failure.ignored ? 'border-amber-600/40 opacity-60' : 'border-slate-700/50 hover:border-slate-600'"
               >
-                <div class="flex items-center justify-between mb-1.5 min-w-0">
+                <!-- 忽略 switch -->
+                <label
+                  v-if="canWrite"
+                  class="absolute top-2 right-2 flex items-center gap-1.5 cursor-pointer select-none"
+                  :title="failure.ignored ? '點擊恢復計為失敗' : '點擊忽略此設備'"
+                  @click.prevent="toggleIgnore(failure)"
+                >
+                  <span class="text-[11px]" :class="failure.ignored ? 'text-amber-400' : 'text-slate-500'">忽略</span>
+                  <span
+                    class="relative inline-block w-7 h-4 rounded-full transition-colors duration-200"
+                    :class="failure.ignored ? 'bg-amber-500' : 'bg-slate-600'"
+                  >
+                    <span
+                      class="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform duration-200"
+                      :class="failure.ignored ? 'translate-x-3' : ''"
+                    ></span>
+                  </span>
+                </label>
+                <div class="flex items-center justify-between mb-1.5 min-w-0 pr-14">
                   <span class="font-mono text-sm text-slate-200 font-medium truncate" :title="failure.device">{{ failure.device }}</span>
                   <span class="text-sm text-slate-400">{{ getInterfaceName(failure) }}</span>
                 </div>
-                <div class="text-sm" :class="failure.is_system_error ? 'text-purple-400' : 'text-red-400'">
+                <div class="text-sm" :class="failure.ignored ? 'text-amber-400/70 line-through' : failure.is_system_error ? 'text-purple-400' : 'text-red-400'">
                   {{ failure.reason }}
                 </div>
               </div>
@@ -648,6 +667,25 @@ const fetchIndicatorDetails = async (type) => {
 const selectIndicator = async (type) => {
   selectedIndicator.value = type
   await fetchIndicatorDetails(type)
+}
+
+// 切換設備忽略狀態
+const toggleIgnore = async (failure) => {
+  if (!selectedMaintenanceId.value || !failure.device) return
+  const newVal = !failure.ignored
+  // 樂觀更新：先改 UI 再打 API
+  failure.ignored = newVal
+  try {
+    await api.put(
+      `/dashboard/maintenance/${selectedMaintenanceId.value}/device/${encodeURIComponent(failure.device)}/toggle-ignore`
+    )
+    // 背景刷新摘要數字（不 await，不阻塞 UI）
+    fetchSummary(true)
+  } catch (e) {
+    // 失敗時回滾
+    failure.ignored = !newVal
+    console.error('Failed to toggle ignore:', e)
+  }
 }
 
 // 下載 CSV

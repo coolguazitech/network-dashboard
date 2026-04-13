@@ -1,7 +1,12 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.21.5 (2026-04-14)
+> **版本**: v2.21.6 (2026-04-14)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
+>
+> **v2.21.6 變更摘要**:
+> - **[功能] 設備忽略 toggle**：總覽詳細清單每張失敗卡片右上角新增忽略開關，開啟時該設備的失敗不計入失敗數（計為通過），再按一次恢復。樂觀更新，點擊即時生效
+> - **[Fix] FAN/POWER 採集失敗修復**：Mock data 補上 NX-OS `CISCO-ENTITY-FRU-CONTROL-MIB` OID（`cefcFanTrayOperStatus` / `cefcFRUPowerOperStatus`），消除開發環境大量採集失敗
+> - **[DB] Alembic migration `r3s4t5u6v7w8`**：`maintenance_device_list` 新增 `indicator_ignored` BOOLEAN 欄位，含防禦性檢查
 >
 > **v2.21.5 變更摘要**:
 > - **[改善] 案件按鈕 loading 狀態**：接受/不處理/繼續處理按鈕加上 loading 防重複點擊，`write_log` 改 fire-and-forget 加速 API 回應
@@ -12,7 +17,7 @@
 > - **[功能] Tenant Group 擴充**：從 5 個（F18/F6/AP/F14/F12）擴充至 13 個，新增 Infra/Fab200mm/F15/F16/F20/F21/F22/F23，GNMS Ping base URL 同步更新
 > - **[功能] Client/設備清單「清空全部」按鈕**：一鍵清空整份清單，附二次確認對話框
 > - **[改善] Health endpoint 版本動態化**：`/health` 回傳的 `version` 從寫死改為讀取 `APP_VERSION` 環境變數
-> - **[DB] Alembic migration `q2r3s4t5u6v7`**：擴充 `tenant_group` ENUM 欄位，含防禦性 table 存在檢查
+> - **[DB] Alembic migration `r3s4t5u6v7w8`**：擴充 `tenant_group` ENUM 欄位，含防禦性 table 存在檢查
 > - **[Fix] NX-OS SNMP OID 修正**：Fan/Power 從 `CISCO-ENVMON-MIB`（IOS 專用）改為 `CISCO-ENTITY-FRU-CONTROL-MIB`（NX-OS 正確 MIB），修正 NX-OS 設備 Fan/Power 狀態無法正確採集的問題
 > - **[改善] 前端版本號顯示**：右下角固定顯示當前版本號
 > - **[安全] CVE 修復**：升級 pyasn1、wheel，移除系統層有 CVE 的舊套件
@@ -276,14 +281,14 @@
 
 | Image | 版本 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.21.5` | 主應用 |
-| `coolguazi/netora-mock-server:v2.21.5` | Mock API（僅 Mock 模式需要） |
+| `coolguazi/network-dashboard-base:v2.21.6` | 主應用 |
+| `coolguazi/netora-mock-server:v2.21.6` | Mock API（僅 Mock 模式需要） |
 
 掃描通過後更新 `.env`：
 
 ```ini
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.21.5
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.5   # Mock 模式才需要
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.21.6
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.6   # Mock 模式才需要
 ```
 
 #### Step 2：修改 .env 中的版本端點（必做，否則啟動失敗）
@@ -326,7 +331,7 @@ curl http://localhost:8000/health
 
 # 2. 確認 alembic 遷移完成（看 entrypoint 日誌）
 docker logs netora_app 2>&1 | grep -i "alembic\|migration\|stamp"
-# 應看到: "Running stamp_revision -> q2r3s4t5u6v7" 或 "Database is already at latest migration"
+# 應看到: "Running stamp_revision -> r3s4t5u6v7w8" 或 "Database is already at latest migration"
 
 # 3. 確認 DB schema（packages 欄位應為 longtext/JSON）
 docker exec netora_db mariadb -uadmin -padmin netora -e "DESCRIBE version_records;" | grep packages
@@ -341,8 +346,9 @@ docker exec netora_db mariadb -uadmin -padmin netora -e "SELECT switch_hostname,
 
 | 舊 DB 狀態 | Alembic 自動處理 |
 |-----------|----------------|
-| v2.19.x（有 `version` VARCHAR 欄位） | Migration `p1q2r3s4t5u6` 自動轉 packages JSON + `q2r3s4t5u6v7` 擴充 tenant_group ENUM |
-| v2.20.x（已有 `packages` JSON 欄位） | Migration `q2r3s4t5u6v7` 擴充 tenant_group ENUM |
+| v2.19.x（有 `version` VARCHAR 欄位） | Migration `p1q2r3s4t5u6` 轉 packages JSON → `q2r3s4t5u6v7` 擴充 tenant_group → `r3s4t5u6v7w8` 新增 indicator_ignored |
+| v2.20.x（已有 `packages` JSON 欄位） | Migration `q2r3s4t5u6v7` 擴充 tenant_group → `r3s4t5u6v7w8` 新增 indicator_ignored |
+| v2.21.x（已有 tenant_group 擴充） | Migration `r3s4t5u6v7w8` 新增 `indicator_ignored` 欄位 |
 | 全新 DB（空的） | `create_all` 建表 → stamp head，直接建出正確 schema |
 
 > **PVC 不需要刪除**。Alembic 會自動偵測 DB 狀態並執行對應遷移。舊資料會被保留並轉換格式。
@@ -359,9 +365,9 @@ docker exec netora_db mariadb -uadmin -padmin netora -e "SELECT switch_hostname,
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.21.5` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.21.6` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.21.5` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.21.6` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
@@ -397,9 +403,9 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.21.5
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.21.6
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.5
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.6
 ```
 
 拉取 image：
@@ -407,7 +413,7 @@ MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.5
 ```bash
 docker pull registry.company.com/netora/network-dashboard-base:v2.20.2
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.21.5
+docker pull registry.company.com/netora/netora-mock-server:v2.21.6
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 

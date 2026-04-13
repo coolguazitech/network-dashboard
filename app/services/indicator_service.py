@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CollectionError
+from app.db.models import CollectionError, MaintenanceDeviceList
 
 logger = logging.getLogger(__name__)
 from app.indicators.transceiver import TransceiverIndicator
@@ -119,6 +119,15 @@ class IndicatorService:
             session, maintenance_id
         )
 
+        # 查詢被忽略的設備
+        ignored_stmt = select(MaintenanceDeviceList.new_hostname).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id,
+            MaintenanceDeviceList.new_hostname.isnot(None),
+            MaintenanceDeviceList.indicator_ignored == True,  # noqa: E712
+        )
+        ignored_result = await session.execute(ignored_stmt)
+        ignored_devices: set[str] = {row[0] for row in ignored_result.all()}
+
         summary = {
             "maintenance_id": maintenance_id,
             "indicators": {},
@@ -142,10 +151,19 @@ class IndicatorService:
             overlap = len(failure_devices & ce_devices)
             supplement_count = ce_count - overlap
 
+            # 計算被忽略的失敗設備數（ignored 的失敗轉為通過）
+            ignored_fail_count = len(failure_devices & ignored_devices)
+            # CE 中被忽略的設備也要轉為通過
+            ignored_ce_only = len(
+                (ce_devices - failure_devices) & ignored_devices
+            )
+            total_ignored = ignored_fail_count + ignored_ce_only
+
             adjusted_total = result.total_count + supplement_count
-            adjusted_fail = result.fail_count + supplement_count
+            adjusted_fail = result.fail_count + supplement_count - total_ignored
+            adjusted_pass = result.pass_count + total_ignored
             adjusted_rate = (
-                math.floor(result.pass_count / adjusted_total * 100)
+                math.floor(adjusted_pass / adjusted_total * 100)
                 if adjusted_total > 0 else 0.0
             )
 
@@ -155,7 +173,7 @@ class IndicatorService:
 
             summary["indicators"][indicator_type] = {
                 "total_count": adjusted_total,
-                "pass_count": result.pass_count,
+                "pass_count": adjusted_pass,
                 "fail_count": adjusted_fail,
                 "pass_rate": adjusted_rate,
                 "status": status,
@@ -165,7 +183,7 @@ class IndicatorService:
 
             # 累計整體統計
             summary["overall"]["total_count"] += adjusted_total
-            summary["overall"]["pass_count"] += result.pass_count
+            summary["overall"]["pass_count"] += adjusted_pass
             summary["overall"]["fail_count"] += adjusted_fail
 
         # 計算整體通過率與狀態（向下取整）
