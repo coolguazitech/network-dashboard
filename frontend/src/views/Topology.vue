@@ -147,16 +147,20 @@
       <div class="flex items-center gap-5 text-xs flex-wrap">
         <span class="text-slate-500 font-medium">節點：</span>
         <span class="flex items-center gap-1.5">
-          <span class="w-2.5 h-2.5 rounded-full bg-cyan-500 inline-block"></span>
-          <span class="text-slate-300">設備清單</span>
+          <span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span>
+          <span class="text-slate-300">正常</span>
         </span>
         <span class="flex items-center gap-1.5">
-          <span class="w-2.5 h-2.5 rounded-full bg-slate-500 inline-block"></span>
-          <span class="text-slate-300">管理設備</span>
+          <span class="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block"></span>
+          <span class="text-slate-300">驗收異常</span>
         </span>
         <span class="flex items-center gap-1.5">
           <span class="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span>
-          <span class="text-slate-300">驗收失敗</span>
+          <span class="text-slate-300">Ping 不可達</span>
+        </span>
+        <span class="flex items-center gap-1.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-slate-500 inline-block"></span>
+          <span class="text-slate-300">外部設備</span>
         </span>
 
         <span class="h-3 w-px bg-slate-700"></span>
@@ -490,11 +494,14 @@ const chartOption = computed(() => {
     neighborCount[l.target] = (neighborCount[l.target] || 0) + 1
   })
 
-  // 驗收失敗節點：有 indicator_failures 的設備才標紅
-  const failNodes = new Set()
+  // 節點狀態分類：ping 不到=紅, 其他驗收失敗=橘, 正常=綠
+  const pingFailNodes = new Set()
+  const otherFailNodes = new Set()
   allNodes.forEach(n => {
-    if (n.indicator_failures && n.indicator_failures.length > 0) {
-      failNodes.add(n.name)
+    if (n.ping_failed) {
+      pingFailNodes.add(n.name)
+    } else if (n.indicator_failures && n.indicator_failures.length > 0) {
+      otherFailNodes.add(n.name)
     }
   })
 
@@ -734,11 +741,17 @@ const chartOption = computed(() => {
       ],
       nodes: [...displayNodes.map(n => {
         const pos = hierPositions[n.name]
-        const isFail = failNodes.has(n.name)
+        const isPingFail = pingFailNodes.has(n.name)
+        const isOtherFail = otherFailNodes.has(n.name)
+        const isFail = isPingFail || isOtherFail
         const isPinnedNode = pinned.has(n.name)
         const isHighlighted = highlightNodes.has(n.name)
         const isDimmed = pinned.size > 0 && !isHighlighted
-        const color = isFail ? '#ef4444' : n.in_device_list ? getLevelColor(n.level ?? 0) : NODE_COLORS.external
+        // 顏色邏輯：紅=ping不到, 橘=其他驗收失敗, 綠=正常, 灰=外部設備
+        const color = isPingFail ? '#ef4444'
+          : isOtherFail ? '#f97316'
+          : n.in_device_list ? '#22c55e'
+          : NODE_COLORS.external
         return {
           name: n.name,
           category: n.category,
@@ -753,7 +766,7 @@ const chartOption = computed(() => {
           itemStyle: {
             color,
             opacity: isDimmed ? 0.15 : 1,
-            borderColor: isPinnedNode ? '#fff' : isFail ? '#991b1b' : 'rgba(0,0,0,0.3)',
+            borderColor: isPinnedNode ? '#fff' : isPingFail ? '#991b1b' : isOtherFail ? '#9a3412' : 'rgba(0,0,0,0.3)',
             borderWidth: isPinnedNode ? 2 : isFail ? 1.5 : 0.5,
           },
           label: {

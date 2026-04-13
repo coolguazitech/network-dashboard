@@ -39,6 +39,7 @@ class TopologyNode(BaseModel):
     in_device_list: bool
     level: int          # BFS 階層 (0=Core, 1=Agg, 2=Edge, ...)
     indicator_failures: list[str] | None = None  # 驗收失敗的指標名稱列表
+    ping_failed: bool = False                    # Ping 不可達
 
 
 class TopologyLink(BaseModel):
@@ -307,6 +308,7 @@ async def get_topology(
 
     # ── 7. 載入指標驗收失敗資料 ──
     device_failures: dict[str, list[str]] = defaultdict(list)
+    ping_failed_devices: set[str] = set()
     try:
         indicator_svc = IndicatorService()
         results = await indicator_svc.evaluate_all(maintenance_id, session)
@@ -328,6 +330,8 @@ async def get_topology(
                     reason = f.get("reason", "")
                     short = f"{label}: {reason}" if reason else label
                     device_failures[device].append(short)
+                    if ind_name == "ping":
+                        ping_failed_devices.add(device)
     except Exception:
         pass  # topology 不因 indicator 失敗而中斷
 
@@ -366,6 +370,7 @@ async def get_topology(
             in_device_list=in_list,
             level=hierarchy.get(hostname, 0),
             indicator_failures=failures if failures else None,
+            ping_failed=hostname in ping_failed_devices,
         ))
 
     categories = [
