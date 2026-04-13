@@ -104,16 +104,19 @@ async def get_indicator_details(
         for err in err_result.scalars().all()
     }
 
-    # 查詢被忽略的設備
+    # 查詢在此指標被忽略的設備
     ignored_stmt = select(
         MaintenanceDeviceList.new_hostname,
+        MaintenanceDeviceList.ignored_indicators,
     ).where(
         MaintenanceDeviceList.maintenance_id == maintenance_id,
         MaintenanceDeviceList.new_hostname.isnot(None),
-        MaintenanceDeviceList.indicator_ignored == True,  # noqa: E712
     )
     ignored_result = await session.execute(ignored_stmt)
-    ignored_devices: set[str] = {row[0] for row in ignored_result.all()}
+    ignored_devices: set[str] = {
+        row[0] for row in ignored_result.all()
+        if indicator_type in (row[1] or [])
+    }
 
     # 合併失敗清單：有 CollectionError 的設備只顯示一行（系統異常）
     seen_error_devices: set[str] = set()
@@ -183,14 +186,15 @@ async def get_indicator_details(
     }
 
 
-@router.put("/maintenance/{maintenance_id}/device/{hostname}/toggle-ignore")
+@router.put("/maintenance/{maintenance_id}/device/{hostname}/toggle-ignore/{indicator_type}")
 async def toggle_device_ignore(
     maintenance_id: str,
     hostname: str,
+    indicator_type: str,
     user: Annotated[dict[str, Any], Depends(get_current_user)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
-    """切換設備的指標忽略狀態。"""
+    """切換設備在特定指標的忽略狀態。"""
     check_maintenance_access(user, maintenance_id)
     stmt = select(MaintenanceDeviceList).where(
         MaintenanceDeviceList.maintenance_id == maintenance_id,
@@ -201,9 +205,15 @@ async def toggle_device_ignore(
     if not device:
         raise HTTPException(status_code=404, detail=f"找不到設備: {hostname}")
 
-    device.indicator_ignored = not device.indicator_ignored
+    current: list = list(device.ignored_indicators or [])
+    if indicator_type in current:
+        current.remove(indicator_type)
+    else:
+        current.append(indicator_type)
+    device.ignored_indicators = current
     await session.commit()
     return {
         "hostname": hostname,
-        "indicator_ignored": device.indicator_ignored,
+        "indicator_type": indicator_type,
+        "ignored": indicator_type in current,
     }

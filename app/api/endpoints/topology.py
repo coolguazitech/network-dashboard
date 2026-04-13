@@ -306,10 +306,25 @@ async def get_topology(
             ))
             stats["expected_fail"] += 1
 
-    # ── 7. 載入指標驗收失敗資料 ──
+    # ── 7. 載入指標驗收失敗資料（排除被忽略的指標）──
     device_failures: dict[str, list[str]] = defaultdict(list)
     ping_failed_devices: set[str] = set()
     try:
+        # 查詢每台設備被忽略的指標
+        ign_stmt = select(
+            MaintenanceDeviceList.new_hostname,
+            MaintenanceDeviceList.ignored_indicators,
+        ).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id,
+            MaintenanceDeviceList.new_hostname.isnot(None),
+        )
+        ign_result = await session.execute(ign_stmt)
+        device_ignored_map: dict[str, list] = {
+            row[0]: (row[1] or [])
+            for row in ign_result.all()
+            if row[1]
+        }
+
         indicator_svc = IndicatorService()
         results = await indicator_svc.evaluate_all(maintenance_id, session)
         _INDICATOR_LABELS = {
@@ -325,13 +340,17 @@ async def get_topology(
         for ind_name, result in results.items():
             for f in (result.failures or []):
                 device = f.get("device", "")
-                if device:
-                    label = _INDICATOR_LABELS.get(ind_name, ind_name)
-                    reason = f.get("reason", "")
-                    short = f"{label}: {reason}" if reason else label
-                    device_failures[device].append(short)
-                    if ind_name == "ping":
-                        ping_failed_devices.add(device)
+                if not device:
+                    continue
+                # 跳過被忽略的指標
+                if ind_name in device_ignored_map.get(device, []):
+                    continue
+                label = _INDICATOR_LABELS.get(ind_name, ind_name)
+                reason = f.get("reason", "")
+                short = f"{label}: {reason}" if reason else label
+                device_failures[device].append(short)
+                if ind_name == "ping":
+                    ping_failed_devices.add(device)
     except Exception:
         pass  # topology 不因 indicator 失敗而中斷
 

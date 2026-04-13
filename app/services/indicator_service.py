@@ -119,14 +119,21 @@ class IndicatorService:
             session, maintenance_id
         )
 
-        # 查詢被忽略的設備
-        ignored_stmt = select(MaintenanceDeviceList.new_hostname).where(
+        # 查詢每台設備被忽略的指標列表
+        ignored_stmt = select(
+            MaintenanceDeviceList.new_hostname,
+            MaintenanceDeviceList.ignored_indicators,
+        ).where(
             MaintenanceDeviceList.maintenance_id == maintenance_id,
             MaintenanceDeviceList.new_hostname.isnot(None),
-            MaintenanceDeviceList.indicator_ignored == True,  # noqa: E712
         )
         ignored_result = await session.execute(ignored_stmt)
-        ignored_devices: set[str] = {row[0] for row in ignored_result.all()}
+        # {hostname: ["fan","power",...]}
+        device_ignored_map: dict[str, list] = {
+            row[0]: (row[1] or [])
+            for row in ignored_result.all()
+            if row[1]  # 只保留有忽略項的設備
+        }
 
         summary = {
             "maintenance_id": maintenance_id,
@@ -151,11 +158,14 @@ class IndicatorService:
             overlap = len(failure_devices & ce_devices)
             supplement_count = ce_count - overlap
 
-            # 計算被忽略的失敗設備數（ignored 的失敗轉為通過）
-            ignored_fail_count = len(failure_devices & ignored_devices)
-            # CE 中被忽略的設備也要轉為通過
+            # 計算在此指標被忽略的失敗設備數（轉為通過）
+            ignored_for_this = {
+                h for h, indicators in device_ignored_map.items()
+                if indicator_type in indicators
+            }
+            ignored_fail_count = len(failure_devices & ignored_for_this)
             ignored_ce_only = len(
-                (ce_devices - failure_devices) & ignored_devices
+                (ce_devices - failure_devices) & ignored_for_this
             )
             total_ignored = ignored_fail_count + ignored_ce_only
 

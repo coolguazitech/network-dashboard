@@ -1,12 +1,16 @@
 # NETORA 公司端 SOP
 
-> **版本**: v2.21.6 (2026-04-14)
+> **版本**: v2.21.7 (2026-04-14)
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
 >
+> **v2.21.7 變更摘要**:
+> - **[功能] Per-indicator 忽略 toggle**：總覽詳細清單每張失敗卡片右上角 switch 開關，忽略僅影響當前指標（如忽略 Fan 不影響 Ping），拓樸同步反映忽略狀態
+> - **[改善] 拓樸切回即時刷新**：從總覽切回拓樸頁面時立即刷新，不需等 polling；polling 間隔 30s→15s
+> - **[Fix] FAN/POWER 採集失敗修復**：Mock data 補上 NX-OS `CISCO-ENTITY-FRU-CONTROL-MIB` OID
+> - **[DB] Alembic migration `r3s4t5u6v7w8`**：`maintenance_device_list` 新增 `ignored_indicators` JSON 欄位（取代舊 boolean），存被忽略的指標列表
+>
 > **v2.21.6 變更摘要**:
-> - **[功能] 設備忽略 toggle**：總覽詳細清單每張失敗卡片右上角新增忽略開關，開啟時該設備的失敗不計入失敗數（計為通過），再按一次恢復。樂觀更新，點擊即時生效
-> - **[Fix] FAN/POWER 採集失敗修復**：Mock data 補上 NX-OS `CISCO-ENTITY-FRU-CONTROL-MIB` OID（`cefcFanTrayOperStatus` / `cefcFRUPowerOperStatus`），消除開發環境大量採集失敗
-> - **[DB] Alembic migration `r3s4t5u6v7w8`**：`maintenance_device_list` 新增 `indicator_ignored` BOOLEAN 欄位，含防禦性檢查
+> - 設備忽略 toggle（已被 v2.21.7 per-indicator 版本取代）
 >
 > **v2.21.5 變更摘要**:
 > - **[改善] 案件按鈕 loading 狀態**：接受/不處理/繼續處理按鈕加上 loading 防重複點擊，`write_log` 改 fire-and-forget 加速 API 回應
@@ -281,14 +285,14 @@
 
 | Image | 版本 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.21.6` | 主應用 |
-| `coolguazi/netora-mock-server:v2.21.6` | Mock API（僅 Mock 模式需要） |
+| `coolguazi/network-dashboard-base:v2.21.7` | 主應用 |
+| `coolguazi/netora-mock-server:v2.21.7` | Mock API（僅 Mock 模式需要） |
 
 掃描通過後更新 `.env`：
 
 ```ini
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.21.6
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.6   # Mock 模式才需要
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.21.7
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.7   # Mock 模式才需要
 ```
 
 #### Step 2：修改 .env 中的版本端點（必做，否則啟動失敗）
@@ -365,9 +369,9 @@ docker exec netora_db mariadb -uadmin -padmin netora -e "SELECT switch_hostname,
 
 | Image | 用途 |
 |-------|------|
-| `coolguazi/network-dashboard-base:v2.21.6` | 主應用 |
+| `coolguazi/network-dashboard-base:v2.21.7` | 主應用 |
 | `coolguazi/netora-mariadb:10.11` | 資料庫 |
-| `coolguazi/netora-mock-server:v2.21.6` | Mock API（僅 Mock 模式） |
+| `coolguazi/netora-mock-server:v2.21.7` | Mock API（僅 Mock 模式） |
 | `coolguazi/netora-seaweedfs:4.13` | S3 物件儲存 |
 | `coolguazi/netora-phpmyadmin:5.2` | DB 管理介面 |
 
@@ -403,9 +407,9 @@ cd netora
 
 ```bash
 # 加到 .env（或 .env.mock / .env.production 複製前先加）
-APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.21.6
+APP_IMAGE=registry.company.com/netora/network-dashboard-base:v2.21.7
 DB_IMAGE=registry.company.com/netora/netora-mariadb:10.11
-MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.6
+MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.7
 ```
 
 拉取 image：
@@ -413,7 +417,7 @@ MOCK_IMAGE=registry.company.com/netora/netora-mock-server:v2.21.6
 ```bash
 docker pull registry.company.com/netora/network-dashboard-base:v2.20.2
 docker pull registry.company.com/netora/netora-mariadb:10.11
-docker pull registry.company.com/netora/netora-mock-server:v2.21.6
+docker pull registry.company.com/netora/netora-mock-server:v2.21.7
 # SeaweedFS / phpMyAdmin 如果也過了掃描，也 pull
 ```
 

@@ -142,8 +142,8 @@ class MaintenanceDeviceList(Base):
         default=TenantGroup.F18,
     )
 
-    # 指標忽略（忽略時驗收失敗不計入失敗數）
-    indicator_ignored = Column(Boolean, nullable=False, default=False, server_default=text('0'))
+    # 被忽略的指標列表（JSON array, e.g. ["fan","power"]）
+    ignored_indicators = Column(JSON, nullable=False, default=list, server_default=text("'[]'"))
 
     # 設備 Ping 可達性（由 device_ping 回寫）
     old_is_reachable = Column(Boolean, nullable=True)

@@ -677,7 +677,7 @@ const toggleIgnore = async (failure) => {
   failure.ignored = newVal
   try {
     await api.put(
-      `/dashboard/maintenance/${selectedMaintenanceId.value}/device/${encodeURIComponent(failure.device)}/toggle-ignore`
+      `/dashboard/maintenance/${selectedMaintenanceId.value}/device/${encodeURIComponent(failure.device)}/toggle-ignore/${selectedIndicator.value}`
     )
     // 背景刷新摘要數字（不 await，不阻塞 UI）
     fetchSummary(true)

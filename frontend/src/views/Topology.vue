@@ -257,7 +257,7 @@ function startPolling() {
     if (selectedMaintenanceId.value && !loading.value) {
       refreshTopologyQuiet()
     }
-  }, 30000)
+  }, 15000)
 }
 
 function stopPolling() {
@@ -826,9 +826,12 @@ onMounted(() => {
   }
 })
 
-// keep-alive：切走時暫停輪詢，切回時恢復
+// keep-alive：切回時立即刷新一次 + 恢復輪詢
 onActivated(() => {
-  if (selectedMaintenanceId.value && !_pollTimer) startPolling()
+  if (selectedMaintenanceId.value) {
+    refreshTopologyQuiet()  // 切回時立即拿最新資料
+    if (!_pollTimer) startPolling()
+  }
 })
 
 onDeactivated(() => {
