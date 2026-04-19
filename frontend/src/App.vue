@@ -4,7 +4,7 @@
     <MeteorShower />
 
     <!-- 頂部導航（登入後才顯示） -->
-    <nav v-if="isAuthenticated && route.name !== 'Login'" class="relative z-50 bg-slate-900/80 backdrop-blur-sm border-b border-cyan-500/10">
+    <nav v-if="isAuthenticated && route.name !== 'Login' && route.name !== 'Showcase'" class="relative z-50 bg-slate-900/80 backdrop-blur-sm border-b border-cyan-500/10">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex justify-between h-14">
           <!-- 左側：Logo + 導航 -->
@@ -173,7 +173,7 @@
     </nav>
 
     <!-- 主內容區 -->
-    <main :class="isAuthenticated && route.name !== 'Login' ? 'max-w-7xl mx-auto py-6 sm:px-6 lg:px-8' : ''">
+    <main :class="isAuthenticated && route.name !== 'Login' && route.name !== 'Showcase' ? 'max-w-7xl mx-auto py-6 sm:px-6 lg:px-8' : ''">
       <router-view v-slot="{ Component }">
         <keep-alive include="TopologyView">
           <component :is="Component" :key="route.path" />
@@ -359,7 +359,7 @@
     <ToastContainer />
 
     <!-- 版本號 (右下角固定) -->
-    <span v-if="appVersion" class="fixed bottom-3 right-4 text-xs text-slate-500 font-mono z-10 select-none">{{ appVersion }}</span>
+    <span v-if="appVersion && route.name !== 'Showcase'" class="fixed bottom-3 right-4 text-xs text-slate-500 font-mono z-10 select-none">{{ appVersion }}</span>
   </div>
 </template>
 

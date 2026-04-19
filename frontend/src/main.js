@@ -35,6 +35,11 @@ use([
 // 路由設定
 const routes = [
   {
+    path: '/showcase',
+    name: 'Showcase',
+    component: () => import('./views/Showcase.vue'),
+  },
+  {
     path: '/login',
     name: 'Login',
     component: () => import('./views/Login.vue'),

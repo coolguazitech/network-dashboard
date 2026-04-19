@@ -58,26 +58,45 @@ class TopologyResponse(BaseModel):
     stats: dict
 
 
+import re as _re
+
+# Hostname 關鍵字優先級（數字越小 = 層級越高）
+# 兩條 chain 合併：CORE/RT/BDR > AGG/SSPN > SPN > LAGG > EDGE/.../LEAF
+_HOSTNAME_TIER_PATTERNS: list[tuple[int, _re.Pattern]] = [
+    (0, _re.compile(r"(?:CORE|RT|BDR)", _re.IGNORECASE)),
+    (1, _re.compile(r"(?:AGG|SSPN)", _re.IGNORECASE)),
+    (2, _re.compile(r"SPN", _re.IGNORECASE)),
+    (3, _re.compile(r"LAGG", _re.IGNORECASE)),
+    (4, _re.compile(r"(?:EDGE|EQP|AMHS|OTHERS|SNR|TOR|ENG|GDS|LEAF)",
+                     _re.IGNORECASE)),
+]
+_FW_PATTERN = _re.compile(r"FW", _re.IGNORECASE)
+_DEFAULT_TIER = 5
+
+
+def _hostname_tier(hostname: str) -> int:
+    """回傳 hostname 的層級優先度（數字越小越高層）。"""
+    for tier, pat in _HOSTNAME_TIER_PATTERNS:
+        if pat.search(hostname):
+            return tier
+    return _DEFAULT_TIER
+
+
 def _compute_hierarchy(
     all_hostnames: set[str],
     adjacency: dict[str, set[str]],
 ) -> dict[str, int]:
     """
-    基於圖心 (graph center) 的階層計算，不依賴命名或外部資訊。
+    基於圖心 (eccentricity) + hostname 關鍵字的階層計算。
 
     算法：
     1. 分離連通分量
     2. 對每個分量計算各節點的離心率 (eccentricity)
-       eccentricity(v) = max{ shortest_path(v, u) | u ∈ component }
-    3. 離心率最小的節點群 = 圖心 (center) = level 0
+    3. 離心率平手時，以 hostname 關鍵字優先級打破平手
+       CORE/RT/BDR > AGG/SSPN > SPN > LAGG > EDGE/EQP/LEAF/...
     4. 從圖心做 BFS 逐層展開
-    5. 孤立節點放到最底層
-
-    為何用離心率而不是 degree：
-    - degree 高只代表連線多，但如果一台 AGG 接了很多 Edge，
-      degree 可能比 Core 還高，階層就會算錯。
-    - 離心率衡量的是「離最遠節點的距離」，真正的 Core 設備
-      在網路中心，到任何節點的最遠距離最短，不受起點影響。
+    5. FW 節點拉到與直連鄰居相同的層級
+    6. 孤立節點放到最底層
     """
     if not all_hostnames:
         return {}
@@ -103,7 +122,6 @@ def _compute_hierarchy(
                     q.append(nb)
         components.append(comp)
 
-    # 按大小排序（最大的在前），小分量會被排在更高的 level
     components.sort(key=len, reverse=True)
 
     levels: dict[str, int] = {}
@@ -111,7 +129,6 @@ def _compute_hierarchy(
 
     for comp in components:
         if len(comp) == 1:
-            # 孤立節點稍後處理
             continue
 
         # ── 計算離心率 ──
@@ -127,9 +144,18 @@ def _compute_hierarchy(
                         q.append(nb)
             eccentricity[node] = max(dist.values())
 
-        # ── 找圖心 (最小離心率) ──
+        # ── 找圖心：離心率最小 + hostname 優先級最高 ──
         min_ecc = min(eccentricity.values())
-        center = {h for h, e in eccentricity.items() if e == min_ecc}
+        candidates = {h for h, e in eccentricity.items() if e == min_ecc}
+
+        # 平手時，只保留 hostname tier 最高（數字最小）的
+        if len(candidates) > 1:
+            best_tier = min(_hostname_tier(h) for h in candidates)
+            center = {
+                h for h in candidates if _hostname_tier(h) == best_tier
+            }
+        else:
+            center = candidates
 
         # ── 從圖心 BFS 展開 ──
         comp_levels: dict[str, int] = {}
@@ -145,7 +171,33 @@ def _compute_hierarchy(
                     comp_levels[nb] = comp_levels[node] + 1
                     q.append(nb)
 
-        # 合併到全域 levels
+        # ── BFS 同層平手：hostname tier 低的應該在更深層 ──
+        # 收集每層的節點，若同層內 tier 差異大則拆分
+        max_lv = max(comp_levels.values()) if comp_levels else 0
+        for lv in range(max_lv + 1):
+            nodes_at_lv = [h for h, l in comp_levels.items() if l == lv]
+            if len(nodes_at_lv) <= 1:
+                continue
+            tiers_at_lv = {_hostname_tier(h) for h in nodes_at_lv}
+            if len(tiers_at_lv) <= 1:
+                continue
+            # 同一 BFS 層有不同 tier → tier 較大的往下推
+            best = min(tiers_at_lv)
+            for h in nodes_at_lv:
+                if _hostname_tier(h) > best:
+                    # 推到下一層，同時級聯推動其 BFS 子樹
+                    _push_down(h, comp_levels, adj, comp)
+
+        # ── FW 節點：與直連鄰居同層 ──
+        for node in comp:
+            if _FW_PATTERN.search(node) and node in comp_levels:
+                neighbor_levels = [
+                    comp_levels[nb] for nb in adj.get(node, set())
+                    if nb in comp_levels
+                ]
+                if neighbor_levels:
+                    comp_levels[node] = min(neighbor_levels)
+
         levels.update(comp_levels)
         comp_max = max(comp_levels.values()) if comp_levels else 0
         if comp_max > global_max_level:
@@ -157,6 +209,22 @@ def _compute_hierarchy(
             levels[h] = global_max_level + 1
 
     return levels
+
+
+def _push_down(
+    node: str,
+    levels: dict[str, int],
+    adj: dict[str, set[str]],
+    comp: set[str],
+) -> None:
+    """將節點推到下一層，並級聯推動其子樹（BFS children）。"""
+    old_lv = levels[node]
+    new_lv = old_lv + 1
+    levels[node] = new_lv
+    # 級聯：如果鄰居的層 == old_lv + 1（原本的下一層），也要推
+    for nb in adj.get(node, set()):
+        if nb in comp and levels.get(nb, -1) == old_lv + 1:
+            _push_down(nb, levels, adj, comp)
 
 
 @router.get("/topology/{maintenance_id}")

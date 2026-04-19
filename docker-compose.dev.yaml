@@ -109,14 +109,14 @@ services:
 
   # 主應用程式 (Backend + Frontend)
   app:
-    image: ${APP_IMAGE:-coolguazi/network-dashboard-base:v2.21.7}
+    image: ${APP_IMAGE:-coolguazi/network-dashboard-base:v2.21.8}
     container_name: netora_app
     restart: unless-stopped
     env_file:
       - .env
     environment:
       # 應用程式版本（對應 image tag）
-      APP_VERSION: ${APP_VERSION:-v2.21.7}
+      APP_VERSION: ${APP_VERSION:-v2.21.8}
       # 資料庫連線（覆寫 .env 中的設定，使用 docker 網路）
       DB_HOST: db
       DB_PORT: 3306
