@@ -21,7 +21,7 @@ from app.db.models import (
     NeighborRecord,
     UplinkExpectation,
 )
-from app.core.interfaces import is_topology_management_link
+from app.core.interfaces import is_topology_management_link, normalize_interface_name
 from app.repositories.typed_records import get_typed_repo
 from app.services.indicator_service import IndicatorService
 
@@ -290,8 +290,8 @@ async def get_topology(
     for record in all_records:
         src = record.switch_hostname
         dst = record.remote_hostname
-        local_if = record.local_interface
-        remote_if = record.remote_interface
+        local_if = normalize_interface_name(record.local_interface)
+        remote_if = normalize_interface_name(record.remote_interface)
 
         actual_neighbors[src].add(dst)
         actual_neighbors[dst].add(src)
@@ -336,6 +336,7 @@ async def get_topology(
         )
 
         # interface-level: 正向 (src→dst) 或反向 (dst→src) 比對
+        # local_if / remote_if 已在 step 4 正規化，期望值在入庫時也已正規化
         status = "discovered"
         if frozenset({src, dst}) in exp_pairs:
             for exp in exp_lookup.get((src, dst), []):

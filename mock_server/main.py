@@ -38,6 +38,7 @@ from mock_server.generators import (
     gbic_details,
     gnms_macarp,
     gnms_ping,
+    gnms_topology,
     interface_status,
     mac_table,
     ping_batch,
@@ -281,6 +282,23 @@ async def mock_gnms_macarp(
     device_names = name[:100]
     logger.info("GNMS MacARP batch query: %d devices", len(device_names))
     return gnms_macarp.generate_for_devices(device_names)
+
+
+# ── GNMS Topology (batch query) ───────────────────────────────────
+
+@app.post("/api/v1/topology", tags=["GNMS Topology"])
+async def mock_gnms_topology(
+    device_names: list[str],
+) -> dict:
+    """
+    Mock GNMS Topology batch API。
+
+    真實 API: POST /api/v1/topology  (JSON body: ["hostname1", "hostname2", ...])
+    Auth: Bearer token（接受但不驗證）
+    """
+    names = device_names[:100]
+    logger.info("GNMS Topology batch query: %d devices", len(names))
+    return gnms_topology.generate_for_devices(names)
 
 
 # ── Legacy: ping_batch (internal) ───────────────────────────────────

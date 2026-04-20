@@ -338,7 +338,17 @@ def mock_walk(
 
     # ── IF-MIB ────────────────────────────────────────────────
     if oid_prefix == IF_NAME:
-        return [(f"{IF_NAME}.{idx}", name) for name, idx, _ in interfaces]
+        results = [(f"{IF_NAME}.{idx}", name) for name, idx, _ in interfaces]
+        # 為 uplink neighbor 的 local_interface 補充動態 ifName 映射
+        neighbors = _get_uplink_neighbors(ip)
+        if neighbors:
+            seen_idx = {idx for _, idx, _ in interfaces}
+            for local_intf, _, _ in neighbors:
+                port_idx = _resolve_local_port_idx(local_intf, interfaces)
+                if port_idx not in seen_idx:
+                    results.append((f"{IF_NAME}.{port_idx}", local_intf))
+                    seen_idx.add(port_idx)
+        return results
 
     if oid_prefix == IF_OPER_STATUS:
         results = []
@@ -430,9 +440,11 @@ def mock_walk(
             neighbors = neighbors[:1]
         return _mock_lldp_rem_port_desc(interfaces, neighbors)
     if oid_prefix == LLDP_LOC_PORT_ID:
-        return _mock_lldp_loc_port_id(interfaces)
+        neighbors = _get_uplink_neighbors(ip)
+        return _mock_lldp_loc_port_id(interfaces, neighbors)
     if oid_prefix == LLDP_LOC_PORT_DESC:
-        return _mock_lldp_loc_port_desc(interfaces)
+        neighbors = _get_uplink_neighbors(ip)
+        return _mock_lldp_loc_port_desc(interfaces, neighbors)
 
     # ── IEEE8023-LAG-MIB ──────────────────────────────────────
     if oid_prefix == DOT3AD_AGG_PORT_ATTACHED_AGG_ID:
@@ -675,16 +687,33 @@ def _mock_mac_table(
 
 # ── LLDP mock ─────────────────────────────────────────────────────
 
+def _resolve_local_port_idx(
+    local_interface: str,
+    interfaces: list[tuple[str, int, int]],
+) -> int:
+    """將 neighbor 的 local_interface 名稱映射到 ifIndex。
+
+    優先精確匹配 interface 列表中的名稱；
+    找不到則動態分配一個 ifIndex（base 100 + hash）。
+    """
+    from app.core.interfaces import normalize_interface_name
+    norm = normalize_interface_name(local_interface)
+    for name, idx, _ in interfaces:
+        if name == norm or name == local_interface:
+            return idx
+    # 找不到 → 動態分配穩定的 ifIndex
+    return 100 + (hash(local_interface) % 900)
+
+
 def _mock_lldp_rem_sys_name(
     interfaces: list[tuple[str, int, int]],
     neighbors: list[tuple[str, str, str]],
 ) -> list[tuple[str, str]]:
     """LLDP remote sys name. Index: timemark.localPortNum.remIndex"""
-    uplink_idx = interfaces[-2][1]  # XGE/Te/Eth1/49
     results = []
-    for i, (_, neighbor_host, _) in enumerate(neighbors):
-        # timemark=0, localPortNum=uplink_idx, remIndex=i+1
-        oid = f"{LLDP_REM_SYS_NAME}.0.{uplink_idx}.{i + 1}"
+    for i, (local_intf, neighbor_host, _) in enumerate(neighbors):
+        port_idx = _resolve_local_port_idx(local_intf, interfaces)
+        oid = f"{LLDP_REM_SYS_NAME}.0.{port_idx}.{i + 1}"
         results.append((oid, neighbor_host))
     return results
 
@@ -693,10 +722,10 @@ def _mock_lldp_rem_port_id(
     interfaces: list[tuple[str, int, int]],
     neighbors: list[tuple[str, str, str]],
 ) -> list[tuple[str, str]]:
-    uplink_idx = interfaces[-2][1]
     results = []
-    for i, (_, _, remote_intf) in enumerate(neighbors):
-        oid = f"{LLDP_REM_PORT_ID}.0.{uplink_idx}.{i + 1}"
+    for i, (local_intf, _, remote_intf) in enumerate(neighbors):
+        port_idx = _resolve_local_port_idx(local_intf, interfaces)
+        oid = f"{LLDP_REM_PORT_ID}.0.{port_idx}.{i + 1}"
         results.append((oid, remote_intf))
     return results
 
@@ -705,32 +734,54 @@ def _mock_lldp_rem_port_desc(
     interfaces: list[tuple[str, int, int]],
     neighbors: list[tuple[str, str, str]],
 ) -> list[tuple[str, str]]:
-    uplink_idx = interfaces[-2][1]
     results = []
-    for i, (_, _, remote_intf) in enumerate(neighbors):
-        oid = f"{LLDP_REM_PORT_DESC}.0.{uplink_idx}.{i + 1}"
+    for i, (local_intf, _, remote_intf) in enumerate(neighbors):
+        port_idx = _resolve_local_port_idx(local_intf, interfaces)
+        oid = f"{LLDP_REM_PORT_DESC}.0.{port_idx}.{i + 1}"
         results.append((oid, remote_intf))
     return results
 
 
 def _mock_lldp_loc_port_id(
     interfaces: list[tuple[str, int, int]],
+    neighbors: list[tuple[str, str, str]] | None = None,
 ) -> list[tuple[str, str]]:
-    """LLDP local port ID. Index: localPortNum"""
-    return [
+    """LLDP local port ID. Index: localPortNum
+
+    除了固定的 interface 列表外，也為 neighbor 的 local_interface
+    產生動態 port 映射，確保 collector 能反查出正確的 interface 名稱。
+    """
+    results = [
         (f"{LLDP_LOC_PORT_ID}.{idx}", name)
         for name, idx, _ in interfaces
     ]
+    if neighbors:
+        seen_idx = {idx for _, idx, _ in interfaces}
+        for local_intf, _, _ in neighbors:
+            port_idx = _resolve_local_port_idx(local_intf, interfaces)
+            if port_idx not in seen_idx:
+                results.append((f"{LLDP_LOC_PORT_ID}.{port_idx}", local_intf))
+                seen_idx.add(port_idx)
+    return results
 
 
 def _mock_lldp_loc_port_desc(
     interfaces: list[tuple[str, int, int]],
+    neighbors: list[tuple[str, str, str]] | None = None,
 ) -> list[tuple[str, str]]:
     """LLDP local port description. Index: localPortNum"""
-    return [
+    results = [
         (f"{LLDP_LOC_PORT_DESC}.{idx}", name)
         for name, idx, _ in interfaces
     ]
+    if neighbors:
+        seen_idx = {idx for _, idx, _ in interfaces}
+        for local_intf, _, _ in neighbors:
+            port_idx = _resolve_local_port_idx(local_intf, interfaces)
+            if port_idx not in seen_idx:
+                results.append((f"{LLDP_LOC_PORT_DESC}.{port_idx}", local_intf))
+                seen_idx.add(port_idx)
+    return results
 
 
 # ── LAG mock ──────────────────────────────────────────────────────
@@ -960,10 +1011,10 @@ def _mock_cdp_device_id(
     neighbors: list[tuple[str, str, str]],
 ) -> list[tuple[str, str]]:
     """CISCO-CDP-MIB device ID. Index: ifIndex.deviceIndex"""
-    uplink_idx = interfaces[-2][1]
     results = []
-    for i, (_, neighbor_host, _) in enumerate(neighbors):
-        oid = f"{CISCO_CDP_CACHE_DEVICE_ID}.{uplink_idx}.{i + 1}"
+    for i, (local_intf, neighbor_host, _) in enumerate(neighbors):
+        port_idx = _resolve_local_port_idx(local_intf, interfaces)
+        oid = f"{CISCO_CDP_CACHE_DEVICE_ID}.{port_idx}.{i + 1}"
         results.append((oid, neighbor_host))
     return results
 
@@ -972,10 +1023,10 @@ def _mock_cdp_device_port(
     interfaces: list[tuple[str, int, int]],
     neighbors: list[tuple[str, str, str]],
 ) -> list[tuple[str, str]]:
-    uplink_idx = interfaces[-2][1]
     results = []
-    for i, (_, _, remote_intf) in enumerate(neighbors):
-        oid = f"{CISCO_CDP_CACHE_DEVICE_PORT}.{uplink_idx}.{i + 1}"
+    for i, (local_intf, _, remote_intf) in enumerate(neighbors):
+        port_idx = _resolve_local_port_idx(local_intf, interfaces)
+        oid = f"{CISCO_CDP_CACHE_DEVICE_PORT}.{port_idx}.{i + 1}"
         results.append((oid, remote_intf))
     return results
 

@@ -9,7 +9,9 @@ import csv
 import io
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile, Query
+from fastapi import (
+    APIRouter, Body, Depends, File, HTTPException, UploadFile, Query,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, delete
@@ -594,6 +596,241 @@ async def import_uplink_csv(
         "updated": updated,
         "total_errors": len(errors),
         "errors": errors[:10],  # 只返回前 10 個錯誤
+    }
+
+
+# ========== GNMS Topology → Uplink 期望匯入精靈 ==========
+
+
+class GnmsTopologyUplinkEntry(BaseModel):
+    """一筆從 GNMS Topology 解析出的 uplink 期望。"""
+    hostname: str
+    local_interface: str
+    expected_neighbor: str
+    expected_interface: str
+
+
+class GnmsTopologyDeviceSummary(BaseModel):
+    """每台設備的 uplink 摘要（供前端 wizard 顯示）。"""
+    device_name: str
+    uplink_count: int
+    entries: list[GnmsTopologyUplinkEntry]
+
+
+class GnmsTopologyFetchResponse(BaseModel):
+    """fetch 端點的回應。"""
+    batch_index: int
+    total_batches: int
+    devices: list[GnmsTopologyDeviceSummary]
+
+
+class GnmsTopologyImportRequest(BaseModel):
+    """import 端點的請求（前端篩選後的 entries）。"""
+    entries: list[GnmsTopologyUplinkEntry]
+
+
+@router.get("/uplink/{maintenance_id}/gnms-topology-fetch")
+async def gnms_topology_fetch(
+    maintenance_id: str,
+    _user: Annotated[dict[str, Any], Depends(get_current_user)],
+    batch_index: int = Query(0, ge=0, description="第幾批 (0-based)"),
+) -> GnmsTopologyFetchResponse:
+    """
+    從 GNMS Topology API 取得一批設備的鄰居拓樸。
+
+    流程：
+    1. 讀取歲修設備清單，取 new_hostname
+    2. 按 batch_size (預設 100) 分批
+    3. POST 呼叫 GNMS Topology API
+    4. 解析 neighbors 中 is_up_link=true 的項目
+    5. 回傳設備摘要供前端 wizard 顯示
+    """
+    import logging
+    import httpx
+    from app.core.config import settings
+    from app.db.base import get_session_context
+    from app.db.models import MaintenanceDeviceList
+
+    logger = logging.getLogger(__name__)
+    cfg = settings.gnms_topology
+
+    if not cfg.base_url:
+        raise HTTPException(
+            status_code=400,
+            detail="GNMS Topology API 尚未設定（GNMS_TOPOLOGY__BASE_URL）",
+        )
+
+    # 1. 讀取設備清單
+    async with get_session_context() as session:
+        stmt = select(
+            MaintenanceDeviceList.new_hostname,
+        ).where(
+            MaintenanceDeviceList.maintenance_id == maintenance_id,
+            MaintenanceDeviceList.new_hostname.isnot(None),
+            MaintenanceDeviceList.new_hostname != "",
+        )
+        result = await session.execute(stmt)
+        all_hostnames = [r[0] for r in result.all()]
+
+    if not all_hostnames:
+        raise HTTPException(
+            status_code=400,
+            detail="設備清單為空，請先匯入設備",
+        )
+
+    # 2. 分批
+    batch_size = cfg.batch_size or 100
+    total_batches = (len(all_hostnames) + batch_size - 1) // batch_size
+
+    if batch_index >= total_batches:
+        raise HTTPException(
+            status_code=400,
+            detail=f"batch_index {batch_index} 超出範圍（共 {total_batches} 批）",
+        )
+
+    start = batch_index * batch_size
+    batch_names = all_hostnames[start:start + batch_size]
+
+    # 3. POST 呼叫 GNMS Topology API
+    url = f"{cfg.base_url.rstrip('/')}/api/v1/topology"
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {cfg.token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=cfg.timeout) as client:
+            resp = await client.post(
+                url, json=batch_names, headers=headers,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error("GNMS Topology API HTTP error: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail=f"GNMS Topology API 回應錯誤: {e.response.status_code}",
+        )
+    except Exception as e:
+        logger.error("GNMS Topology API error: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail=f"GNMS Topology API 連線失敗: {e}",
+        )
+
+    # 4. 解析回應：提取 is_up_link=true 的鄰居
+    devices: list[GnmsTopologyDeviceSummary] = []
+
+    for device_name, device_info in body.items():
+        neighbors = device_info.get("neighbors", {})
+        entries: list[GnmsTopologyUplinkEntry] = []
+
+        for local_if, neighbor_info in neighbors.items():
+            if not neighbor_info.get("is_up_link"):
+                continue
+            to_device = neighbor_info.get("to_device_name", "")
+            to_interface = neighbor_info.get("to_interface_name", "")
+            if not to_device:
+                continue
+            entries.append(GnmsTopologyUplinkEntry(
+                hostname=device_name,
+                local_interface=local_if,
+                expected_neighbor=to_device,
+                expected_interface=to_interface,
+            ))
+
+        devices.append(GnmsTopologyDeviceSummary(
+            device_name=device_name,
+            uplink_count=len(entries),
+            entries=entries,
+        ))
+
+    return GnmsTopologyFetchResponse(
+        batch_index=batch_index,
+        total_batches=total_batches,
+        devices=devices,
+    )
+
+
+@router.post("/uplink/{maintenance_id}/gnms-topology-import")
+async def gnms_topology_import(
+    maintenance_id: str,
+    body: GnmsTopologyImportRequest,
+    _user: Annotated[dict[str, Any], Depends(require_write())],
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """
+    將 GNMS Topology fetch 結果匯入 Uplink 期望。
+
+    接收前端篩選後的 entries，自動去重（同 hostname + local_interface 更新）。
+    """
+    imported = 0
+    updated = 0
+    errors: list[str] = []
+
+    for entry in body.entries:
+        try:
+            hostname = entry.hostname.strip()
+            local_if = normalize_interface_name(
+                entry.local_interface.strip(),
+            )
+            neighbor = entry.expected_neighbor.strip()
+            neighbor_if = normalize_interface_name(
+                entry.expected_interface.strip(),
+            ) if entry.expected_interface else ""
+
+            if not hostname or not local_if or not neighbor:
+                errors.append(
+                    f"{hostname}:{local_if} → 必填欄位不完整"
+                )
+                continue
+
+            # 檢查是否已存在
+            stmt = select(UplinkExpectation).where(
+                UplinkExpectation.maintenance_id == maintenance_id,
+                UplinkExpectation.hostname == hostname,
+                UplinkExpectation.local_interface == local_if,
+            )
+            result = await session.execute(stmt)
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                existing.expected_neighbor = neighbor
+                existing.expected_interface = neighbor_if
+                updated += 1
+            else:
+                session.add(UplinkExpectation(
+                    maintenance_id=maintenance_id,
+                    hostname=hostname,
+                    local_interface=local_if,
+                    expected_neighbor=neighbor,
+                    expected_interface=neighbor_if,
+                    description="GNMS Topology 匯入",
+                ))
+                imported += 1
+        except Exception as e:
+            errors.append(f"{entry.hostname}: {e}")
+
+    await session.commit()
+
+    if imported + updated > 0:
+        await write_log(
+            level="INFO",
+            source="api",
+            summary=(
+                f"GNMS Topology 匯入 Uplink 期望: "
+                f"新增 {imported}, 更新 {updated}"
+            ),
+            module="expectations",
+            maintenance_id=maintenance_id,
+        )
+
+    return {
+        "imported": imported,
+        "updated": updated,
+        "total_errors": len(errors),
+        "errors": errors[:10],
     }
 
 

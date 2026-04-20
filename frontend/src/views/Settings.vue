@@ -65,6 +65,9 @@
               📥 匯入 CSV
               <input type="file" accept=".csv" class="hidden" @change="importUplinkList" />
             </label>
+            <button v-if="userCanWrite" @click="startGnmsTopologyWizard" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-sm rounded-lg transition">
+              🔄 從 GNMS 匯入
+            </button>
             <button v-if="userCanWrite" @click="openAddUplink" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition">
               ➕ 新增期望
             </button>
@@ -460,6 +463,187 @@
     </div>
     </Transition>
 
+    <!-- GNMS Topology Uplink 匯入精靈 Modal -->
+    <Transition name="modal">
+    <div v-if="gnmsTopoWizard.show" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @mousedown.self="closeGnmsTopoWizard">
+      <div class="bg-slate-800/95 backdrop-blur-xl border border-slate-600/40 rounded-2xl shadow-2xl shadow-black/30 p-6 w-[750px] max-h-[85vh] flex flex-col">
+
+        <!-- Header + 步驟指示 -->
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-white">從 GNMS 匯入 Uplink 期望</h3>
+          <div class="flex items-center gap-1 text-xs">
+            <span v-for="s in 4" :key="s"
+              class="w-6 h-6 rounded-full flex items-center justify-center font-bold transition"
+              :class="s === gnmsTopoWizard.step
+                ? 'bg-cyan-500 text-white'
+                : s < gnmsTopoWizard.step ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-400'"
+            >{{ s < gnmsTopoWizard.step ? '✓' : s }}</span>
+          </div>
+        </div>
+
+        <!-- Step 1: 確認開始 -->
+        <div v-if="gnmsTopoWizard.step === 1" class="flex-1 space-y-4">
+          <p class="text-slate-300">系統將根據設備清單，從 GNMS Topology API 批次查詢每台設備的鄰居拓樸，自動篩選出 Uplink 連線作為期望值匯入。</p>
+          <div class="bg-slate-900/60 rounded-lg p-4 space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-slate-400">歲修 ID</span><span class="text-white font-mono">{{ selectedMaintenanceId }}</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">設備數</span><span class="text-white">{{ gnmsTopoWizard.deviceTotal }} 台</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">每批上限</span><span class="text-white">100 台</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">預計批次</span><span class="text-white">{{ Math.ceil(gnmsTopoWizard.deviceTotal / 100) || 0 }} 批</span></div>
+          </div>
+          <div class="bg-blue-900/20 rounded-lg p-3 text-sm text-blue-300 border border-blue-700/40">
+            💡 適用場景：歲修未更換設備，Uplink 連線與現行完全一致，可直接以當前拓樸作為期望值。
+          </div>
+          <div v-if="gnmsTopoWizard.deviceTotal === 0" class="text-amber-400 text-sm bg-amber-900/20 rounded-lg p-3">
+            ⚠ 設備清單為空，請先匯入設備後再使用此功能。
+          </div>
+        </div>
+
+        <!-- Step 2: 載入中 -->
+        <div v-if="gnmsTopoWizard.step === 2" class="flex-1 flex flex-col items-center justify-center py-8">
+          <div class="relative h-12 w-12 mb-4">
+            <div class="absolute inset-0 rounded-full border-2 border-slate-700"></div>
+            <div class="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-400 animate-spin"></div>
+          </div>
+          <p class="text-slate-300 mb-1">正在查詢 GNMS Topology API...</p>
+          <p class="text-sm text-slate-500">第 {{ gnmsTopoWizard.batchIndex + 1 }} / {{ gnmsTopoWizard.totalBatches }} 批</p>
+        </div>
+
+        <!-- Step 3: 批次完成中間狀態 -->
+        <div v-if="gnmsTopoWizard.step === 3 && gnmsTopoWizard.batchDone" class="flex-1 flex flex-col items-center justify-center py-6 space-y-4">
+          <div class="text-3xl">✅</div>
+          <p class="text-white font-semibold">第 {{ gnmsTopoWizard.batchIndex + 1 }} / {{ gnmsTopoWizard.totalBatches }} 批匯入完成</p>
+          <div class="bg-slate-900/60 rounded-lg p-4 space-y-1 text-sm w-full max-w-xs">
+            <div class="flex justify-between"><span class="text-slate-400">本批新增</span><span class="text-green-400 font-bold">{{ gnmsTopoWizard.batchImported }}</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">本批更新</span><span class="text-blue-400">{{ gnmsTopoWizard.batchUpdated }}</span></div>
+            <div class="flex justify-between border-t border-slate-700 pt-1 mt-1"><span class="text-slate-400">累計新增</span><span class="text-white font-bold">{{ gnmsTopoWizard.totalImported }}</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">累計更新</span><span class="text-white">{{ gnmsTopoWizard.totalUpdated }}</span></div>
+          </div>
+        </div>
+
+        <!-- Step 3: 檢視/篩選 entries -->
+        <div v-if="gnmsTopoWizard.step === 3 && !gnmsTopoWizard.batchDone" class="flex-1 overflow-hidden flex flex-col space-y-3">
+          <div class="flex items-center justify-between">
+            <p class="text-sm text-slate-400">
+              第 <span class="text-white font-bold">{{ gnmsTopoWizard.batchIndex + 1 }}</span> / {{ gnmsTopoWizard.totalBatches }} 批
+              — 共 <span class="text-white font-bold">{{ gnmsTopoWizard.allEntries.length }}</span> 筆 Uplink
+            </p>
+          </div>
+
+          <!-- 搜尋 -->
+          <div class="flex items-center gap-2">
+            <input
+              v-model="gnmsTopoWizard.search"
+              type="text"
+              placeholder="篩選設備或鄰居名稱..."
+              class="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-600/40 rounded-lg text-slate-200 placeholder-slate-500 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-400"
+            />
+            <button
+              @click="gnmsTopoSelectAll"
+              class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded-lg transition whitespace-nowrap"
+            >全選 ({{ gnmsTopoFilteredEntries.length }})</button>
+            <button
+              @click="gnmsTopoWizard.selectedEntries = []"
+              class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded-lg transition whitespace-nowrap"
+            >清除</button>
+          </div>
+
+          <div v-if="gnmsTopoWizard.selectedEntries.length > 0" class="flex items-center gap-2 p-2 bg-cyan-900/20 rounded-lg border border-cyan-700/40 text-sm">
+            <span class="text-cyan-300">已選 <b>{{ gnmsTopoWizard.selectedEntries.length }}</b> 筆 Uplink 期望</span>
+          </div>
+
+          <!-- Uplink 清單表格 -->
+          <div class="overflow-y-auto max-h-[320px] rounded-lg border border-slate-700">
+            <table class="min-w-full text-sm">
+              <thead class="bg-slate-900/60 sticky top-0">
+                <tr>
+                  <th class="px-2 py-2 text-center w-8">
+                    <input type="checkbox" :checked="gnmsTopoFilteredEntries.length > 0 && gnmsTopoFilteredEntries.every(e => gnmsTopoWizard.selectedEntries.includes(gnmsTopoEntryKey(e)))" @change="gnmsTopoToggleAll" class="rounded border-slate-500" />
+                  </th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400">本地設備</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400">本地介面</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400">遠端鄰居</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-slate-400">遠端介面</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-700/50">
+                <tr v-for="entry in gnmsTopoFilteredEntries" :key="gnmsTopoEntryKey(entry)"
+                    class="hover:bg-slate-700/30 transition cursor-pointer"
+                    :class="{ 'bg-cyan-900/15': gnmsTopoWizard.selectedEntries.includes(gnmsTopoEntryKey(entry)) }"
+                    @click="gnmsTopoToggleEntry(entry)">
+                  <td class="px-2 py-1.5 text-center" @click.stop>
+                    <input type="checkbox" :checked="gnmsTopoWizard.selectedEntries.includes(gnmsTopoEntryKey(entry))" @change="gnmsTopoToggleEntry(entry)" class="rounded border-slate-500" />
+                  </td>
+                  <td class="px-3 py-1.5 text-white font-mono text-xs">{{ entry.hostname }}</td>
+                  <td class="px-3 py-1.5 text-slate-300 font-mono text-xs">{{ entry.local_interface }}</td>
+                  <td class="px-3 py-1.5 text-cyan-300 font-mono text-xs">{{ entry.expected_neighbor }}</td>
+                  <td class="px-3 py-1.5 text-slate-300 font-mono text-xs">{{ entry.expected_interface || '-' }}</td>
+                </tr>
+                <tr v-if="gnmsTopoFilteredEntries.length === 0">
+                  <td colspan="5" class="px-4 py-6 text-center text-slate-500">
+                    {{ gnmsTopoWizard.allEntries.length === 0 ? '此批設備無 Uplink 連線' : '無符合篩選條件的結果' }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Step 4: 匯入完成 -->
+        <div v-if="gnmsTopoWizard.step === 4" class="flex-1 space-y-4">
+          <div class="text-center py-4">
+            <div class="text-4xl mb-2">✅</div>
+            <p class="text-lg text-white font-semibold">匯入完成</p>
+          </div>
+          <div class="bg-slate-900/60 rounded-lg p-4 space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-slate-400">新增</span><span class="text-green-400 font-bold">{{ gnmsTopoWizard.totalImported }} 筆</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">更新</span><span class="text-blue-400 font-bold">{{ gnmsTopoWizard.totalUpdated }} 筆</span></div>
+            <div v-if="gnmsTopoWizard.totalErrors.length" class="flex justify-between"><span class="text-slate-400">錯誤</span><span class="text-red-400">{{ gnmsTopoWizard.totalErrors.length }} 筆</span></div>
+          </div>
+          <div v-if="gnmsTopoWizard.totalErrors.length" class="max-h-[150px] overflow-y-auto rounded-lg border border-red-800/40 p-3">
+            <p v-for="(err, i) in gnmsTopoWizard.totalErrors.slice(0, 20)" :key="i" class="text-xs text-red-400 font-mono">{{ err }}</p>
+            <p v-if="gnmsTopoWizard.totalErrors.length > 20" class="text-xs text-slate-500 mt-1">... 還有 {{ gnmsTopoWizard.totalErrors.length - 20 }} 筆錯誤</p>
+          </div>
+        </div>
+
+        <!-- Footer 按鈕 -->
+        <div class="flex justify-between items-center mt-5 pt-4 border-t border-slate-700">
+          <button @click="closeGnmsTopoWizard" class="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition text-sm">
+            {{ gnmsTopoWizard.step === 4 ? '關閉' : '取消' }}
+          </button>
+          <div class="flex gap-2">
+            <button v-if="gnmsTopoWizard.step === 1 && gnmsTopoWizard.deviceTotal > 0"
+              @click="gnmsTopoFetchBatch"
+              class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 transition text-sm">
+              開始查詢
+            </button>
+            <button v-if="gnmsTopoWizard.step === 3 && !gnmsTopoWizard.batchDone"
+              @click="gnmsTopoSkipBatch"
+              class="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition text-sm">
+              {{ gnmsTopoWizard.batchIndex + 1 < gnmsTopoWizard.totalBatches ? '跳過此批 ▸' : '跳過並完成' }}
+            </button>
+            <button v-if="gnmsTopoWizard.step === 3 && !gnmsTopoWizard.batchDone"
+              @click="gnmsTopoImportBatch"
+              :disabled="gnmsTopoWizard.loading || gnmsTopoWizard.selectedEntries.length === 0"
+              class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition text-sm disabled:opacity-50">
+              匯入選取 ({{ gnmsTopoWizard.selectedEntries.length }})
+            </button>
+            <button v-if="gnmsTopoWizard.step === 3 && gnmsTopoWizard.batchDone"
+              @click="gnmsTopoAdvanceOrFinish"
+              class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 transition text-sm">
+              {{ gnmsTopoWizard.batchIndex + 1 < gnmsTopoWizard.totalBatches ? '繼續下一批 ▸' : '完成' }}
+            </button>
+            <button v-if="gnmsTopoWizard.step === 4"
+              @click="loadUplinkList(); closeGnmsTopoWizard()"
+              class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-500 transition text-sm">
+              完成
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    </Transition>
+
   </div>
 </template>
 
@@ -538,10 +722,31 @@ export default {
       editingPortChannel: null,
 
 
-      // 搜尋防抖計時器
+      // 搜尋防抖計時��
       uplinkSearchTimeout: null,
       versionSearchTimeout: null,
       portChannelSearchTimeout: null,
+
+      // GNMS Topology 匯入精靈
+      gnmsTopoWizard: {
+        show: false,
+        step: 1,          // 1=確認, 2=載入中, 3=檢視/篩選, 4=完成
+        loading: false,
+        deviceTotal: 0,
+        batchIndex: 0,
+        totalBatches: 0,
+        allEntries: [],         // GnmsTopologyUplinkEntry[]
+        selectedEntries: [],    // entry key 陣列
+        search: '',
+        // 累計結果
+        totalImported: 0,
+        totalUpdated: 0,
+        totalErrors: [],
+        // 當前批次結果
+        batchDone: false,
+        batchImported: 0,
+        batchUpdated: 0,
+      },
 
     };
   },
@@ -551,6 +756,16 @@ export default {
     },
     userCanWrite() {
       return canWrite.value;
+    },
+    gnmsTopoFilteredEntries() {
+      const q = (this.gnmsTopoWizard.search || '').trim().toUpperCase();
+      if (!q) return this.gnmsTopoWizard.allEntries;
+      return this.gnmsTopoWizard.allEntries.filter(e =>
+        e.hostname.toUpperCase().includes(q)
+        || e.expected_neighbor.toUpperCase().includes(q)
+        || e.local_interface.toUpperCase().includes(q)
+        || e.expected_interface.toUpperCase().includes(q)
+      );
     },
   },
   watch: {
@@ -951,6 +1166,161 @@ SW-002,Eth1/1,SPINE-01,Eth49/1,Leaf to Spine`;
         `/expectations/uplink/${this.selectedMaintenanceId}/export-csv?${params}`,
         `uplink_expectations_${this.selectedMaintenanceId}.csv`,
       );
+    },
+
+    // ========== GNMS Topology Uplink 匯入精靈 ==========
+    gnmsTopoEntryKey(entry) {
+      return `${entry.hostname}::${entry.local_interface}`;
+    },
+
+    async startGnmsTopologyWizard() {
+      if (!this.selectedMaintenanceId) {
+        this.showMessage('請先選擇歲修 ID', 'warning');
+        return;
+      }
+
+      // 取得設備數
+      let deviceTotal = 0;
+      try {
+        const { data } = await api.get(`/maintenance-devices/${this.selectedMaintenanceId}/stats`);
+        deviceTotal = data.total || 0;
+      } catch (e) {
+        console.error('載入設備統計失敗:', e);
+      }
+
+      this.gnmsTopoWizard = {
+        show: true,
+        step: 1,
+        loading: false,
+        deviceTotal,
+        batchIndex: 0,
+        totalBatches: Math.ceil(deviceTotal / 100) || 0,
+        allEntries: [],
+        selectedEntries: [],
+        search: '',
+        totalImported: 0,
+        totalUpdated: 0,
+        totalErrors: [],
+        batchDone: false,
+        batchImported: 0,
+        batchUpdated: 0,
+      };
+    },
+
+    closeGnmsTopoWizard() {
+      this.gnmsTopoWizard.show = false;
+    },
+
+    gnmsTopoToggleEntry(entry) {
+      const key = this.gnmsTopoEntryKey(entry);
+      const idx = this.gnmsTopoWizard.selectedEntries.indexOf(key);
+      if (idx >= 0) {
+        this.gnmsTopoWizard.selectedEntries.splice(idx, 1);
+      } else {
+        this.gnmsTopoWizard.selectedEntries.push(key);
+      }
+    },
+
+    gnmsTopoToggleAll(e) {
+      const filtered = this.gnmsTopoFilteredEntries.map(en => this.gnmsTopoEntryKey(en));
+      if (e.target.checked) {
+        const set = new Set([...this.gnmsTopoWizard.selectedEntries, ...filtered]);
+        this.gnmsTopoWizard.selectedEntries = [...set];
+      } else {
+        const remove = new Set(filtered);
+        this.gnmsTopoWizard.selectedEntries = this.gnmsTopoWizard.selectedEntries.filter(k => !remove.has(k));
+      }
+    },
+
+    gnmsTopoSelectAll() {
+      const filtered = this.gnmsTopoFilteredEntries.map(en => this.gnmsTopoEntryKey(en));
+      const set = new Set([...this.gnmsTopoWizard.selectedEntries, ...filtered]);
+      this.gnmsTopoWizard.selectedEntries = [...set];
+    },
+
+    async gnmsTopoFetchBatch() {
+      const wiz = this.gnmsTopoWizard;
+      wiz.step = 2;
+      wiz.loading = true;
+
+      try {
+        const { data } = await api.get(
+          `/expectations/uplink/${this.selectedMaintenanceId}/gnms-topology-fetch`,
+          {
+            params: { batch_index: wiz.batchIndex },
+            timeout: 120000,
+          },
+        );
+        wiz.totalBatches = data.total_batches;
+        // 收集所有 entries
+        const entries = [];
+        for (const dev of data.devices) {
+          entries.push(...dev.entries);
+        }
+        wiz.allEntries = entries;
+        // 預設全選
+        wiz.selectedEntries = entries.map(e => this.gnmsTopoEntryKey(e));
+        wiz.step = 3;
+      } catch (e) {
+        const msg = e.response?.data?.detail || e.message || '查詢失敗';
+        this.showMessage(`GNMS Topology 查詢失敗：${msg}`, 'error');
+        wiz.step = 1;
+      } finally {
+        wiz.loading = false;
+      }
+    },
+
+    gnmsTopoAdvanceOrFinish() {
+      const wiz = this.gnmsTopoWizard;
+      if (wiz.batchIndex + 1 < wiz.totalBatches) {
+        wiz.batchIndex = wiz.batchIndex + 1;
+        wiz.allEntries = [];
+        wiz.selectedEntries = [];
+        wiz.search = '';
+        wiz.batchDone = false;
+        this.gnmsTopoFetchBatch();
+      } else {
+        wiz.step = 4;
+      }
+    },
+
+    gnmsTopoSkipBatch() {
+      this.gnmsTopoAdvanceOrFinish();
+    },
+
+    async gnmsTopoImportBatch() {
+      const wiz = this.gnmsTopoWizard;
+      const selectedKeys = new Set(wiz.selectedEntries);
+      const entriesToImport = wiz.allEntries.filter(e => selectedKeys.has(this.gnmsTopoEntryKey(e)));
+
+      if (entriesToImport.length === 0) {
+        this.showMessage('請先勾選要匯入的 Uplink 期望', 'warning');
+        return;
+      }
+
+      wiz.loading = true;
+
+      try {
+        const { data } = await api.post(
+          `/expectations/uplink/${this.selectedMaintenanceId}/gnms-topology-import`,
+          { entries: entriesToImport },
+          { timeout: 60000 },
+        );
+
+        // 累計結果
+        wiz.totalImported += data.imported;
+        wiz.totalUpdated += data.updated;
+        wiz.totalErrors.push(...(data.errors || []));
+        wiz.batchImported = data.imported;
+        wiz.batchUpdated = data.updated;
+
+        wiz.batchDone = true;
+      } catch (e) {
+        const msg = e.response?.data?.detail || e.message || '匯入失敗';
+        this.showMessage(`匯入失敗：${msg}`, 'error');
+      } finally {
+        wiz.loading = false;
+      }
     },
 
     // ========== Version 期望操作 ==========

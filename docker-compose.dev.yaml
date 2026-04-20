@@ -116,7 +116,7 @@ services:
       - .env
     environment:
       # 應用程式版本（對應 image tag）
-      APP_VERSION: ${APP_VERSION:-v2.21.8}
+      APP_VERSION: ${APP_VERSION:-v2.22.0}
       # 資料庫連線（覆寫 .env 中的設定，使用 docker 網路）
       DB_HOST: db
       DB_PORT: 3306
@@ -148,6 +148,11 @@ services:
       FETCHER_ENDPOINT__GET_POWER: /api/get_power
       FETCHER_ENDPOINT__GET_VERSION: /switch/network/get_install_active/{switch_ip}
       FETCHER_ENDPOINT__GET_INTERFACE_STATUS: /api/get_interface_status
+      # GNMS Topology（開發環境指向 mock）
+      GNMS_TOPOLOGY__BASE_URL: http://mock-api:9999
+      GNMS_TOPOLOGY__TOKEN: mock-bearer-token
+      GNMS_TOPOLOGY__TIMEOUT: "60"
+      GNMS_TOPOLOGY__BATCH_SIZE: "100"
       # S3 Object Storage (SeaweedFS)
       MINIO__ENDPOINT: seaweedfs:8333
       MINIO__ACCESS_KEY: minioadmin
