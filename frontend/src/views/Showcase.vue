@@ -566,70 +566,70 @@ const devTabs=[
   ]},
 ]
 
-// ── Cases interactive demo: ACL change → ping down → fix → manual resolve ──
+// ── Cases interactive demo: Speed drop → ping down → fix → manual resolve ──
 const caseStep = ref(0)
 const caseScenario = [
-  { // 0: ACL name changed after maintenance
-    ping:true, status:'處理中', statusCls:'inprogress', assignee:'王大明', summary:'',
-    notes:[], changes:[{attr:'ACL',from:'3220',to:'3150',cls:'err'}],
+  { // 0: Speed drops from 1G to 100M after maintenance
+    ping:true, status:'新案件', statusCls:'inprogress', assignee:'王大明', summary:'',
+    notes:[], changes:[{attr:'速率',from:'1G',to:'100M',cls:'err'}],
     buttons:[{label:'系統偵測到屬性變化...', cls:'disabled'}],
-    timeline:[{label:'屬性變化：ACL',desc:'GE1/0/5 ACL 從 3220 → 3150',cls:'err'}],
+    timeline:[{label:'屬性變化：速率',desc:'GE1/0/5 速率從 1G → 100M',cls:'err'}],
   },
-  { // 1: Ping goes down because of wrong ACL
+  { // 1: Speed drop causes ping to fail → new case created
     ping:false, status:'處理中', statusCls:'inprogress', assignee:'王大明', summary:'',
-    notes:[], changes:[{attr:'ACL',from:'3220',to:'3150',cls:'err'},{attr:'Ping',from:'可達',to:'不可達',cls:'err'}],
+    notes:[], changes:[{attr:'速率',from:'1G',to:'100M',cls:'err'},{attr:'Ping',from:'可達',to:'不可達',cls:'err'}],
     buttons:[{label:'新增筆記',cls:'ghost'}],
     timeline:[
-      {label:'屬性變化：ACL',desc:'GE1/0/5 ACL 從 3220 → 3150',cls:'done'},
-      {label:'Ping 不可達',desc:'ACL 變更導致設備無法回應',cls:'err'},
+      {label:'屬性變化：速率',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
+      {label:'Ping 不可達',desc:'速率異常導致設備無法回應',cls:'err'},
     ],
   },
   { // 2: Engineer investigates
     ping:false, status:'處理中', statusCls:'inprogress', assignee:'王大明',
     summary:'',
-    notes:[{author:'王大明',text:'確認歲修時 ACL 被改為 3150，原本應為 3220，聯繫負責人修復'}],
-    changes:[{attr:'ACL',from:'3220',to:'3150',cls:'err'},{attr:'Ping',from:'可達',to:'不可達',cls:'err'}],
+    notes:[{author:'王大明',text:'確認歲修後 GE1/0/5 速率降為 100M，懷疑線材接觸不良或自動協商異常，聯繫廠務重新插拔'}],
+    changes:[{attr:'速率',from:'1G',to:'100M',cls:'err'},{attr:'Ping',from:'可達',to:'不可達',cls:'err'}],
     buttons:[{label:'📷 上傳截圖',cls:'ghost'},{label:'討論',cls:'ghost'}],
     timeline:[
-      {label:'屬性變化：ACL',desc:'GE1/0/5 ACL 從 3220 → 3150',cls:'done'},
-      {label:'Ping 不可達',desc:'ACL 變更導致設備無法回應',cls:'done'},
-      {label:'調查中',desc:'確認歲修時 ACL 被誤改',cls:'active'},
+      {label:'屬性變化：速率',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
+      {label:'Ping 不可達',desc:'速率異常導致設備無法回應',cls:'done'},
+      {label:'調查中',desc:'懷疑線材接觸不良，廠務重新插拔',cls:'active'},
     ],
   },
-  { // 3: ACL restored, ping recovered
+  { // 3: Speed restored, ping recovered
     ping:true, status:'處理中', statusCls:'inprogress', assignee:'王大明',
     summary:'',
     notes:[
-      {author:'王大明',text:'確認歲修時 ACL 被改為 3150，原本應為 3220，聯繫負責人修復'},
-      {author:'王大明',text:'負責人已將 ACL 恢復為 3220'},
+      {author:'王大明',text:'確認歲修後 GE1/0/5 速率降為 100M，懷疑線材接觸不良或自動協商異常，聯繫廠務重新插拔'},
+      {author:'王大明',text:'廠務重新插拔網路線後速率恢復為 1G'},
       {author:'系統',text:'Ping 已恢復可達'},
     ],
-    changes:[{attr:'ACL',from:'3150',to:'3220',cls:'ok'},{attr:'Ping',from:'不可達',to:'可達',cls:'ok'}],
+    changes:[{attr:'速率',from:'100M',to:'1G',cls:'ok'},{attr:'Ping',from:'不可達',to:'可達',cls:'ok'}],
     buttons:[{label:'標記已解決',cls:'primary'}],
     timeline:[
-      {label:'屬性變化：ACL',desc:'GE1/0/5 ACL 從 3220 → 3150',cls:'done'},
-      {label:'Ping 不可達',desc:'ACL 變更導致設備無法回應',cls:'done'},
-      {label:'調查中',desc:'確認歲修時 ACL 被誤改',cls:'done'},
-      {label:'ACL 恢復',desc:'負責人恢復 ACL 3220',cls:'ok'},
+      {label:'屬性變化：速率',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
+      {label:'Ping 不可達',desc:'速率異常導致設備無法回應',cls:'done'},
+      {label:'調查中',desc:'廠務重新插拔網路線',cls:'done'},
+      {label:'速率恢復',desc:'GE1/0/5 恢復 1G',cls:'ok'},
       {label:'Ping 恢復',desc:'設備已恢復回應',cls:'ok'},
     ],
   },
   { // 4: Manually resolved
     ping:true, status:'已結案', statusCls:'resolved', assignee:'王大明',
-    summary:'歲修時 GE1/0/5 ACL 被誤改為 3150，已由負責人恢復為 3220',
+    summary:'歲修後 GE1/0/5 速率從 1G 降為 100M 導致 Ping 不可達，廠務重新插拔網路線後恢復',
     notes:[
-      {author:'王大明',text:'確認歲修時 ACL 被改為 3150，原本應為 3220，聯繫負責人修復'},
-      {author:'王大明',text:'負責人已將 ACL 恢復為 3220'},
+      {author:'王大明',text:'確認歲修後 GE1/0/5 速率降為 100M，懷疑線材接觸不良或自動協商異常，聯繫廠務重新插拔'},
+      {author:'王大明',text:'廠務重新插拔網路線後速率恢復為 1G'},
       {author:'系統',text:'Ping 已恢復可達'},
       {author:'王大明',text:'驗證完成，手動結案'},
     ],
     changes:[],
     buttons:[{label:'重新體驗 ↺',cls:'ghost'}],
     timeline:[
-      {label:'屬性變化：ACL',desc:'GE1/0/5 ACL 從 3220 → 3150',cls:'done'},
-      {label:'Ping 不可達',desc:'ACL 變更導致設備無法回應',cls:'done'},
-      {label:'調查中',desc:'確認原因並聯繫廠務',cls:'done'},
-      {label:'ACL 恢復',desc:'負責人恢復 ACL 3220',cls:'done'},
+      {label:'屬性變化：速率',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
+      {label:'Ping 不可達',desc:'速率異常導致設備無法回應',cls:'done'},
+      {label:'調查中',desc:'廠務重新插拔網路線',cls:'done'},
+      {label:'速率恢復',desc:'GE1/0/5 恢復 1G',cls:'done'},
       {label:'Ping 恢復',desc:'設備已恢復回應',cls:'done'},
       {label:'手動結案',desc:'王大明驗證完成，標記已解決',cls:'ok'},
     ],
