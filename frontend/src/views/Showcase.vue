@@ -566,50 +566,64 @@ const devTabs=[
   ]},
 ]
 
-// ── Cases interactive demo: Speed drop → ping down → fix → manual resolve ──
+// ── Cases interactive demo: Speed drop → ping down → accept → investigate → fix → resolve ──
 const caseStep = ref(0)
 const caseScenario = [
-  { // 0: Speed drops from 1G to 100M after maintenance
-    ping:true, status:'新案件', statusCls:'inprogress', assignee:'王大明', summary:'',
-    notes:[], changes:[{attr:'速率',from:'1G',to:'100M',cls:'err'}],
-    buttons:[{label:'系統偵測到屬性變化...', cls:'disabled'}],
-    timeline:[{label:'屬性變化：速率',desc:'GE1/0/5 速率從 1G → 100M',cls:'err'}],
+  { // 0: Speed 1G→100M + Ping down → system auto-creates new case
+    ping:false, status:'新案件', statusCls:'new', assignee:'王大明', summary:'',
+    notes:[],
+    changes:[{attr:'速率',from:'1G',to:'100M',cls:'err'},{attr:'Ping',from:'可達',to:'不可達',cls:'err'}],
+    buttons:[{label:'接受',cls:'primary'}],
+    timeline:[
+      {label:'速率異常',desc:'GE1/0/5 速率從 1G → 100M',cls:'err'},
+      {label:'Ping 不可達',desc:'速率降級導致設備無法回應',cls:'err'},
+      {label:'建立新案件',desc:'系統自動建立案件，指派給王大明',cls:'active'},
+    ],
   },
-  { // 1: Speed drop causes ping to fail → new case created
+  { // 1: User clicks "接受" → status changes to 處理中
     ping:false, status:'處理中', statusCls:'inprogress', assignee:'王大明', summary:'',
-    notes:[], changes:[{attr:'速率',from:'1G',to:'100M',cls:'err'},{attr:'Ping',from:'可達',to:'不可達',cls:'err'}],
+    notes:[{author:'王大明',text:'已接受案件，開始排查'}],
+    changes:[{attr:'速率',from:'1G',to:'100M',cls:'err'},{attr:'Ping',from:'可達',to:'不可達',cls:'err'}],
     buttons:[{label:'新增筆記',cls:'ghost'}],
     timeline:[
-      {label:'屬性變化：速率',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
-      {label:'Ping 不可達',desc:'速率異常導致設備無法回應',cls:'err'},
+      {label:'速率異常',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
+      {label:'Ping 不可達',desc:'速率降級導致設備無法回應',cls:'done'},
+      {label:'案件已接受',desc:'王大明接受案件',cls:'done'},
+      {label:'排查中',desc:'確認歲修後速率降級原因',cls:'active'},
     ],
   },
-  { // 2: Engineer investigates
+  { // 2: Engineer investigates, adds notes
     ping:false, status:'處理中', statusCls:'inprogress', assignee:'王大明',
     summary:'',
-    notes:[{author:'王大明',text:'確認歲修後 GE1/0/5 速率降為 100M，懷疑線材接觸不良或自動協商異常，聯繫廠務重新插拔'}],
+    notes:[
+      {author:'王大明',text:'已接受案件，開始排查'},
+      {author:'王大明',text:'確認 GE1/0/5 速率降為 100M，懷疑線材接觸不良，聯繫廠務重新插拔'},
+    ],
     changes:[{attr:'速率',from:'1G',to:'100M',cls:'err'},{attr:'Ping',from:'可達',to:'不可達',cls:'err'}],
-    buttons:[{label:'📷 上傳截圖',cls:'ghost'},{label:'討論',cls:'ghost'}],
+    buttons:[{label:'📷 上傳截圖',cls:'ghost'},{label:'等待廠務處理...',cls:'disabled'}],
     timeline:[
-      {label:'屬性變化：速率',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
-      {label:'Ping 不可達',desc:'速率異常導致設備無法回應',cls:'done'},
-      {label:'調查中',desc:'懷疑線材接觸不良，廠務重新插拔',cls:'active'},
+      {label:'速率異常',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
+      {label:'Ping 不可達',desc:'速率降級導致設備無法回應',cls:'done'},
+      {label:'案件已接受',desc:'王大明接受案件',cls:'done'},
+      {label:'調查中',desc:'懷疑線材接觸不良，已聯繫廠務',cls:'active'},
     ],
   },
-  { // 3: Speed restored, ping recovered
+  { // 3: Speed restored, ping recovered — ready to resolve
     ping:true, status:'處理中', statusCls:'inprogress', assignee:'王大明',
     summary:'',
     notes:[
-      {author:'王大明',text:'確認歲修後 GE1/0/5 速率降為 100M，懷疑線材接觸不良或自動協商異常，聯繫廠務重新插拔'},
+      {author:'王大明',text:'已接受案件，開始排查'},
+      {author:'王大明',text:'確認 GE1/0/5 速率降為 100M，懷疑線材接觸不良，聯繫廠務重新插拔'},
       {author:'王大明',text:'廠務重新插拔網路線後速率恢復為 1G'},
       {author:'系統',text:'Ping 已恢復可達'},
     ],
     changes:[{attr:'速率',from:'100M',to:'1G',cls:'ok'},{attr:'Ping',from:'不可達',to:'可達',cls:'ok'}],
     buttons:[{label:'標記已解決',cls:'primary'}],
     timeline:[
-      {label:'屬性變化：速率',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
-      {label:'Ping 不可達',desc:'速率異常導致設備無法回應',cls:'done'},
-      {label:'調查中',desc:'廠務重新插拔網路線',cls:'done'},
+      {label:'速率異常',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
+      {label:'Ping 不可達',desc:'速率降級導致設備無法回應',cls:'done'},
+      {label:'案件已接受',desc:'王大明接受案件',cls:'done'},
+      {label:'廠務處理',desc:'重新插拔網路線',cls:'done'},
       {label:'速率恢復',desc:'GE1/0/5 恢復 1G',cls:'ok'},
       {label:'Ping 恢復',desc:'設備已恢復回應',cls:'ok'},
     ],
@@ -618,7 +632,8 @@ const caseScenario = [
     ping:true, status:'已結案', statusCls:'resolved', assignee:'王大明',
     summary:'歲修後 GE1/0/5 速率從 1G 降為 100M 導致 Ping 不可達，廠務重新插拔網路線後恢復',
     notes:[
-      {author:'王大明',text:'確認歲修後 GE1/0/5 速率降為 100M，懷疑線材接觸不良或自動協商異常，聯繫廠務重新插拔'},
+      {author:'王大明',text:'已接受案件，開始排查'},
+      {author:'王大明',text:'確認 GE1/0/5 速率降為 100M，懷疑線材接觸不良，聯繫廠務重新插拔'},
       {author:'王大明',text:'廠務重新插拔網路線後速率恢復為 1G'},
       {author:'系統',text:'Ping 已恢復可達'},
       {author:'王大明',text:'驗證完成，手動結案'},
@@ -626,9 +641,10 @@ const caseScenario = [
     changes:[],
     buttons:[{label:'重新體驗 ↺',cls:'ghost'}],
     timeline:[
-      {label:'屬性變化：速率',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
-      {label:'Ping 不可達',desc:'速率異常導致設備無法回應',cls:'done'},
-      {label:'調查中',desc:'廠務重新插拔網路線',cls:'done'},
+      {label:'速率異常',desc:'GE1/0/5 速率從 1G → 100M',cls:'done'},
+      {label:'Ping 不可達',desc:'速率降級導致設備無法回應',cls:'done'},
+      {label:'案件已接受',desc:'王大明接受案件',cls:'done'},
+      {label:'廠務處理',desc:'重新插拔網路線',cls:'done'},
       {label:'速率恢復',desc:'GE1/0/5 恢復 1G',cls:'done'},
       {label:'Ping 恢復',desc:'設備已恢復回應',cls:'done'},
       {label:'手動結案',desc:'王大明驗證完成，標記已解決',cls:'ok'},
@@ -894,6 +910,7 @@ onBeforeUnmount(()=>{ window.removeEventListener('scroll',onScroll); obs?.discon
 .cd-status-badge{padding:5px 14px;border-radius:8px;font-size:13px;font-weight:700}
 .cd-status-badge.unassigned{background:rgba(100,116,139,.2);color:#94a3b8}
 .cd-status-badge.assigned{background:rgba(234,179,8,.2);color:#fbbf24}
+.cd-status-badge.new{background:rgba(251,191,36,.2);color:#fbbf24}
 .cd-status-badge.inprogress{background:rgba(59,130,246,.2);color:#60a5fa}
 .cd-status-badge.resolved{background:rgba(34,197,94,.2);color:#4ade80}
 .cd-assignee{font-size:13px;color:#94a3b8}
