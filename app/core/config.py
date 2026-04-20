@@ -68,23 +68,6 @@ class GnmsMacArpConfig(BaseModel):
     batch_size: int = 100  # API 每次最多查詢設備數
 
 
-class GnmsTopologyConfig(BaseModel):
-    """GNMS Topology API config.
-
-    用於從 GNMS 批次查詢設備的鄰居拓樸，匯入 Uplink 期望。
-    .env 範例::
-
-        GNMS_TOPOLOGY__BASE_URL=http://netinv.netsre.icsd.tsmc.com
-        GNMS_TOPOLOGY__TOKEN=7ab602f257702f02f16815036bc8b1fb2b3d7343
-        GNMS_TOPOLOGY__TIMEOUT=60
-        GNMS_TOPOLOGY__BATCH_SIZE=100
-    """
-
-    base_url: str = ""
-    token: str = ""
-    timeout: int = 60
-    batch_size: int = 100
-
 
 class FetcherEndpointConfig(BaseModel):
     """Per-fetcher endpoint templates.
@@ -200,8 +183,6 @@ class Settings(BaseSettings):
     # GNMS MacARP (批次查詢設備 client 清單)
     gnms_macarp: GnmsMacArpConfig = GnmsMacArpConfig()
 
-    # GNMS Topology (批次查詢設備鄰居拓樸，匯入 Uplink 期望)
-    gnms_topology: GnmsTopologyConfig = GnmsTopologyConfig()
 
     # Scheduler toggle (set to false for API-only replicas in K8s)
     enable_scheduler: bool = Field(

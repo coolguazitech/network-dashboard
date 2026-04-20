@@ -4,7 +4,7 @@
 > **適用情境**: Image 已預先 build 好並推上 DockerHub → 公司掃描後取得 registry URL → 部署 → 接真實 API → Parser 開發
 >
 > **v2.22.0 變更摘要**:
-> - **[功能] GNMS Topology Uplink 匯入精靈**：Uplink 期望新增「從 GNMS 匯入」精靈，透過 GNMS Topology API 批次查詢設備鄰居拓樸，自動篩選 `is_up_link=true` 的連線作為期望值匯入。支援分批（每批 100 台）、逐筆勾選/全選/搜尋篩選、去重（存在則更新）。適用場景：歲修未換設備，Uplink 連線與現行完全一致。新增 `GNMS_TOPOLOGY__BASE_URL` / `GNMS_TOPOLOGY__TOKEN` 環境變數
+> - **[功能] GNMS Topology Uplink 匯入精靈**：Uplink 期望新增「從 GNMS 匯入」精靈，透過 GNMS Topology API 批次查詢設備鄰居拓樸，自動篩選 `is_up_link=true` 的連線作為期望值匯入。支援分批（每批 100 台）、逐筆勾選/全選/搜尋篩選、去重（存在則更新）。適用場景：歲修未換設備，Uplink 連線與現行完全一致。沿用既有 `GNMS_MACARP__BASE_URL` / `GNMS_MACARP__TOKEN` 設定，**無需新增環境變數**
 > - **[Fix] 拓樸 interface 比對正規化**：拓樸圖比較 LLDP/CDP 收集的 interface 與期望值時，未先 `normalize_interface_name()`，導致 `Ethernet1/1` ≠ `Eth1/1` 永遠不匹配（紅線）。修正為收集端統一正規化後再比較
 > - **[Fix] SNMP Mock LLDP/CDP local_interface 映射**：Mock SNMP 的 LLDP/CDP 回傳所有鄰居都掛在同一個固定 uplink port（`interfaces[-2]`），忽略期望中的實際 `local_interface`。修正為根據每個 neighbor 的 `local_interface` 動態分配 ifIndex
 >
@@ -493,12 +493,6 @@ GNMS_MACARP__BASE_URL=http://netinv.netsre.icsd.tsmc.com
 GNMS_MACARP__TOKEN=<GNMS MacARP Bearer token>
 GNMS_MACARP__TIMEOUT=60
 GNMS_MACARP__BATCH_SIZE=100
-
-# ===== GNMS Topology（v2.22.0 新增，Uplink 期望自動匯入用）=====
-GNMS_TOPOLOGY__BASE_URL=http://netinv.netsre.icsd.tsmc.com
-GNMS_TOPOLOGY__TOKEN=<GNMS Topology Bearer token>
-GNMS_TOPOLOGY__TIMEOUT=60
-GNMS_TOPOLOGY__BATCH_SIZE=100
 
 # ===== Endpoint 路徑（必改）=====
 # FNA — 所有廠牌共用（5 個 API），IP 在 path 中

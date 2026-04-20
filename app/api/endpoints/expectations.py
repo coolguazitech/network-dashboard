@@ -652,12 +652,12 @@ async def gnms_topology_fetch(
     from app.db.models import MaintenanceDeviceList
 
     logger = logging.getLogger(__name__)
-    cfg = settings.gnms_topology
+    cfg = settings.gnms_macarp
 
     if not cfg.base_url:
         raise HTTPException(
             status_code=400,
-            detail="GNMS Topology API 尚未設定（GNMS_TOPOLOGY__BASE_URL）",
+            detail="GNMS API 尚未設定（GNMS_MACARP__BASE_URL）",
         )
 
     # 1. 讀取設備清單
