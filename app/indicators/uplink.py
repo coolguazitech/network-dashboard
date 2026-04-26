@@ -12,6 +12,7 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.interfaces import normalize_interface_name
 from app.db.models import UplinkExpectation, NeighborRecord
 from app.repositories.typed_records import (
     NeighborLldpRecordRepo,
@@ -95,7 +96,10 @@ class UplinkIndicator(BaseIndicator):
             )
             neighbor_interfaces[
                 (record.switch_hostname, record.remote_hostname)
-            ].add((record.local_interface, record.remote_interface))
+            ].add((
+                normalize_interface_name(record.local_interface),
+                normalize_interface_name(record.remote_interface),
+            ))
 
         total_count = 0
         pass_count = 0
@@ -116,7 +120,7 @@ class UplinkIndicator(BaseIndicator):
             match_detail = ""
 
             if neighbor in actual_neighbors:
-                # hostname 匹配成功 — 檢查 interface
+                # hostname 匹配成功 — 檢查 interface（正規化後比較）
                 iface_pairs = neighbor_interfaces.get(
                     (hostname, neighbor), set()
                 )
@@ -125,19 +129,6 @@ class UplinkIndicator(BaseIndicator):
                     match_detail = (
                         f"{hostname}:{exp_local_if} ↔ "
                         f"{neighbor}:{exp_remote_if} ✓"
-                    )
-                else:
-                    # hostname 對但 interface 不完全吻合 — 仍算通過
-                    # （LLDP 的 interface 命名可能與期望不一致）
-                    matched = True
-                    actual_ifs = ", ".join(
-                        f"{l}↔{r}" for l, r in sorted(iface_pairs)
-                    )
-                    match_detail = (
-                        f"鄰居 '{neighbor}' 已連接"
-                        f"（interface 不完全吻合: "
-                        f"期望 {exp_local_if}↔{exp_remote_if}, "
-                        f"實際 {actual_ifs}）"
                     )
 
             # ── 反向匹配（鄰居 LLDP 看到本機）──
