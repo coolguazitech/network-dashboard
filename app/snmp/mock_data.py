@@ -190,6 +190,13 @@ _uplink_cache_ts: float = 0.0
 _UPLINK_CACHE_TTL = 300.0  # 5 minutes
 
 
+def clear_uplink_cache() -> None:
+    """清除 uplink 鄰居快取，供期望值變更時呼叫。"""
+    global _uplink_cache_ts  # noqa: PLW0603
+    _uplink_cache.clear()
+    _uplink_cache_ts = 0.0
+
+
 def _get_uplink_neighbors(ip: str) -> list[tuple[str, str, str]]:
     """Query DB for expected uplink neighbors by device IP.
 

@@ -30,6 +30,19 @@ from app.db.models import (
 router = APIRouter(tags=["expectations"])
 
 
+def _invalidate_uplink_mock_cache() -> None:
+    """清除 SNMP Mock 的 uplink 鄰居快取。
+
+    期望值變更後呼叫，確保下一輪 SNMP 採集使用最新期望生成鄰居資料。
+    Production 環境（非 Mock）此函數無副作用。
+    """
+    try:
+        from app.snmp.mock_data import clear_uplink_cache
+        clear_uplink_cache()
+    except Exception:
+        pass  # non-mock environments may not have this module loaded
+
+
 # ========== Pydantic Models ==========
 
 class UplinkExpectationCreate(BaseModel):
@@ -220,6 +233,7 @@ async def create_uplink_expectation(
     session.add(item)
     await session.commit()
     await session.refresh(item)
+    _invalidate_uplink_mock_cache()
 
     await write_log(
         level="INFO",
@@ -367,9 +381,10 @@ async def update_uplink_expectation(
         item.expected_interface = normalize_interface_name(data.expected_interface.strip()) if data.expected_interface else None
     if data.description is not None:
         item.description = data.description.strip() if data.description else None
-    
+
     await session.commit()
     await session.refresh(item)
+    _invalidate_uplink_mock_cache()
 
     await write_log(
         level="INFO",
@@ -410,6 +425,7 @@ async def delete_uplink_expectation(
     log_summary = f"刪除 Uplink 期望: {item.hostname}:{item.local_interface}"
     await session.delete(item)
     await session.commit()
+    _invalidate_uplink_mock_cache()
 
     await write_log(
         level="WARNING",
@@ -443,6 +459,7 @@ async def batch_delete_uplink_expectations(
     )
     result = await session.execute(stmt)
     await session.commit()
+    _invalidate_uplink_mock_cache()
 
     if result.rowcount > 0:
         await write_log(
@@ -579,8 +596,9 @@ async def import_uplink_csv(
                 imported += 1
         except Exception as e:
             errors.append(f"Row {row_num}: {str(e)}")
-    
+
     await session.commit()
+    _invalidate_uplink_mock_cache()
 
     if imported + updated > 0:
         await write_log(
@@ -813,6 +831,7 @@ async def gnms_topology_import(
             errors.append(f"{entry.hostname}: {e}")
 
     await session.commit()
+    _invalidate_uplink_mock_cache()
 
     if imported + updated > 0:
         await write_log(
